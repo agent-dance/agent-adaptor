@@ -1,8 +1,8 @@
 // quickstart constructs an Agent from a Driver, asks one question, and reads
 // one Result.
 //
-// The whole SDK surface used here is three names — adaptor.New, agent.Run,
-// res.Text — plus the single err verdict: a business failure arrives as a
+// Construct with adaptor.New, send with agent.Send, and read Stream.Result
+// and res.Text. The single err verdict reports a business failure as a
 // typed *adaptor.RunError that still carries the full Result.
 //
 // Usage:

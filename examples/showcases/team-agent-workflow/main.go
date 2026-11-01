@@ -404,10 +404,10 @@ func roleSummaries(roles []roleDef) []map[string]any {
 	return out
 }
 
-// ---- Role observation: decorate two methods, not three interception points ----
+// ---- Role observation: decorate the Runner.Send entry point ----
 
-// observed wraps a role's Runner. Runner has exactly Run and Stream, so a
-// decorator is plain Go: embed the interface, override what you care about.
+// observed wraps a role's Runner. Embed the interface and override Send to
+// observe each execution through the same Stream contract.
 type observed struct {
 	adaptor.Runner
 	role   string

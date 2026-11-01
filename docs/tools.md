@@ -221,6 +221,14 @@ key already belongs to an external entry copied into the isolated execution
 profile. Ownership markers and rendered-content fingerprints ensure cleanup
 never adopts or deletes a user-modified entry.
 
+For Codex, SDK-declared MCP servers, including hosted Tools, team tools, and
+WithMCP servers, remain enabled under a ReadOnly sandbox. The sandbox restricts
+provider filesystem/shell access; the host controls its tools' authority.
+Permission auto-approve sets the server default approval mode to `approve`;
+Ask and auto-deny use `prompt` through app-server and core's approval path.
+Native-profile servers not declared by the SDK retain their own settings.
+These defaults do not override an explicit per-tool policy.
+
 Tool-call Events and Transcript entries still come only from each Driver's
 official provider-protocol parser. The internal runtime does not publish a
 second Event stream or synthesize provider observations.

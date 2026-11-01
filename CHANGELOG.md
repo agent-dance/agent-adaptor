@@ -111,7 +111,9 @@ All notable changes to this project are documented in this file.
   failures. Declares no verified mid-turn or interrupt capability; supplemental
   messages continue through core resume.
 
-CLI minimum versions are declarations, not automatic installed-version checks.
+Built-in Drivers probe the installed CLI version and report the effective
+message capability through Inspect.Environment. Unsupported or unknown versions
+fall back to available core resume with a Notice.
 Pi and OpenCode remain outside the supported v2 Driver set.
 
 ### Teams and A2A
@@ -141,8 +143,48 @@ Pi and OpenCode remain outside the supported v2 Driver set.
   messages (`Soon` only), observed context continuity, and a two-minute
   disconnected observation deadline. No approval-response extension,
   conversation Fork or output-schema negotiation is available; input-required
-  is handled by remote policy. Document the current A2A bridge's missing
-  active-task input routing and v2 task/message event projections.
+  is handled by remote policy. The A2A bridge routes active-task input to the
+  existing Stream and projects v2 turn, message, subagent and completion events;
+  a new task targeting a busy context is explicitly rejected.
+
+### Integration hardening
+
+- Preserve cancellation identity across provider process teardown, approval
+  shutdown and lease renewal, while retaining diagnostics and provider failures
+  observed before cancellation. Preflight failures return message receipts and
+  cannot replay rejected input through Standby recovery.
+- Preserve reliable terminal and message events during cancellation and paused
+  subscriptions. Carried Standby input no longer prevents fresh host input from
+  being admitted; internal event drains do not suppress approval fallback.
+- Enforce framed message limits on combined continuation batches and turn-limit
+  reminders, including UTF-16 overhead, without starting a turn for a reminder.
+- Codex submits one ordered steer RPC per claimed batch and acknowledges confirmed
+  RPC success before a later cancel. Late and replayed usage notifications are
+  attributed to their own turns without double-counting resumed history.
+- Keep SDK-declared Codex MCP servers enabled under read-only isolation. Derived
+  approval defaults map AutoApprove to approve and Ask/AutoDeny to prompt,
+  retaining exact per-tool overrides. App-server MCP consent reaches host
+  approvals; blocked replies retire the transport within bounded cleanup.
+- Bound Claude hook writer settlement, retire unusable resident processes and
+  report ambiguous delivery truthfully. Hook degradation restores ordinary stdin
+  lifecycle; Stop delivery preserves admission order and per-turn usage.
+- Fix team rejected-message replay, retry continuity, final task snapshots on
+  every completion path, unread notes and Remote approval-state recovery.
+  Add Result.WithSubagents for detached task-snapshot replacement without
+  repeating usage accounting. Fork retains healthy local PerScope lineage.
+- Keep team Standby contexts scoped to admission and drain reliable events on
+  shutdown. AG-UI Activity restores member display names, worker text and
+  validated structured attachments, excluding raw and private runtime data.
+- Add AG-UI RunRegistry routing and a CopilotKit running-message input using
+  the existing event stream for delivery receipts. Record safe Done fields by
+  default; sessionrecorder.WithExposure explicitly enables diagnostic layers.
+- Add adaptertest MSG-01–MSG-10 and transport fixtures for all four built-in
+  Drivers. Stabilize event-loop and store-expiry tests across race instrumentation
+  and Windows clock resolution. Snapshot lease timing before asynchronous store
+  calls so abandoned hooks cannot read a later configuration lifetime.
+  Synchronize v2 guides and all README languages.
+- Use Go 1.26.10 for security fixes and upgrade the example frontend dependencies
+  without lowering production audit thresholds.
 
 ## [1.1.2] - 2026-08-07
 

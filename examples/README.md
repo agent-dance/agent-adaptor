@@ -1,6 +1,6 @@
 # Examples
 
-这些示例使用 `github.com/agent-dance/agent-adaptor/v2`。任务从 `Send` 开始，通过 `Result()` 同步取结果，或消费 `Events()`。示例中的终端聊天和 Web 聊天目前都采用任务模式；它们没有展示运行中补充消息或 Standby。相关用法见 [streaming](../docs/streaming.md) 和 [API reference](../docs/api-reference.md)。
+这些示例使用 `github.com/agent-dance/agent-adaptor/v2`。任务从 `Send` 开始，通过 `Result()` 同步取结果，或消费 `Events()`。示例中的终端聊天采用任务模式；CopilotKit Web 示例可将运行中输入补充到当前 Stream。`showcases/issue-daemon` 展示消息投递、Standby 与团队的端到端场景。相关用法见 [streaming](../docs/streaming.md) 和 [API reference](../docs/api-reference.md)。
 
 除 `threads/codec` 和关闭模型调用的 profile 同步模式外，运行示例通常会调用本机真实的 Codex、Claude、Cursor 或 CodeBuddy CLI，并可能产生费用。请先安装并登录对应 CLI；编译和 fake 测试不需要付费调用。
 
@@ -20,7 +20,7 @@ go run ./examples/quickstart -agent=cursor -command=/absolute/path/to/agent
 | [`quickstart`](./quickstart) | 构造 Agent，执行一次 `Send(...).Result()`，检查非空回答并打印运行摘要。 |
 | [`structured-output`](./structured-output) | 用 `RunAs[T]` 推导 schema，校验并解码包含 greeting/mood 的类型化结果。 |
 | [`tools`](./tools) | 给真实本机 provider 暴露一个带 Revision 的 typed `host_echo` Go 函数，要求调用一次，并关闭 Agent 资源。 |
-| [`inspect`](./inspect) | 建立两个独立 profile 的 Agent，先各执行一次真实任务，再读取环境、模型、schema、quota、skills，并尝试切换 skill 选择；不是纯只读探针示例。 |
+| [`inspect`](./inspect) | 建立两个独立 profile 的 Agent，先各执行一次真实任务，再读取环境、模型、schema、quota、skills，并选择已声明的 review-note skill；不是纯只读探针示例。 |
 | [`threads`](./threads) | 同 key 续接两次、ResumeOnly、缺失 key 错误、Fork，以及 checkpoint 审计；使用显式内存 store。 |
 | [`threads/codec`](./threads/codec) | 不启动 CLI，检查各 Driver 的 SessionCodec 往返映射，以及工作目录变化对 guard fingerprint 的影响。 |
 | [`skills`](./skills) | 发现两个 skill，选择 write-proof，追加 required skill，执行真实任务并检查 proof.txt 内容；按 Driver 支持配置 approval callback。 |
@@ -29,7 +29,7 @@ go run ./examples/quickstart -agent=cursor -command=/absolute/path/to/agent
 | [`streaming`](./streaming) | 消费一条 typed Event 流，统计事件，读取最终 Result；可用 `-cancel-after` 定时取消，缺少文本增量时输出最终 Text。 |
 | [`streaming/chat`](./streaming/chat) | 在一个具名 Thread 上流式执行一条 prompt，显示文本、thinking、工具和用量，支持信号取消；没有交互输入循环。 |
 
-`inspect` 当前尝试给只声明 review-note 的 reviewer 选择 write-proof，且未注入 SkillProvider；按当前候选集合同，该步骤会返回 ErrSkillNotFound，后面的 profile 观察不会执行。
+`inspect` 的 reviewer 只声明 review-note，并按候选集合同选择该 skill。`SelectSkills` 是 Agent 上的变更操作，环境探针与 `ProfileState` 则只读。
 
 `profiles/hook` 和 `profiles/mcpserver` 是 profiles 示例调用的辅助程序，分别处理并记录 hook 输入、提供 stdio MCP 工具；不是独立聊天应用。
 

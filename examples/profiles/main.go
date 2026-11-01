@@ -77,7 +77,7 @@ func main() {
 		workspace   = flag.String("workspace", "", "Workspace cwd for agent runs. Defaults to a temp dir.")
 		timeout     = flag.Duration("timeout", 2*time.Minute, "Context timeout.")
 		probe       = flag.Bool("probe", true, "Run lightweight local probes that show the selected CLI can read the materialized profile where the provider exposes such probes.")
-		runAgent    = flag.Bool("run", false, "Also run the selected agent after syncing the profile. The Run call uses no run options.")
+		runAgent    = flag.Bool("run", false, "Also run the selected agent after syncing the profile. The Send call uses no execution options.")
 		prompt      = flag.String("prompt", defaultPrompt(), "Prompt used when -run=true.")
 	)
 	flag.Parse()

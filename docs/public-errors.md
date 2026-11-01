@@ -55,12 +55,18 @@ Every row is a `*adaptor.RunError`. `errors.As` exposes `Reason`, `Message`,
 | `ErrApprovalDenied` | `ReasonApprovalDenied` | A host or auto policy denied an approval and the fallback aborted. |
 | `ErrApprovalTimeout` | `ReasonApprovalTimeout` | An approval deadline elapsed and the fallback aborted. |
 | `ErrAgentFailed` | `ReasonAgentError` | The Driver classified an agent-level failure, such as a bad terminal protocol or non-zero exit. |
-| `ErrRunCancelled` | `ReasonCancelled` | The Driver returned a classified cancellation business failure. |
+| `ErrRunCancelled` | `ReasonCancelled` | The execution was cancelled during Driver dispatch, or the Driver returned a classified cancellation business failure. |
 | `ErrPolicyViolation` | `ReasonPolicyViolation` | A completed invocation violated a run policy, including default fail-on-invalid structured output. |
 
-`context.Canceled` and `context.DeadlineExceeded` are infrastructure errors;
-they do not imply `ErrRunCancelled`. Likewise, malformed host policy values
-match `ErrInvalidPolicy`, not `ErrPolicyViolation`.
+During Driver dispatch, cancellation takes priority over teardown-induced
+process or transport errors. The final `RunError` has ReasonCancelled and
+preserves the context cause for `errors.Is(err, context.Canceled)` or
+`errors.Is(err, context.DeadlineExceeded)`, along with the Driver diagnostic
+error. A provider or approval failure observed before cancellation retains
+its original classification. Cancellation before Driver dispatch can remain
+an ordinary wrapped context error, so a context match alone does not always
+imply ErrRunCancelled. Malformed host policy values match ErrInvalidPolicy,
+not ErrPolicyViolation.
 
 Unknown Driver failure codes remain available as `RunError.Reason` but do not
 silently match one of the five sentinels above.
@@ -121,12 +127,14 @@ Once admitted, outcomes arrive on reliable MessageUpdate events and final Result
 | MessageFailure | Wire value | Meaning |
 |---|---|---|
 | MessageCancelled | cancelled | Execution cancellation or withdrawal of an unclaimed Stream message. |
-| MessageProviderRejected | provider_rejected | Provider rejection or no safe continuation path. |
+| MessageProviderRejected | provider_rejected | Execution preparation failed before Driver dispatch, provider rejected input, or no safe continuation path exists. |
 | MessageTimeout | timeout | A delivery attempt timed out without a successful fallback. |
 | MessageLimitExceeded | limit_exceeded | Execution cannot start another provider turn. |
 | MessageRunFailed | run_failed | Execution failed before delivery. |
 
 Boundary-specific failures can requeue for checkpoint continuation, reporting Accepted again; an ambiguous earlier attempt is marked as a possible duplicate. A Driver-claimed item is settled by its acknowledgement, even when its sender context ends. Stream send contexts can withdraw unclaimed input; Standby send contexts govern admission only, so an accepted HTTP message survives request completion.
+
+An execution preparation failure before any Driver.Run dispatch returns all already admitted input with provider_rejected and original text; it is not carried into another execution. Synchronously checkable policy/schema errors reject with MessageError and produce no MessageUpdate. After Driver dispatch, ordinary failures retain run_failed and the carry/retry behavior below.
 
 A Standby remains alive after an execution failure. Only classified rate-limit/network/provider-server failures with undelivered work retry automatically, at most once. A run_failed message can carry to the next execution and report failed, then delivered under the same ID. Without an eligible retry, carried input waits for a host message. Cancel clears pending input instead.
 

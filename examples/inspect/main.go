@@ -108,10 +108,10 @@ func main() {
 
 	// SelectSkills is a control-plane *verb* and therefore lives on the Agent,
 	// not on the read-only Inspector. It returns the same snapshot shape.
-	selected, err := reviewer.SelectSkills(ctx, []string{writeSkillName})
+	selected, err := reviewer.SelectSkills(ctx, []string{reviewSkillName})
 	exampleutil.Must(err, "select reviewer skills")
-	exampleutil.Check(len(selected.Selected) == 1 && selected.Selected[0] == writeSkillName,
-		"expected the reviewer selection to be [%s], got %#v", writeSkillName, selected.Selected)
+	exampleutil.Check(len(selected.Selected) == 1 && selected.Selected[0] == reviewSkillName,
+		"expected the reviewer selection to be [%s], got %#v", reviewSkillName, selected.Selected)
 
 	// ProfileState reports desired-vs-observed for the cloned profile; nothing
 	// is written. SyncProfile is the mutating twin.

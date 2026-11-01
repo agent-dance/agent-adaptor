@@ -200,7 +200,7 @@ agent := adaptor.New(
 )
 ```
 
-For callback-based policies, `adaptor.ApproveAll()` and `adaptor.DenyAll(reason)` are ready to use. They handle requests already routed to the callback; they do not enable unsupported approval modes. Claude and CodeBuddy support interactive requests; Codex and Cursor do not advertise `Ask`.
+For callback-based policies, `adaptor.ApproveAll()` and `adaptor.DenyAll(reason)` are ready to use. They handle requests already routed to the callback; they do not enable unsupported approval modes. Claude and CodeBuddy support interactive requests. Codex supports permission approval through app-server, including approval for MCP tools; it does not support plan review or questions requiring input. Cursor does not advertise `Ask`.
 
 Without a callback you get the event shape: the request arrives on the event stream as an `*adaptor.ApprovalRequest` carrying its own responder, so it can be parked and later resolved by any goroutine or by another HTTP request — exactly what web scenarios need:
 
@@ -439,6 +439,8 @@ mux.Handle("/agent", sse.Handler(agent, sse.Options{
 }))
 ```
 
+For chat UIs, `agui.RunRegistry` starts a Thread when idle and sends new input to its active Stream, preserving native Stream.Send context semantics: cancellation can withdraw unclaimed input. The CopilotKit example explicitly detaches `POST /message` dispatch from the supplement request context; once dispatch starts, HTTP disconnection does not withdraw input or stop queue waiting, and delivery receipts arrive on the original SSE stream. The optional `sessionrecorder` records safe terminal fields by default; `WithExposure` explicitly enables additional diagnostics. See the [streaming guide](./docs/streaming.md#8-ag-ui-bridge) for routing and recording.
+
 **A2A**: `bridges/a2a` publishes any Runner as an A2A server, leaving routing, authentication, and TLS to the host:
 
 ```go
@@ -519,12 +521,14 @@ plan → implement → review workflow with role sandboxes and a CopilotKit page
 `Agent.Inspect()` is a read-only probe used for preflight checks, environment diagnostics, and model selection. Unsupported probes report unsupported explicitly instead of inventing data:
 
 ```go
-environment, err := agent.Inspect().Environment(ctx) // health status and per-item diagnostics, ready to render
+environment, err := agent.Inspect().Environment(ctx) // health, CLI version, and effective message capability
 models, err := agent.Inspect().Models(ctx)
 quota, err := agent.Inspect().Quota(ctx)
 state, err := agent.ProfileState(ctx)                // reports desired versus observed only, changes nothing
 synced, err := agent.SyncProfile(ctx)                // explicitly materializes configuration resources
 ```
+
+Built-in environment probes report `Version` and `Messages`. When a detected CLI is below its message minimum, in-run delivery is disabled, pending messages continue through checkpoint resume, and the execution emits one Notice. Unknown versions retain the declared capability and rely on runtime fallbacks. See the [Driver matrix](./docs/streaming.md#12-message-delivery-capabilities).
 
 ## Six nouns
 
@@ -564,7 +568,7 @@ To integrate your own agent CLI: implement `driver.Driver`, get `adaptertest` pa
 - [`structured-output`](./examples/structured-output): typed JSON output.
 - [`tools`](./examples/tools): expose a typed Go function to a real local provider without managing MCP yourself.
 - [`skills`](./examples/skills): select a skill and verify its proof file; [`profiles`](./examples/profiles): sync profile resources, optionally probe locally or send a task.
-- [`inspect`](./examples/inspect): two live calls followed by probes and a skill-selection attempt; see the example index for its current selection error.
+- [`inspect`](./examples/inspect): two live calls followed by environment/model probes, selection of a declared reviewer skill, and profile observation.
 - [`web-chat`](./examples/web-chat): an SSE/AG-UI server with two front ends, [`aguiclient`](./examples/web-chat/aguiclient) and [`copilotkit`](./examples/web-chat/copilotkit).
 - [`a2a-server`](./examples/a2a-server): publish and call an Agent through A2A.
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow): planning, implementation, and review joined into one pipeline.

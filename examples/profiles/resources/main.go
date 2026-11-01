@@ -9,7 +9,7 @@
 // WithProfile is construction scope only — the profile is part of what the
 // Agent *is* and participates in the session fingerprint. WithProfileResources
 // is a SharedOption, so the same value seeds the agent and can be swapped for a
-// single Run. Merge rules per resource kind:
+// single Send. Merge rules per resource kind:
 //
 //	Skills        append   (the one append-merged family)
 //	MCP           replaces when non-nil

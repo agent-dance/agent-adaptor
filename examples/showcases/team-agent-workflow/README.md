@@ -26,13 +26,11 @@ Markdown `content`) without writing files. The completion notification carries
 its text to the leader, which includes it in the implementation objective.
 Full member results remain in the Team TaskStore.
 
-The frontend has renderers for provider badges and downloadable plan artifacts,
-but the current Team event projection does not populate the old Activity detail
-fields for provider display names, full text or structured results. Lifecycle
-cards are available; this showcase does not currently guarantee those rich
-badges, live worker text or a downloadable plan attachment end to end. The CLI
-audit reads the review result from TaskStore instead of assuming it is in a
-terminal worker Activity.
+The Team event projection includes each role's configured provider display name,
+live worker text, final text and decoded structured result. The CopilotKit sidebar
+uses these Activity fields for provider badges and a downloadable `PLAN.md`
+attachment. Full raw output, runtime metadata and transcripts stay in TaskStore;
+the CLI audit reads the review result from there.
 
 Team owns one authenticated loopback MCP listener with execution-scoped tokens;
 workers get only messaging/status tools. The host closes the Team and then its

@@ -142,7 +142,7 @@ Schema derivation errors are sticky: setting a later schema does not clear an ea
 
 Negative limits are invalid. `MessageContext` has `ID string`, `Text string` (original), `From Author`, and `Timing Timing`. Built-in framing preserves the original objective, distinguishes human/peer/system authority, and asks for one final answer without a separate acknowledgement. The starting prompt is unframed.
 
-At 80% of MaxTurns, core emits `Notice{Kind: "limit.approaching"}` and queues a system wrap-up message when continuation is available. At the limit, no new turn starts; pending messages fail with `MessageLimitExceeded` and appear in `Undelivered()`. The single-agent result can still succeed. This is a turn limit, independent of execution timeouts or provider-specific internal-step limits.
+With MaxTurns at least 2 and continuation available, core emits `Notice{Kind: "limit.approaching"}` after `min(ceil(0.8 * MaxTurns), MaxTurns - 1)` completed turns. System wrap-up guidance only accompanies an existing continuation batch when it fits the resolved framed size limit. It never starts a turn alone or displaces host input. At the limit, no new turn starts; pending messages fail with `MessageLimitExceeded` and appear in `Undelivered()`. The single-agent result can still succeed. This is a turn limit, independent of execution timeouts or provider-specific internal-step limits.
 
 ## 5. Thread
 
@@ -398,7 +398,7 @@ RunAs adds WithSchema, calls Send(...).Result(), and decodes. Core prefers nativ
 (*Agent).SelectSkills(context.Context, []string) (SkillSnapshot, error)
 ```
 
-Inspection uses captured Driver configuration. Missing probes return descriptor-derived or explicitly unsupported/unavailable data. EnvironmentReport contains health Status/Checks; it currently does not expose a resolved message capability or enforce message MinVersion gates.
+Inspection uses captured Driver configuration. Missing probes return descriptor-derived or explicitly unsupported/unavailable data. EnvironmentReport contains health Status/Checks, the detected CLI Version, and effective Messages capability. Built-in Codex, Claude, and Cursor probes and resolvers trim in-run message delivery below a known MinVersion, with one execution Notice and checkpoint-resume fallback. Unknown versions keep declared support with a warning; Inspect never starts a model task.
 
 ProfileState observes desired versus materialized state; SyncProfile materializes resources. SelectSkills installs a process-local key selection after successful resolution/sync; unknown keys leave selection unchanged. Inline skills must first be introduced through WithSkills, and can then be selected by key.
 
@@ -496,6 +496,7 @@ These hooks let composite Runners such as [teams](./team.md) reuse core semantic
 
 ```go
 func ComposeResults(runID string, parts ...*Result) *Result
+func (r *Result) WithSubagents(subagents []SubagentResult) *Result
 func MessageAttributes(opts ...CallOption) MessageContext
 func (s *RunSettings) CapMessageTurns(remaining int)
 ```
@@ -505,6 +506,16 @@ last text/summary/model/provider/metadata/structured output, summed usage and
 turns, ordered audit/message/subagent slices, concatenated raw streams and the
 last observed terminal payload. Returned data is detached from children.
 Message turn numbers are rebased onto the composite sequence.
+
+Composite Runners use WithSubagents after ComposeResults when their final task
+snapshot includes tasks that completed or were cancelled after the last child
+result was collected. It returns a detached copy with the supplied subagent
+snapshot replacing the collected summaries, preserving all other result fields.
+Usage stays unchanged: the composite Runner accounts for observed child usage
+once, and replacing summaries does not add that usage again. A nil receiver is
+treated as an empty result. Teams apply the final snapshot on success,
+cancellation, failure and limit termination.
+
 MessageAttributes reads only message options, with later values overriding
 earlier ones, AuthorHuman/Soon defaults and no generated ID. Execution options
 are ignored without applying them. A composite call option can use
@@ -517,7 +528,24 @@ MessageLimitExceeded. Named task-mode Team.Thread.Send rejects an active
 execution or live standby with adaptor.ErrThreadBusy; Standby.Send performs
 ongoing routing. Stream.Result and Done carry the same authoritative result.
 
-## 17. Related documents
+## 17. Bridge routing and event recording
+
+The optional packages below consume the public Runner, Stream, Event and Result contracts; they do not add a second execution pipeline.
+
+`bridges/agui` exports `ThreadKey(threadID string) string` for collision-free frontend identity mapping, plus a concurrency-safe `RunRegistry` whose zero value is usable:
+
+```text
+(*RunRegistry).Active(threadKey string) adaptor.Stream
+(*RunRegistry).Send(ctx context.Context, thread adaptor.ThreadRunner, input *RunAgentInput, opts ...adaptor.CallOption) (adaptor.Stream, bool, error)
+(*RunRegistry).SendActive(ctx context.Context, threadKey string, input *RunAgentInput) (adaptor.Stream, error)
+(*RunRegistry).Forget(threadKey string, stream adaptor.Stream)
+```
+
+Send begins Thread.Send when idle and uses Stream.Send when active; its bool reports supplementation. SendActive never starts a run and returns a MessageError matching ErrRunFinished when no active execution exists. Supplements use the latest user ID/human author/Soon timing and keep receipts on the original event stream. RunRegistry passes ctx unchanged to Stream.Send, so cancellation can withdraw unclaimed input even after Send returns nil; claimed input is settled by the Driver. Hosts must explicitly provide a detached context when choosing to let protocol input outlive an HTTP request. Only the creator drains that Stream and calls Forget after completion; execution options apply only to newly started work.
+
+`hosttools/sessionrecorder` exports `ExposurePolicy` and `WithExposure(ExposurePolicy) EventOption`. Done/TurnEnd retain only RunID, Turns, Text, Summary and error identity by default. Opt-in flags are IncludeMetadata, IncludeUsage, IncludeRawStreams, IncludeProviderResult, IncludeTranscript and IncludeServices. Explicit private audit data replays on EventRecord.Diagnostics; replay does not reconstruct Result's private fields or live approval responders. Hosts must redact other event types themselves. See [Streaming](./streaming.md#8-ag-ui-bridge) for routing and [the CopilotKit example](../examples/web-chat/copilotkit) for its HTTP companion endpoint.
+
+## 18. Related documents
 
 - [Documentation map](./README.md)
 - [Streaming and messages](./streaming.md)

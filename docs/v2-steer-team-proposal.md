@@ -423,7 +423,7 @@ type MessagePolicy struct {
 2. **未领取的可以撤回**：ctx 结束时，pending 项移出队列，以 `cancelled` 失败，之后任何边界都不会再投递它。
 3. **有界幂等**：同执行的重复 ID 不重复投递；Thread 回执与 checkpoint 在同一有效 lease 下原子保存，保留最近最多 1000 个且不超过七天的 ID。重复已交付初始 ID 零轮完成；Fork 的 ID 空间独立。provider 接受与回执持久化之间崩溃，恢复后仍可能重投；不得承诺跨该窗口的 exactly-once。匿名执行的去重只覆盖本次执行。
 4. **不丢失**：每个被接纳的消息最终都有一条 `MessageUpdate(Delivered|Failed)`，并出现在 `Result.Messages()` 中；`MessageUpdate` 不可被背压丢弃。
-5. **有序**：按接纳顺序领取；hook Driver 按 provider 总量上限合并，Codex immediate 按序逐条 RPC；不能把部分批次丢弃。
+5. **有序**：按接纳顺序领取；hook Driver 按 provider 总量上限合并，Codex immediate 将同一 Claim 的输入按顺序合成一个 `turn/steer` RPC，再逐项 Ack；不能把部分批次丢弃。
 6. **执行开始前到达的消息会被缓冲**：不需要就绪检查，不存在 `NotReady` 错误。
 7. **Cancel 优先**：`Cancel` 之后，pending 项以 `cancelled` 失败，原文交还。
 8. **大小在接纳时校验**：超过 Driver 的 framed 上限（Cursor 完整 hook context 为 10000 UTF-16；扣除 64 单位 nonce 标签后的单条 framed 上限为 9936）时同步拒绝，而不是送到 provider 后被静默丢弃。
@@ -594,7 +594,7 @@ type TurnCompleted struct {
 | Cursor（≥2026.10.14） | 合资格 relay 的 tool | false | Resume | official hookAdditionalContexts 完整 echo；ConfirmedDelivery=true、PersistsDelivered=false，10000 UTF-16 总量 |
 | CodeBuddy | 无已验证边界 | false | Resume | 无窗口、无 Claim；headless/control/resident 均恰好一条 TurnCompleted |
 
-上述 MinVersion 是要求，不是已实现的版本探测。Claude 消息端口会为普通请求协商 stream-json input，不改变审批与 partial-message 选择。ACP/Kiro/Grok 不在当前实现树内；Pi/OpenCode 继续挂起，不能标为 v2 已支持。
+内置 Driver 已实现本机 CLI 版本探测与 MinVersion 裁剪；Inspect.Environment 返回版本和有效能力。版本过低、未知或探测失败时禁用未经验证的中途边界，发布 Notice 并保留可用的 core resume。Claude 消息端口会为普通请求协商 stream-json input，不改变审批与 partial-message 选择。ACP/Kiro/Grok 不在当前实现树内；Pi/OpenCode 继续挂起，不能标为 v2 已支持。
 
 Claude initialize 必须收到 control_response；注册拒绝或写入后等待十秒未答复，进程永久禁用 hooks，发出 code=claude_hooks_unavailable 的 lifecycle Notice，普通 prompt 与 HITL 继续，消息转 core resume。晚成功不能重新开启；resident 每进程只注册一次。pipe/进程失败与取消仍为执行失败，不能当成可选 hook 降级。
 
@@ -625,7 +625,7 @@ Cursor 在 headless 模式下没有输入通道。它在每次工具调用后，
 | Cursor relay/nonce/echo/UTF-16 | 已实现：messages_test、hook_relay_test | 仅 managed workspace、精确 echo，动态不可用显式 Notice；批次不截断 |
 | 匿名执行 checkpoint | 已实现：四 Driver 正式 parser/session 测试、根 messages_contract_test 的 stateless ContinueResume | 无跨 Send 记录；本次执行内用健康 checkpoint 续接，必要时新进程；缺少 checkpoint 则明确失败，不伪造状态 |
 | Codex immediate/Interrupt/InRun | 已实现：messages_test、appserver/messages_test；messages_live_test 有双门控，本文未运行 live | turn ID guard、ambiguous requeue、每轮完成、Usage 与最终 checkpoint；live 需 codex_live + AGENT_ADAPTOR_LIVE_CONFORMANCE=1 |
-| CLI 最低版本 | 偏差已记录：MinVersion 仅声明，当前 Environment 无版本裁剪 | 宿主需满足最低版本，不宣称自动协商老版本 |
+| CLI 最低版本 | 已实现：各 Driver version 测试覆盖最低、新版、未知与失败探测 | Environment 报告版本与有效能力；不满足要求时 Notice 并降级为可用的 core resume |
 | Remote A2A 成员是否接受对 working 状态 task 的消息 | 对接测试 | `team_send` 给 leader 返回明确错误；leader 可以取消任务后重新派发 |
 
 ---
@@ -916,16 +916,16 @@ func DenyAndRedirect(ctx context.Context, req *adaptor.ApprovalRequest,
 
 **bridges 的实现边界**：
 
-- A2A 当前每次执行请求调用 target.Send，**未实现**原设计的 working taskID →
-  active Stream.Send 路由；upstream 可拒绝 working-task 请求。context 绑定的忙碌
-  Thread 报错，bridge 投影为 failed task，不静默并入。ThreadByContextID 仅适配
-  *adaptor.Agent；发布 Team 可传已选择的 Team Thread。wire schema 未投影
-  TurnEnd/MessageUpdate/SubagentUpdate/Done，不能宣称团队事件完整透传。
-- AG-UI 一次 run 对应 Runner.Send，MessageUpdate/TurnEnd 投影为 custom events，
-  typed SubagentUpdate 为 Activity。当前 Team 未填旧 Activity 所需的完整 result/
-  provider-name 字段，因此不能承诺 plan 下载和 provider badge 的端到端保真。
-- session recorder 使用 typed Event 信封与宿主脱敏策略，不能把任意完整 Done.Result
-  直接当成安全日志输出；本任务不变更 recorder 的实现。
+- A2A 将同一 working taskID 的补充路由到活动 Stream.Send，保留原 task/context，
+  接纳与最终投递分别记录。忙碌 context 上的新 task 明确拒绝并返回活动 task 信息，
+  不静默并入。ThreadByContextID 仅适配 *adaptor.Agent；发布 Team 可传已选择的
+  Team Thread。wire schema 投影 TurnEnd、MessageUpdate、SubagentUpdate 和安全的 Done 字段。
+- AG-UI 一次 run 对应 Runner.Send，运行中的输入路由到活动 Stream.Send，
+  MessageUpdate/TurnEnd 投影为 custom events，typed SubagentUpdate 为 Activity。
+  Team 提供成员显示名、协议、实时文本及终局安全 result 字段；已校验的结构化
+  output 可用于 PLAN.md 附件，Raw、runtime metadata 不进入 Activity。
+- session recorder 使用 typed Event 信封与宿主脱敏策略；Done 默认只记录安全结果
+  字段，诊断层需显式开启，不能把完整 Done.Result 当成默认安全日志输出。
 
 ---
 
@@ -1016,7 +1016,7 @@ supplement 实现；SDK 文档不把未完成的 multica 迁移视为已验收�
 | 5 | 区分人与 agent 的权威 | 已实现：`From` 加内置模板 | §4.4、§5.3 |
 | 6 | Claude hook 被子 agent 继承 | 已实现：过滤 `agent_id` 与 `parent_tool_use_id` | §6.2 |
 | 7 | 取消与投递的竞态 | 已实现：领取后只由 Ack 决定 | §5.2-1、2 |
-| 8 | 版本门控 | 已裁决：MinVersion 是声明；当前 Environment 没有本机版本裁剪（偏差） | §6.1、§9 M6 |
+| 8 | 版本门控 | 已实现：探测本机 CLI、Environment 报告版本与有效能力、低版本 Notice 后 Resume | §6.1、§9 M6 |
 | 9 | 冻结的 Stream 接口与被包装的 Stream | 已实现：v2 直接扩展接口，编译器强制包装器转发 | §4.2 |
 | 10 | 幂等 ID | 已实现：宿主提供 `MessageID` | §4.4、§5.2-3 |
 | 11 | Transcript 角色 | 已实现：独立的 `TranscriptMessage` 条目 | §4.6 |
@@ -1077,7 +1077,7 @@ supplement 实现；SDK 文档不把未完成的 multica 迁移视为已验收�
 | 66 | Cursor 的 hooks.json 与用户仓库 | 已实现：只在受管理的工作目录里写，否则降级 | §6.3 |
 | 67 | 看门狗提醒、预算收尾、外部事件、HITL 补充、完成前验证 | 已实现：统一用 `Send` 加 `From(system)`；验证用带记忆的任务跟进 | §8 |
 | 68 | 嵌套团队 | Team/ConversationProvider，Surface.Prefix 可配；外层 worker grant 不提供 delegate/cancel | §7.1、§7.4 |
-| 69 | bridges 映射 | A2A active-task supplement 与 v2 event projection 未实现；AG-UI Activity detail 字段有保真限制 | §8 |
+| 69 | bridges 映射 | 已实现：A2A active-task supplement 与 v2 event projection、AG-UI 运行中输入与 Activity 显示名/实时文本/结构化附件、recorder 安全 Done | §8 |
 | 70 | multica M1–M8 | 按实现核实，receipt 不等于 admission；provider 重放窗口、Remote timing 与 R5 限制明确 | §9 |
 | 71 | leader 是全能的还是只派发 | 完整的 Agent，遵循委派优先：统筹归 leader，适合成员的工作必须派发，没有成员能承接的才亲自做；宿主可以收紧为纯派发器（只读 sandbox） | §0、§7.2 |
 | 72 | leader 忙时 worker 通知 | Soon 按实际 Driver boundary；无通用工具调用延迟上界 | §7.3 |
@@ -1119,7 +1119,7 @@ supplement 实现；SDK 文档不把未完成的 multica 迁移视为已验收�
 | 每次运行一个 sidecar | 每个 Team 一个 listener |
 | `host-readiness-plan.md` P2-1 | 本提案 |
 
-`AGENTS.md` 的 core/Driver 修订已同步；§11 与 §3 团队行保留原文，等待团队文档任务合入：
+`AGENTS.md` 的 core、Driver 与团队修订已同步：
 
 - §2：执行动词只有 `Send`；`Standby` 归入 Thread。
 - §5：执行管线增加"同一次执行内续跑"阶段；`Send` 等于 `Events` 加 `Done`。
@@ -1130,7 +1130,7 @@ supplement 实现；SDK 文档不把未完成的 multica 迁移视为已验收�
 - §11：`a2adelegation` 改为 `team`。
 - §15：发布门禁增加消息投递的 race 测试与各 Driver 的 Message 一致性条款。
 
-最终公共面已经由 testdata/root_api.golden 与 adaptertest/testdata/driver_api.golden 冻结。根包 With* 数量不变；MessageID/From/When 为 MessageOption。此次文档同步不改 golden。
+最终公共面由 testdata/root_api.golden 与 adaptertest/testdata/driver_api.golden 冻结。根包 With* 数量不变；MessageID/From/When 为 MessageOption。组合 Runner 可用 Result.WithSubagents 替换 detached 任务快照，不重复累加 Usage；对应 API 已进入 golden。
 
 ---
 
@@ -1144,8 +1144,8 @@ supplement 实现；SDK 文档不把未完成的 multica 迁移视为已验收�
 
 | 里程碑 | 内容 | 退出条件 |
 |---|---|---|
-| V2-M0（core 已实现；通用消息一致性未覆盖） | Send/Stream/Done/TurnEnd/MessageUpdate、hub、冻结 SPI、ContinueResume、fake driver 与专项测试 | 现有测试覆盖 §5.2、Done/Result 与选项作用域；发布仍须补通用 adaptertest 消息条款并记录 Linux race/关键竞态 1000 次结果 |
-| V2-M1（功能已落地；版本探测/live 有偏差） | Codex immediate/Interrupt/InRun、Claude tool/stop、Cursor relay/Resume、Standby、上限与审批兜底 | §6.4 保守裁决已有专项测试；故障注入覆盖 requeue、携带、连续性与 store 恢复。尚未自动探测 CLI 版本；授权 live/race/fuzz 需单独记录，不能标全绿 |
+| V2-M0（代码与通用消息一致性已实现） | Send/Stream/Done/TurnEnd/MessageUpdate、hub、冻结 SPI、ContinueResume、fake driver 与专项测试 | §5.2、Done/Result、选项作用域与 MSG-01–MSG-10 均有测试；发布须记录 Linux race/关键竞态 1000 次结果 |
+| V2-M1（功能与版本探测已落地） | Codex immediate/Interrupt/InRun、Claude tool/stop、Cursor relay/Resume、Standby、上限与审批兜底 | §6.4 保守裁决已有专项测试；故障注入覆盖 requeue、携带、连续性与 store 恢复；各 Driver 自动探测 CLI 版本。授权 live/race/fuzz 需单独记录，不能用 fixture 冒充 live |
 | V2-M2 | `hosttools/team`：事件驱动 leader、4 个工具、单 listener、worker 审批、Preamble 名册、强类型事件、showcase 改写 | 并行委派、纠偏、worker 提问唤醒 leader、worker 审批、待命中途用户发话五条路径全部通过；任意成员数下 leader 的 `tools/list` 恒为 4 |
 | V2-M3 | TaskStore、`teamstoretest`、恢复与 Fork、issue-daemon 示例 | 模拟 multica 的 M1–M8 全部通过；kill 进程后消息无丢失、无重复（宿主用原 `MessageID` 重发），任务被标记为 `interrupted`；leader 某一轮失败后任务不受影响并成功重新唤醒 |
 | V2-M4（Driver 部分有结论） | CodeBuddy 已实现保守 Resume；ACP（Kiro/Grok）不在当前树内；bridges 状态由团队文档任务核对 | CodeBuddy 三种 transport 每轮完成与 Resume 通过专项合同；不能声称 ACP 或全部 live 已验证 |
@@ -1166,13 +1166,13 @@ supplement 实现；SDK 文档不把未完成的 multica 迁移视为已验收�
 - Claude/CodeBuddy 的未验证能力、Cursor Windows 均已保守裁决，不是悬而未决的
   成功承诺。Claude 注册拒绝/超时明确降级；Cursor dynamic relay 失败在 Run 内
   Notice，不伪称 resolver/Inspect 完成了 probe。
-- MinVersion 没有自动版本裁剪；Retention、OnRestart、ResumeTolerant
+- MinVersion 已实现自动版本裁剪；Retention、OnRestart、ResumeTolerant
   均不在根 API golden（ReasonLimitExceeded 已随团队上限导出）。单 Agent 达 MaxTurns 正常结束并在
   Undelivered 返回剩余消息；不能把其他规划文档的 API 写成已落地。
 - Raw 完整保留，不默认截断；未读关键事件会持有结果。持久回执不保证关闭
   provider 接受与 receipt 落盘之间的崩溃窗口，§5.2 的去重承诺据此收窄。
-- adaptertest 已冻结 SPI 并验证原有 DRV/CAP/EVT/RUN/TRN/RSP/SES 条款，尚无
-  MessagePort/MessageCapability/TurnCompleted 的通用消息 conformance 条款。
-  当前证据来自 core 与四 Driver 专项测试，不能据此宣称该退出条件已关闭。
+- adaptertest 已冻结 SPI 并验证 DRV/CAP/EVT/RUN/TRN/RSP/SES 与 MSG-01–MSG-10
+  条款，四 Driver 通过真实 transport fixture 接入消息一致性；平台不可用路径
+  明确说明，不以 skip 或 hermetic fixture 代替受支持平台及 live 验证。
 - 取消/Claim 竞态重复 1000 次、Linux race、约定时长 fuzz、全部 provider live
   仍需在发布环境逐项记录；本文件不以 hermetic fixture 替代 live 证据。

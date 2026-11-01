@@ -88,7 +88,7 @@ Notice selectors relevant to delivery and recovery:
 
 | Selector | Meaning |
 |---|---|
-| Kind `limit.approaching` | Approaching the turn limit; system wrap-up guidance is queued. |
+| Kind `limit.approaching` | Approaching the turn limit; wrap-up guidance may accompany pending continuation input. |
 | Kind `thread.continuity` | Fresh provider session after incompatibility or resume rejection. |
 | Kind `thread.persistence` | Storage unavailable; in-process checkpoint remains authoritative during retries. |
 | Kind `thread.ownership` | Standby lease release failed. |
@@ -108,7 +108,7 @@ The execution verdict has one Go error path:
 
 Done contains exactly this pair. Raw stdout/stderr, normalized Transcript, final Text, short Summary, observed Services, message outcomes, and schema output remain separate. Across provider turns, Text is the last turn's answer, Usage is summed, and audit streams include all invocations. Raw.Terminal is the last recognized official terminal payload.
 
-Cancel is idempotent. It cancels the execution context, fails pending messages, and unblocks producers and approval waiters. A Driver-claimed message is settled by its acknowledgement. Drain buffered critical events through Done and closure after cancellation.
+Cancel is idempotent. It cancels the execution context, fails pending messages, and unblocks producers and approval waiters. A Driver-claimed message is settled by its acknowledgement. Drain buffered critical events through Done and closure after cancellation. If cancellation causes Driver teardown to return a process/transport error, the final RunError remains ReasonCancelled and matches the context error with errors.Is; the teardown error remains available for diagnostics. A provider or approval failure already observed before cancellation keeps its original classification.
 
 For synchronous consumption, `agent.Send(ctx, prompt).Result()` needs no event-draining goroutine. If Events was never called, Result discards ordinary traffic and retains critical events plus a Dropped summary. Events may be read afterwards, but that is not a full ordinary-event replay. An Events subscriber that disconnects should cancel and drain the remaining critical events.
 
@@ -165,7 +165,7 @@ func decide(ctx context.Context, req *adaptor.ApprovalRequest) error {
 
 Subscribe to `*ApprovalRequest` for a UI and retain its live responder in host storage. Approve, Deny, and Answer resolve exactly once, including forwarded copies. Origin identifies an optional member/task; Forward preserves the same responder while attributing a copy. Kind mismatches, expiry, duplicate replies, and zero/unbound requests return stable errors promptly. Policy.Approvals owns timeout, rejection, and retry handling.
 
-A Standby internally consumes execution events even before an external subscriber. Configure OnApproval or an explicit approval policy when no UI will answer; do not rely on Result-only detection for Standby.
+Standby's internal event drain does not count as a host approval subscription. Without an external Events subscriber or OnApproval handler, a new Ask request takes the same immediate timeout fallback. Install a handler or use a supported automatic policy for unattended Standby.
 
 ## 8. AG-UI bridge
 
@@ -180,6 +180,25 @@ for event := range agui.EventsContext(ctx, stream) {
 Import `github.com/agent-dance/agent-adaptor/v2/bridges/agui`. EventsContext emits RUN_STARTED first, completes text/thinking/tool boundaries, and derives one RUN_FINISHED/RUN_ERROR from Stream.Result after draining. This is the same authoritative outcome carried by Done. MessageUpdate and TurnEnd become custom `message.update` and `turn.end` events; raw process chunks have no AG-UI projection. Approvals can map to tool-call or custom events.
 
 Cancellation ends downstream sends and cancels the underlying execution. Use EventsContext for request-scoped consumers. `RunAgentInput` extracts the last non-empty user text; `UserTurnEvents` synthesizes a user text lifecycle. Drivers emit assistant text.
+
+### Routing input to an active execution
+
+`agui.ThreadKey(threadID)` maps a frontend thread ID to the same collision-free SDK key used by SessionKey and UserTurnEvents. A zero-value `agui.RunRegistry` is ready for concurrent use:
+
+- `Send(ctx, thread, input, opts...)` starts `Thread.Send` when idle, or calls the registered `Stream.Send` with the last user message ID, human author, and Soon timing. It returns the Stream, a bool indicating supplementation, and an admission error.
+- `Active(threadKey)` looks up a Stream without consuming its events. `SendActive(ctx, threadKey, input)` supplements only an existing execution; absent or finishing runs return a MessageError matching ErrRunFinished and do not start replacement work.
+- `Forget(threadKey, stream)` removes that completed Stream without erasing a newer registration. The host must call it after Events closes and Result returns, including failures.
+
+Only the caller that creates the Stream consumes Events and Result. Concurrent supplement routes return admission acknowledgements; delivery receipts remain on the original event stream. RunRegistry passes the sender context unchanged to Stream.Send: cancellation can withdraw unclaimed input even after Send returns nil. Once claimed, the Driver acknowledgement settles it. Hosts choosing an HTTP lifetime independent of the request must supply that context explicitly. New-run options do not reconfigure an active Stream. Hosts wanting continuous conversations can retain a Thread.Standby handle instead.
+
+The [CopilotKit example](../examples/web-chat/copilotkit) implements `POST /message` with `{threadId, messageId, text}`. Success is HTTP 202 with `{runId, messageId, state: "accepted"}`; actual delivery is reported over the original SSE stream. The endpoint checks the request context before dispatch, then explicitly passes `context.WithoutCancel(requestCtx)` to the active Stream. Once dispatch begins, disconnecting the supplement request neither withdraws the input nor stops a queue-space wait; Stream cancellation or completion releases that wait. The original /agent execution remains tied to its own SSE request context. No active run or a finished run yields 409, other MessageError admissions 422, context cancellation/deadline 408, and infrastructure/history errors 500. If history storage fails after admission, the 500 response still includes `state: "accepted"`; retry decisions must preserve that fact and the original message ID. Malformed input is 400 and an oversized body is 413.
+
+### Recording and replay
+
+`hosttools/sessionrecorder` stores stable typed Event envelopes with a host-owned, cross-run HostSeq cursor. Done and TurnEnd record only RunID, Turns, Text, Summary and error identity by default, including safe partial results from RunError. Configure `sessionrecorder.WithExposure(sessionrecorder.ExposurePolicy{...})` as an EventOption when constructing an EventRecorder to opt in to `IncludeMetadata`, `IncludeUsage`, `IncludeRawStreams`, `IncludeProviderResult`, `IncludeTranscript`, or `IncludeServices`.
+
+Metadata includes provider/model identity, result metadata and business-error details; Usage preserves observed zero values. Raw streams, terminal payloads, transcripts and service reports replay through `EventRecord.Diagnostics`, not by rebuilding Result's private audit fields. ExposurePolicy only filters these terminal snapshots: the host remains responsible for redacting other event types. A replayed ApprovalRequest has no live responder; answer the retained live request through the host's approval route.
+
 
 ## 9. HTTP SSE bridge
 
@@ -217,7 +236,7 @@ Runnable servers and clients are in [`web-chat`](../examples/web-chat), [`aguicl
 
 | Driver | Native | TokenLevel | Reasoning | ToolCallArgs | HITL |
 |---|---:|---:|---:|---:|---:|
-| Codex | yes | yes | yes | yes | no |
+| Codex | yes | yes | yes | yes | yes |
 | Claude | yes | yes | yes | yes | yes |
 | Cursor | no | no | no | no | no |
 | CodeBuddy | yes | yes | yes | yes | yes |
@@ -243,7 +262,7 @@ This matrix comes from Descriptor.Messages, invocation resolvers, and message te
 
 Zero MaxUnits is not a promise of unlimited provider capacity. Core measures the **framed** text, including author guidance/custom Format. Cursor reserves 64 units for its nonce wrapper out of the provider's 10000-unit hook budget, leaving MaxUnits=9936 for core-framed input. Batches that exceed the hook budget requeue excess input for continuation. Cursor retains this per-message limit even when its tool boundary is trimmed.
 
-These are declarations, not runtime version certification. The current EnvironmentReport exposes health checks, not a resolved Messages matrix, and no general MinVersion gate is enforced by core. Ensure your CLI meets the listed minimum. Actual hook initialization, workspace eligibility, transport, and policy can narrow delivery. Pi/OpenCode and the proposal's ACP presets are not v2 integrations in this tree.
+Built-in environment probes expose the detected CLI `Version` and effective `Messages` capability. Codex, Claude, and Cursor trim in-run boundaries and Interrupt when a known version is below MinVersion, retaining turn-end checkpoint resume and framed-message limits. An execution emits one lifecycle Notice with code `<driver>_version_unsupported` when it falls back. Unknown or unparseable versions produce a probe warning and retain declared capability; they do not certify support. Version detection uses the configured executable and caches by file identity, size, and modification time. Inspect can prime this cache without starting an agent task. Transport, workspace eligibility, hook initialization, and policy can further narrow delivery. Pi/OpenCode and the proposal's ACP presets are not v2 integrations in this tree.
 
 Only Codex declares PersistsDelivered=true. Core preserves bounded delivered guidance for other Drivers and replays it on resume as needed. ConfirmedDelivery refers to a provider echo for boundary injection, not confirmation that the model obeyed it; other deliveries are acknowledged through their concrete transport's acceptance/write path.
 
@@ -274,6 +293,8 @@ Nil means admitted. MessageUpdate emits Accepted, Delivered, or Failed; a bounda
 Stream.Send accepts only MessageOption. Admission failure returns MessageError with original ID/Text/Reason and a wrapped cause; errors.Is detects ErrRunFinished, ErrMessageUnsupported, or context cancellation. The send context withdraws only unclaimed input. Once claimed, the acknowledgement wins. Queue capacity defaults to 32 and blocks senders until space or cancellation.
 
 MessageID deduplicates within the Thread; at most 1000 delivered IDs are retained for seven days. Starting-prompt duplicates finish with zero turns and empty Text. Durable deduplication requires a durable store. A crash after provider acceptance and before receipt persistence can replay input. A third-party Driver with in-run continuation but no resume cannot recover input admitted at its final boundary race; the outcome is failed, never silently dropped.
+
+An execution preparation failure before any Driver.Run dispatch returns every already admitted input as failed/provider_rejected with its original text; Standby does not carry it into a later execution with potentially different settings. Policy/schema errors that can be validated synchronously reject admission with MessageError and produce no MessageUpdate. After Driver dispatch, ordinary execution failures continue to use run_failed and the documented Standby carry/retry rules.
 
 Boundary-specific failures such as an RPC timeout, turn-ID mismatch, relay failure, or missing echo requeue input for turn-end continuation. Ambiguous delivery carries a possible-duplicate note. Cancellation, execution failure, unavailable healthy checkpoint, or MaxTurns exhaustion can still fail the message.
 

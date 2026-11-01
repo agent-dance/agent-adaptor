@@ -66,17 +66,27 @@ selected team Thread or provide host routing around separate handlers.
 
 ### Follow-up messages and busy conversations
 
-Sequential requests with the same bound context use the same Thread. Task-mode
-`Thread.Send` on a busy conversation returns `ErrThreadBusy`; the bridge maps
-execution errors to failed task status rather than silently joining work.
+Sequential requests with the same bound context use the same Thread. A message
+with an active taskId routes to that task's Stream.Send rather than starting a
+second execution. The wire message ID becomes MessageID; user/agent roles map to
+human/agent authors, and a remote sender cannot claim host-system authority.
+A supplied contextId must agree with the task. Supplements may carry only
+message options; execution options cannot reconfigure active work.
 
-The current bridge executor starts `target.Send` for each execution request. It
-does not route a message carrying a working task ID to that task's active
-`Stream.Send`. An upstream handler may reject the operation before execution;
-hosts must not assume active-task supplementation is available from this server.
-Remote team members can send same-task messages to other A2A endpoints that
-support them. This is a limit of the current bridge, despite the proposal's
-active-task routing design.
+A request with a busy contextId but no taskId returns an explicit invalid-request
+error with `code: "task_in_progress"` and the activeTaskId. A terminal task returns
+`task_finished`; other rejected input returns `message_rejected` with task/message
+IDs. The bridge never silently creates replacement work for a finished task.
+
+Before dispatching a supplement, the router checks the request context, then
+explicitly passes context.WithoutCancel(ctx) to Stream.Send. Once dispatch begins,
+HTTP disconnection cannot withdraw that input, and a queue-space wait can continue
+until capacity is available or the execution ends/cancels. A successful response
+acknowledges admission, not delivery: MessageUpdate receipts remain on the original
+task stream. Streaming sends subscribe before admission so fast receipts cannot
+outrun their subscription. If the network leaves admission uncertain, retry with
+the same MessageID. This protocol lifetime is chosen by the A2A router; native
+Stream.Send retains its cancellation-until-Claim contract.
 
 ### Prompt and call options
 
@@ -97,12 +107,15 @@ Intermediate typed events use DataParts with schema `adapter.stream.v1`. The exp
 
 The wire envelope preserves adaptor `EventMeta`, opt-in provider source
 coordinates, complete tool snapshots, approval lifecycle fields and detailed
-dropped-event markers for the supported event kinds. Process output and ordinary
-notices remain local. `TurnEnd`, `MessageUpdate`, `SubagentUpdate` and `Done` do
-not currently have A2A DataPart projections; a published Team therefore does not
-expose its complete local worker event stream over this wire schema. Use the
-local Event stream or AG-UI for task/member updates. Oversized or unencodable
-supported frames produce explicit dropped markers. Unknown DataPart schemas
+dropped-event markers for the supported event kinds. MessageUpdate and TurnEnd
+use `message.update` and `turn.end` DataParts. The final protocol status carries
+one `done` DataPart after terminal artifacts, derived from the authoritative
+Result/error; lifecycle snapshots expose only safe fields unless diagnostics
+are enabled. Process output, ordinary notices and SubagentUpdate remain local,
+so a published Team does not expose its complete worker event stream over this
+wire schema. Use the local Event stream or AG-UI for task/member updates.
+Oversized or unencodable supported frames produce explicit dropped markers.
+Unknown DataPart schemas
 remain protocol data; the bridge does not guess provider semantics.
 
 `IncludeHITL` exposes lifecycle data only. `DecodeAdapterEventV1` cannot recreate

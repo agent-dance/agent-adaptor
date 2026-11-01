@@ -71,25 +71,78 @@ Browser
 - Node.js 20+ + npm
 - 选用的 `codex` / `claude` / `cursor` CLI 已安装、已登录，并且 `--help` 可运行
 
-前端依赖固定使用 CopilotKit 1.63.2 与 `next@16.3.0-preview.8`。选择该
-Next preview 是因为截至冻结日最新 stable 16.2.12 仍落在已公开的 high
-advisory 范围内；同时以局部 `overrides` 将 Hono、PostCSS、fast-uri 提升到
-兼容的安全补丁版本，并更新 MCP SDK、DOMPurify、Mermaid 等仍在兼容范围内的
-传递依赖。lockfile 只保存 npm 官方 registry URL，CI 会执行 fresh `npm ci`、
-lint、build 与 `npm audit --omit=dev --audit-level=high`。冻结时 production tree
-没有 high/critical；剩余 moderate/low 来自 CopilotKit Runtime 尚未接受的
-`@hono/node-server`/`uuid` major 以及暂无已发布修复的上游链路，因此没有用
-`npm audit fix --force` 或不兼容的全局 override 掩盖风险。
+前端依赖固定使用 CopilotKit 1.83.0、`@ag-ui/client` 1.0.2（与 CopilotKit
+内部精确依赖的版本一致，避免出现两份 `HttpAgent`/`AbstractAgent`）以及
+stable `next@16.4.3`。CopilotKit 1.83 自带 AG-UI 1.0 客户端，会按 1.0 schema
+校验事件流（例如 `CUSTOM.value` 必填）。后端 `bridges/agui` 为没有 payload 的
+CUSTOM 事件发送空对象，文本、thinking 和 tool 流已通过这两个客户端版本验证。
+
+上游仍未修复的链路通过 `overrides` 提升，并都验证过运行时兼容：
+
+- `zod` → 4.6.7（GHSA-mrhx-c7xc-m3w5 没有 3.x 修复）。`@ag-ui/client` 已改用
+  `zod/v4` 子路径，`@ag-ui/core` 声明支持 `^4`，CopilotKit 的
+  `schemaToJsonSchema` 优先走 zod 4 原生 `toJSONSchema()`；默认解析下顶层
+  zod 本来就是 4.x。override 只影响 `@ag-ui/proto`（运行时不 import zod）、
+  `@copilotkit/shared`（`describe`/`any` 等 zod 4 仍保留的 API）以及 A2UI
+  链路 `@a2ui/web_core`/`@copilotkit/a2ui-renderer` 的嵌套副本；本示例的
+  Runtime 未启用 A2UI（`/info` 返回 `a2uiEnabled: false`）。
+- `undici` → 6.29.1：`@ai-sdk/provider-utils@3`（经 `@ai-sdk/google-vertex@3`）
+  声明 `^5.29.0`，5.x 没有修复；它只用 `Agent` + `fetch({ dispatcher })`，与
+  `provider-utils@4` 搭配 undici 6 的用法相同。同时移除了 undici 5 带入的
+  `@fastify/busboy` 2.x。
+- `graphql-scalars` → 2.0.1（GHSA-x8rm-f576-gq67）：Runtime 与 `type-graphql`
+  只使用 `GraphQLJSON`、`GraphQLJSONObject`、`GraphQLTimestamp`、
+  `GraphQLDateTimeISO`，2.0.1 仍导出这四个 scalar。
+
+lockfile 只保存 npm 官方 registry URL，CI 会执行 fresh `npm ci`、lint、build 与
+`npm audit --omit=dev --audit-level=high`。冻结时 production tree 没有
+high/critical；剩余项低于 CI 阈值：
+
+- `@hono/node-server` 1.19.17（moderate，GHSA-rmxm-3fg6-px4f）：修复只在 2.x，
+  CopilotKit Runtime 与 MCP SDK 仍要求 1.x；该漏洞位于 `serveStatic`，本示例
+  只通过 Next.js route handler 使用 Runtime，不走这条路径。
+- `katex` 0.16.x（low，GHSA-238p-pmpm-9mq7）及其 `streamdown`/`mermaid`/
+  `remark-math` 依赖链：修复在 0.18.2，`@copilotkit/react-core` 仍锁 `^0.16`；
+  它只在浏览器中渲染本地 agent 输出的数学公式。
+
+因此没有用 `npm audit fix --force`（它会把 CopilotKit 降到 1.54）掩盖风险。
 
 ## 后端 HTTP 端点
 
 | 路径 | 方法 | 用途 |
 | --- | --- | --- |
 | `/agent` | POST | AG-UI RunAgentInput -> SSE 流 |
+| `/message` | POST | 向同一 thread 的活动 Stream 补充输入，返回 JSON 接纳回执 |
 | `/session/events` | GET | 历史事件重放 |
 | `/decision/pending` | GET | 未解决的决策请求 |
 | `/decision/resolve` | POST | 宿主回填 HITL 决策 |
 | `/health` | GET | 就绪检查 |
+
+运行中可以使用聊天框下的 **Add guidance to the active run** 输入约束或补充信息。
+它通过普通 JSON 请求 `/api/supplement`，由 Next.js 转发到后端 `/message`；
+当前 SSE 流继续交付 `MessageUpdate`，不会重新启动任务。
+
+请求与成功响应示例：
+
+```json
+{"threadId":"conversation-42","messageId":"guidance-8","text":"Keep the public API unchanged"}
+```
+
+```json
+{"runId":"run_...","messageId":"guidance-8","state":"accepted"}
+```
+
+`202` 只表示输入已接纳，实际投递仍以原 SSE 流的回执为准。后端在派送前检查请求
+context，随后显式使用 `context.WithoutCancel(requestCtx)` 发送到活动 Stream。
+派送一旦开始，补充请求断开不会撤回输入，也不会终止队列满时的等待；当前执行
+结束或 Cancel 会解除等待。原 `/agent` 执行仍绑定自己的 SSE 请求 context。
+没有活动执行或执行已结束返回 `409`，其他
+`MessageError`（例如不支持或超出消息大小限制）返回 `422`，context 取消或截止返回
+`408`，基础设施错误返回 `500`；无效请求为 `400`，请求体过大为 `413`。
+
+如果后端已接纳但保存聊天历史失败，`500` 响应仍包含 `state: "accepted"`，UI 会保留
+“已接纳”的事实并报告保存错误；网络故障导致接纳状态不明时，保留文本并用
+同一个 `MessageID` 重试。
 
 ## 环境变量
 
@@ -136,20 +189,22 @@ projects their lifecycles into Activity messages with
 Use the task handle for task identity and `Member` for roster identity. There
 is no separate delegation bus or extra subagent merge to attach.
 
-The frontend can render provider names, worker text and structured `PLAN.md`
-attachments when those fields are supplied. Current Team updates carry typed
-state/delta/summary but do not populate the older Activity detail fields used
-by those rich renderers. Do not assume provider badges, live text or plan
-attachments are available from this showcase. Full local worker results and
-Remote protocol artifacts are available through the host's Team TaskStore;
-this backend does not expose a TaskStore download endpoint.
+The frontend renders member/provider labels, live worker text and structured
+`PLAN.md` attachments. Team supplies the member display name, objective and
+observed update time; worker text deltas accumulate in Activity text. Terminal
+updates include safe result text, summary, model, provider and decoded output
+when available, so the planner's structured output becomes a downloadable plan.
+Worker tool and thinking events are not all forwarded to these cards. Full
+local worker results and Remote protocol artifacts remain in the host's Team
+TaskStore; this backend does not expose a TaskStore download endpoint.
 
-The maintained backend here uses task-mode `Thread.Send`. The showcase publishes
-a Team Runner through request-scoped SSE. Neither example is a Standby UI or
-an endpoint for supplementing an active execution. A host adding ongoing chat
-should create `Team.Thread(key).Standby(serverCtx)`, subscribe once and broadcast
-its events; route user input through `Standby.Send` and a stop button through
-`Standby.Cancel`. Task-mode sends to a busy named scope report `ErrThreadBusy`.
+The maintained backend here uses task-mode `Thread.Send` and routes `/message`
+to the current `Stream.Send`. The showcase publishes a Team Runner through
+request-scoped SSE. These examples do not provide a Standby UI. A host adding
+ongoing chat can create `Team.Thread(key).Standby(serverCtx)`, subscribe once and
+broadcast its events; route user input through `Standby.Send` and a stop button
+through `Standby.Cancel`. Task-mode sends to a busy named scope report
+`ErrThreadBusy`.
 
 For Remote members, the host provides Agent Card URL, trusted-origin auth and
 policy in `RemoteSpec`; no per-member A2A server is needed for local members.

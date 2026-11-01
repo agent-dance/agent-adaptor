@@ -175,6 +175,13 @@ Events before the first `Events()` subscription are not buffered.
 
 `Standby.Send` accepts call options. Message-only input can join the current
 team execution; input with execution options waits for its own execution.
+Its request context bounds admission until the input is saved to the durable
+inbox. Successful persistence transfers the input to the Standby lifetime, even
+if the request context ends before `Send` returns. Busy supplements are forwarded
+in admission order under that lifetime. A provider that subsequently rejects
+admission produces a failed `MessageUpdate` with the original ID and text;
+successful Standby admission does not promise provider delivery. Invalid author
+or timing values are rejected before persistence.
 `Standby.Cancel()` cancels current processing and queued messages while keeping
 the Standby usable. End the lifetime context to leave Standby.
 
@@ -305,6 +312,16 @@ started, delta, peer message, state changes and finished. States are `queued`,
 Remote protocol observations are state updates, not invented token deltas.
 Worker tool/thinking/turn events are not all forwarded as top-level leader
 events; use `Task.Result` for full local worker audit data.
+
+Presentation details in `Data` include `agent_name` (the configured `Member.Name`,
+or its key), `remote_protocol` (`local` or `a2a`), `description` (the objective),
+and the observed task update time. Finished updates also include final `text`
+and a `result` containing only text, summary, model, provider and the value from
+`Result.Decode`, when available. Raw output, transcripts, service reports and
+runtime metadata are not copied into this presentation payload. The AG-UI bridge
+uses these fields and typed text deltas to populate worker Activity cards,
+including provider display names and structured attachments such as `PLAN.md`.
+Approval waiting maps to `input_required`; interrupted tasks map to `failed`.
 
 Team assigns one RunID and receive-order sequence to the execution stream;
 source coordinates are retained where supplied. Incremental events may be

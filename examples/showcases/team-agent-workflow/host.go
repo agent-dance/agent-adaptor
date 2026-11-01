@@ -132,7 +132,7 @@ func newStageAudit(dir string) *stageAudit {
 
 // Record snapshots the workspace under a stage label. It is wired as the
 // observed decorator's completion hook, so a stage is recorded the moment its
-// role's run resolves — Run and Stream alike.
+// role's Send invocation resolves.
 func (a *stageAudit) Record(stage string) {
 	a.stages = append(a.stages, stageSnapshot{Stage: stage, At: time.Now(), Files: fingerprint(a.dir)})
 }

@@ -56,7 +56,7 @@ FallbackAbort terminates the execution with a business error. FallbackContinue f
 
 If an Ask request arrives when Events has never been called and there is no OnApproval handler, core immediately applies the timeout fallback and emits a lifecycle notice. A Result-only caller does not wait for an approval timeout. Call Events early for a UI, install a callback, or select a supported automatic mode.
 
-Standby internally drains its execution streams. When no external UI will answer, configure a handler or automatic policy explicitly; the Result-only shortcut is not an unattended Standby policy.
+Standby internally drains its execution streams, but that internal drain does not count as a host approval subscription. Without an external Events subscriber or OnApproval handler, a new Ask request takes the immediate timeout fallback. Configure a handler or a supported automatic policy for unattended operation.
 
 ## Message policy
 
@@ -77,9 +77,11 @@ MessagePolicy fields:
 - MaxPending: unclaimed queue capacity; zero means 32. Full queues block Send until space or cancellation, never silently drop input.
 - MaxTurns: provider turns per execution; zero means 20. Negative limits are invalid.
 
+Before any Driver.Run dispatch, an execution preparation failure returns every already admitted input as failed/provider_rejected with its original text. Standby does not carry these inputs into a later execution with different options. Policy/schema errors that can be checked synchronously reject with MessageError and emit no MessageUpdate. Once a Driver has been dispatched, ordinary failures use run_failed and the documented Standby carry/retry rules.
+
 Framing distinguishes AuthorHuman, AuthorAgent, and AuthorSystem, preserves the original objective, and asks the model to incorporate input into one final answer. Only supplemental input is framed; a starting prompt remains raw. A custom Format controls that text and must retain whatever author/authority guidance the host requires. Driver size limits apply to the framed text.
 
-Near 80% of the turn limit, core emits `Notice{Kind: "limit.approaching"}` and, when continuation is available, adds a system wrap-up message. At the limit, it starts no more turns. Pending input fails with MessageLimitExceeded and remains in Result.Undelivered; the execution itself can succeed. MaxTurns does not bound one provider turn's internal tool/model steps; use WithTimeout and provider configuration where appropriate.
+When MaxTurns is at least 2 and continuation is available, core emits `Notice{Kind: "limit.approaching"}` after `min(ceil(0.8 * MaxTurns), MaxTurns - 1)` completed turns. A system wrap-up message can accompany an existing continuation batch; it never starts a turn by itself or displaces host input. If the framed batch would exceed the Driver's resolved size limit, guidance is deferred or omitted while the Notice remains observable. At the limit, core starts no more turns. Pending input fails with MessageLimitExceeded and remains in Result.Undelivered; the execution itself can succeed. MaxTurns does not bound one provider turn's internal tool/model steps; use WithTimeout and provider configuration where appropriate.
 
 When selects Soon, Interrupt, or AfterTurn per message; it does not replace Policy. Unsupported Interrupt requests fail explicitly rather than degrading. See the [Driver message matrix](./streaming.md#12-message-delivery-capabilities).
 
@@ -102,14 +104,16 @@ Current built-in declarations:
 
 | Driver | Sandbox | Web search | Browser | Permission | Plan review | Question | Approval retry |
 |---|---:|---:|---:|---|---|---|---:|
-| Codex | yes | yes | no | auto-approve | none | none | no |
+| Codex | yes | yes | no | ask, auto-approve, auto-deny | none | none | no |
 | Claude | no | no | yes | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
 | Cursor | no | no | no | auto-approve | none | none | no |
 | CodeBuddy | no | no | no | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
 
 An unsupported SDK sandbox control does not describe the strength of an externally configured provider environment. The SDK reports only controls it can honor. Validate against the captured Driver used by the Agent.
 
-Message capabilities are independent of this table: Codex app-server supports Interrupt; Claude, Cursor, and CodeBuddy do not. MinVersion is a Driver declaration, not an enforced Environment probe gate in this implementation.
+Codex Permission Ask and auto-deny select app-server. MCP permission requests reach the same ApprovalRequest responder as command/file approvals. Input-requiring MCP elicitation is not a supported Question capability. SDK-declared MCP servers remain enabled under every sandbox level: auto-approve renders a server default of `approve`, while Ask and auto-deny render `prompt` and use the approval decision path. ReadOnly constrains the provider filesystem/shell sandbox; it does not disable host-defined tools. Servers inherited from a native profile retain their own configuration.
+
+Message capabilities are independent of this table: Codex app-server supports Interrupt; Claude, Cursor, and CodeBuddy do not. Built-in Codex, Claude, and Cursor resolvers compare the detected CLI version with MinVersion, disable in-run delivery on known older versions, and retain checkpoint-resume continuation. Environment reports include the detected Version and effective Messages; unknown versions warn and keep the declaration. See [streaming](./streaming.md#12-message-delivery-capabilities).
 
 ## Callback form
 

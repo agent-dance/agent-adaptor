@@ -45,9 +45,8 @@ func main() {
 
 	ai := adaptor.New(exampleutil.NewLiveDriver(agentCfg))
 
-	// Stream never returns an error: startup failures close Events() and
-	// surface through Result(). The verb is the switch — Run for batch,
-	// Stream for live.
+	// Send returns a Stream immediately. Startup failures surface through
+	// Result() and the final Done event; Events() delivers live progress.
 	stream := ai.Send(ctx, *prompt)
 	defer stream.Cancel()
 

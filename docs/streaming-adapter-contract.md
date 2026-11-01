@@ -48,7 +48,7 @@ a complete Response, including raw output and transcript.
 | MaxUnits / Unit | Limit on each **framed** input; zero is no known limit, empty unit means bytes; Unit is the typed `MessageUnitBytes` or `MessageUnitUTF16` |
 | ConfirmedDelivery | A delivered Ack requires an official provider echo, rather than successful transport submission |
 | PersistsDelivered | Delivered input remains in provider history after later resume |
-| MinVersion | Minimum supported CLI version; declaration alone is not an installed-version probe |
+| MinVersion | Minimum supported CLI version; built-in resolvers gate in-run delivery on a detected version, while third-party Drivers must implement their own truthful resolution |
 
 The zero capability declares no mid-turn delivery and no interrupt. It still
 allows core continuation when the Driver supports resume. Without resume or
@@ -63,9 +63,14 @@ use the static declaration; core reconciles unclaimed queued input against the
 resolved capability before dispatch. An invalidated queued item fails with its
 original text. Claimed input remains owned by Ack.
 
-Do not assert that Inspect checks MinVersion unless the implementation actually
-does so. The current built-in environment probes do not trim message capability
-by installed CLI version.
+The built-in Codex, Claude, and Cursor resolvers and environment probes detect
+the configured CLI version and trim in-run delivery below MinVersion. Environment
+reports include Version and the effective Messages capability; execution emits one
+`<driver>_version_unsupported` lifecycle Notice and leaves pending input for core
+resume. Unknown versions retain the declared capability and report a warning.
+The version probe is cached by executable identity, size, and modification time.
+Third-party Drivers must implement their own runtime resolution; a MinVersion
+string alone does not make core probe an arbitrary executable.
 
 ## 3. MessagePort lifetime and delivery windows
 

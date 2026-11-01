@@ -208,7 +208,7 @@ HITL 只通过 ApprovalRequest 表达：
 
 - core 拥有队列、顺序、ID 去重、framing、取消与记账；Request.Messages 为本轮 MessagePort，禁用时为 nil。Driver 不得持有独立语义队列，不得在 Run 返回后使用 port 或 sink。
 - MessageCapability 只声明已验证的 immediate/tool/stop 边界、Interrupt、ContinueMode、framed MaxUnits/MessageUnit、ConfirmedDelivery、PersistsDelivered、MinVersion。turn_end 对可续跑 Driver 隐含，不要求列入 Boundaries；零值表示无中途边界、无打断、支持 resume 时由 core 续接。
-- MessageCapabilityResolver 每 invocation 按最终解析 Request 协商，与实际 transport 一致，不能超出 Descriptor。core 在派发前原子修正能力与预排队消息；不支持 Interrupt 必须拒绝，不得降成 Soon。MinVersion 只是最低版本要求，未做本机探测不得声称已验证。
+- MessageCapabilityResolver 每 invocation 按最终解析 Request 协商，与实际 transport 一致，不能超出 Descriptor。core 在派发前原子修正能力与预排队消息；不支持 Interrupt 必须拒绝，不得降成 Soon。内置 Driver 必须探测本机 CLI 版本；低于 MinVersion、版本未知或探测失败时裁掉未经验证的中途边界并 Notice，保留可用的 core resume。Inspect.Environment 报告同一版本与有效能力。
 - Window(true) 只能来自 provider 确认的活跃窗口，结束时必须 Window(false)；不得把本地进程启动等同于可投递。push Driver 监听 Signal，hook Driver 在真实回调中 Claim。
 - Claim 原子领取边界可交付项，保持接纳顺序；Soon 可在任意允许边界、AfterTurn 只在 turn_end、Interrupt 只在 immediate。Text 已包装，必须逐字交付。
 - Claim 后每项必须恰好一次 Ack，且发生在 Run 返回前。调用方 ctx/Cancel 不得抢先结算已 Claim 项；Driver 仍必须响应运行取消并停止 I/O、结算所有 claim。
@@ -229,7 +229,7 @@ checkpoint 安全合同：
 - 无健康新 checkpoint 时必须保持之前健康 resume state。已交付的临时指导与回执可在仍持 ownership 的既有健康 state 上保存，但不得推进失败 provider 状态。
 - Claude、Cursor、CodeBuddy、Codex CLI/app-server 分别覆盖成功、非零退出、畸形协议、缺失 terminal/checkpoint 与取消；app-server 不得降低 Raw、Transcript、terminal payload 合同。
 
-SPI 的 MUST/SHOULD、事件生命周期、Sequence/Seq 权威性、SessionCodec nil/零值映射与能力蕴含关系，必须与 godoc、API golden、adaptertest 及 Driver 专项合同测试一致；通用一致性套件尚未覆盖的消息条款必须保留为发布缺口，不得声称已通过。
+SPI 的 MUST/SHOULD、事件生命周期、Sequence/Seq 权威性、SessionCodec nil/零值映射与能力蕴含关系，必须与 godoc、API golden、adaptertest 及 Driver 专项合同测试一致。adaptertest 的 MSG-01–MSG-10 覆盖消息投递通用条款；各 Driver 仍须提供真实 transport fixture，不得以能力降级或跳过代替验证。
 
 ## 10. Inspect、tool、skill、MCP、profile 与 runtime
 
@@ -307,7 +307,7 @@ v1 已硬化的单管线、Fork、lease/token、fingerprint、key 编码、check
 - 各 Driver messages/handshake/relay 测试：真实能力声明、每轮完成、确认与降级路径；Codex 另有双门控消息 live 测试。
 - testdata/root_api.golden 与 adaptertest/testdata/driver_api.golden：最终公共 AST 导出面。
 
-不得把上述测试存在等同于发布门禁全部通过。当前 adaptertest 未提供 MessagePort/MessageCapability/TurnCompleted 的通用消息一致性条款；最低 CLI 版本没有自动探测，未授权 live 与 Linux race/fuzz 结果也不得伪称已完成。
+不得把上述测试存在等同于发布门禁全部通过。adaptertest 已提供 MessagePort/MessageCapability/TurnCompleted 的 MSG-01–MSG-10 通用消息一致性条款，四个内置 Driver 接入其 transport fixture；最低 CLI 版本探测与有效能力裁剪已有回归覆盖。live、Linux race/fuzz 与重复竞态验证仍须逐项记录实际结果。
 
 代码、godoc、测试或权威文档出现合同矛盾时必须重新打开审计项；单纯测试通过不能代替修复。
 
