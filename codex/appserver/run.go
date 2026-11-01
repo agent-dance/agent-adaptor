@@ -171,13 +171,14 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		if readErr := stream.ReadError(); readErr != nil {
 			state.recordProtocolError(fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
 		}
-		var cancellation error
-		if errors.Is(primary, context.Canceled) || errors.Is(primary, context.DeadlineExceeded) {
-			cancellation = ctx.Err()
-		}
+		// Cancellation may race the terminal/disconnect select. The caller's
+		// context, rather than the selected transport error, owns this outcome.
+		cancellation := ctx.Err()
 		exitCode, signal, timedOut, waitFatal := processOutcome(waitErr, cancellation)
 		var finalErr error
-		if primary != nil {
+		if cancellation != nil {
+			finalErr = cancellation
+		} else if primary != nil {
 			finalErr = primary
 		} else if protocolErr := state.protocolError(); protocolErr != nil {
 			finalErr = protocolErr
@@ -186,7 +187,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		} else if waitFatal != nil {
 			finalErr = fmt.Errorf("codex app-server wait: %w", waitFatal)
 		}
-		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut)
+		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut, cancellation)
 		result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
 		// The official terminal is staged until the process outcome and native
 		// structured-output validation are known. This makes the final public
@@ -912,7 +913,7 @@ func (s *runState) hasTerminal() bool {
 	return s.terminal != nil
 }
 
-func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitCode int, signal string, timedOut bool) driver.Response {
+func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitCode int, signal string, timedOut bool, cancellation error) driver.Response {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -922,6 +923,13 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 			Message: fmt.Sprintf("codex app-server exited with status %d", exitCode),
 			Code:    driver.FailureAgentError,
 		}
+	}
+	if cancellation != nil {
+		if failure == nil {
+			failure = &driver.RunFailure{Message: cancellation.Error()}
+		}
+		failure.Code = driver.FailureCancelled
+		failure.HumanDecision = nil
 	}
 	var checkpoint *driver.Checkpoint
 	if threadID != "" && exitCode == 0 && signal == "" && !timedOut && s.protocolErr == nil && s.terminalStatus == TurnStatusCompleted && failure == nil {

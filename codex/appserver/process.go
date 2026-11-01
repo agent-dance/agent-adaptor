@@ -25,11 +25,12 @@ type Process struct {
 	stdout   *syncBuffer
 	stderr   *syncBuffer
 
-	turnMu  sync.Mutex
-	closeMu sync.Mutex
-	closed  bool
-	waitCh  chan struct{}
-	waitErr error
+	turnMu        sync.Mutex
+	closeMu       sync.Mutex
+	closed        bool
+	stopRequested bool // distinguishes our shutdown from an independent peer exit
+	waitCh        chan struct{}
+	waitErr       error
 }
 
 // Open spawns and initializes an app-server and starts or resumes one thread,
@@ -271,25 +272,37 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		}
 	}
 
+	// A peer exit/turn notification can win the select during caller cancel.
+	cancellation := ctx.Err()
+	p.closeMu.Lock()
+	if cancellation == nil && p.stopRequested {
+		cancellation = context.Canceled
+	}
+	p.closeMu.Unlock()
+	if cancellation != nil {
+		err = cancellation
+	}
 	exitCode, signal, timedOut := 0, "", false
 	if err != nil {
 		exitCode = -1
 		signal = err.Error()
 		timedOut = errors.Is(err, context.DeadlineExceeded)
 	}
-	result = state.snapshot(opts, p.threadID, p.stdout.Since(stdoutStart), p.stderr.Since(stderrStart), exitCode, signal, timedOut)
+	result = state.snapshot(opts, p.threadID, p.stdout.Since(stdoutStart), p.stderr.Since(stderrStart), exitCode, signal, timedOut, cancellation)
 	result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
 	state.finishPublicResult(result, err)
 	return result, promptSent, err
 }
 
 // TerminateAndWait kills the independently grouped process and reaps it.
+// An active turn reports FailureCancelled and cannot produce a checkpoint.
 func (p *Process) TerminateAndWait(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
 	p.closeMu.Lock()
 	if !p.closed {
+		p.stopRequested = true
 		p.closed = true
 		_ = p.client.Close()
 		p.cancel()
@@ -304,12 +317,14 @@ func (p *Process) TerminateAndWait(ctx context.Context) error {
 }
 
 // CloseGracefully closes stdin, then force-terminates after grace or ctx.
+// An active turn reports FailureCancelled and cannot produce a checkpoint.
 func (p *Process) CloseGracefully(ctx context.Context, grace time.Duration) error {
 	if p == nil {
 		return nil
 	}
 	p.closeMu.Lock()
 	if !p.closed {
+		p.stopRequested = true
 		p.closed = true
 		_ = p.client.Close()
 	}

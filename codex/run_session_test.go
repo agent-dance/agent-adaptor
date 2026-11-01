@@ -14,12 +14,13 @@ import (
 	"github.com/agent-dance/agent-adaptor/internal/testutil"
 )
 
-func TestCodexBatchRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
+func TestCodexBatchRunPreservesProcessOutcomeAndCancellation(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		posixBody   string
 		windowsBody string
 		cancel      bool
+		prompt      string
 	}{
 		{
 			name:        "exit without provider terminal",
@@ -31,6 +32,12 @@ func TestCodexBatchRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
 			posixBody:   "#!/bin/sh\ncat >/dev/null\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nexec sleep 30\n",
 			windowsBody: "@echo off\r\nset /p X=\r\necho partial stdout\r\n>&2 echo partial stderr\r\nping -n 31 127.0.0.1 >nul\r\n",
 			cancel:      true,
+		},
+		{
+			name:        "cancel with blocked prompt delivery",
+			posixBody:   "#!/bin/sh\nprintf 'partial stdout\\n'\nprintf 'partial stderr\\n' >&2\nexec sleep 30\n",
+			windowsBody: "@echo off\r\necho partial stdout\r\n>&2 echo partial stderr\r\nping -n 31 127.0.0.1 >nul\r\n",
+			cancel:      true, prompt: strings.Repeat("pending prompt", 100000),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,16 +53,27 @@ func TestCodexBatchRunPreservesUnclassifiedProcessOutcome(t *testing.T) {
 				// proves both raw streams have been produced before cancellation.
 				sink = testutil.NewChunkCancelRecorder(cancel, "stderr")
 			}
+			prompt := tc.prompt
+			if prompt == "" {
+				prompt = "go"
+			}
 			res, err := (adapter{}).Run(ctx, driver.Request{
-				Prompt:    "go",
-				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home}},
+				Prompt:    prompt,
+				Config:    Config{CommonConfig: CommonConfig{Command: command, CWD: home, Env: []driver.EnvBinding{{Name: "HOME", Value: home}, {Name: "CODEX_HOME", Value: filepath.Join(home, ".codex")}}}},
 				Workspace: driver.WorkspaceLease{CWD: home},
 			}, sink)
-			if err != nil {
+			if err != nil && (!tc.cancel || !errors.Is(err, context.Canceled)) {
 				t.Fatalf("Driver.Run error = %v", err)
 			}
-			if res.ExitCode == 0 || res.Failure != nil || res.Checkpoint != nil {
-				t.Fatalf("outcome = %+v, want abnormal fields with no provider classification/checkpoint", res)
+			if res.ExitCode == 0 || res.Checkpoint != nil {
+				t.Fatalf("abnormal outcome/checkpoint = %+v", res)
+			}
+			if tc.cancel {
+				if res.Failure == nil || res.Failure.Code != driver.FailureCancelled {
+					t.Fatalf("cancel classification = %#v", res.Failure)
+				}
+			} else if res.Failure != nil {
+				t.Fatalf("unclassified nonzero exit = %#v", res.Failure)
 			}
 			if tc.cancel && res.TimedOut {
 				t.Fatalf("TimedOut = true for explicit cancellation outcome: %+v", res)

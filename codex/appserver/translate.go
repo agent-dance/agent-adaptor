@@ -1,7 +1,9 @@
 package appserver
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -269,7 +271,11 @@ func (t *Translator) FinishError(err error) {
 	t.mu.Unlock()
 	payload := t.basePayload()
 	payload.Kind = driver.StreamRunError
-	payload.Error = &driver.RunFailure{Message: err.Error(), Code: driver.FailureAgentError}
+	code := driver.FailureAgentError
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		code = driver.FailureCancelled
+	}
+	payload.Error = &driver.RunFailure{Message: err.Error(), Code: code}
 	t.emit(payload)
 }
 

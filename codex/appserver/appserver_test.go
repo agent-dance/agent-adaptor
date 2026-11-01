@@ -398,7 +398,7 @@ func TestRunStateUsesTurnCompletedStatusAsSoleTerminal(t *testing.T) {
 			terminal := fmt.Sprintf(`{"threadId":"thread-1","turn":{"id":"turn-1","status":%q%s,"usage":{"inputTokens":3,"outputTokens":5}}}`, tc.status, errorField)
 			state.onNotification(NotifyTurnCompleted, json.RawMessage(terminal))
 
-			result := state.snapshot(Options{Model: "gpt-test"}, "thread-1", "wire stdout", "wire stderr", 0, "", false)
+			result := state.snapshot(Options{Model: "gpt-test"}, "thread-1", "wire stdout", "wire stderr", 0, "", false, nil)
 			if got := result.Output; got != "assistant text" {
 				t.Fatalf("Output = %q", got)
 			}
@@ -433,7 +433,7 @@ func TestRunStateOutputUsesOnlyLastCompletedAgentMessage(t *testing.T) {
 	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-final","turnId":"turn-final","item":{"id":"final","type":"agentMessage","text":"final answer"}}`))
 	state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-final","turn":{"id":"turn-final","status":"completed"}}`))
 
-	result := state.snapshot(Options{}, "thread-final", "", "", 0, "", false)
+	result := state.snapshot(Options{}, "thread-final", "", "", 0, "", false, nil)
 	if result.Output != "final answer" {
 		t.Fatalf("Output = %q, want final completed agent message", result.Output)
 	}
@@ -460,7 +460,7 @@ func TestRunStateRejectsWrongTurnBeforeAbsorbingSemanticOutput(t *testing.T) {
 	if err := state.protocolError(); err == nil || !strings.Contains(err.Error(), "belongs to turn") {
 		t.Fatalf("protocol error = %v", err)
 	}
-	result := state.snapshot(Options{}, "thread-expected", "raw", "", 0, "", false)
+	result := state.snapshot(Options{}, "thread-expected", "raw", "", 0, "", false, nil)
 	if result.Output != "" || result.Checkpoint != nil {
 		t.Fatalf("wrong-turn result = %#v", result)
 	}
@@ -511,7 +511,7 @@ func TestRunStateRejectsMalformedTypedDeltas(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "decode "+method) {
 				t.Fatalf("protocol error = %v", err)
 			}
-			result := state.snapshot(Options{}, "thread-delta", "raw", "", 0, "", false)
+			result := state.snapshot(Options{}, "thread-delta", "raw", "", 0, "", false, nil)
 			if result.Output != "" || result.Checkpoint != nil {
 				t.Fatalf("malformed delta result = %#v", result)
 			}
@@ -539,7 +539,7 @@ func TestRunStateQueuesNotificationsUntilRPCIdentitiesAreKnown(t *testing.T) {
 
 	state.setThread("thread-pending")
 	state.setTurn("turn-pending")
-	result := state.snapshot(Options{}, "thread-pending", "", "", 0, "", false)
+	result := state.snapshot(Options{}, "thread-pending", "", "", 0, "", false, nil)
 	if result.Output != "final after RPC" || result.Checkpoint == nil || !result.Checkpoint.Valid {
 		t.Fatalf("flushed pending result = %#v", result)
 	}
@@ -598,7 +598,7 @@ func TestRunStateTranscriptAlwaysMirrorsItemEvents(t *testing.T) {
 	state.onNotification(NotifyError, json.RawMessage(`{"threadId":"thread-mirror","turnId":"turn-mirror","willRetry":true,"error":{"message":"retrying provider request"}}`))
 	state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-mirror","turn":{"id":"turn-mirror","status":"completed","usage":{"inputTokens":2,"outputTokens":3}}}`))
 
-	result := state.snapshot(Options{}, "thread-mirror", "raw stdout", "", 0, "", false)
+	result := state.snapshot(Options{}, "thread-mirror", "raw stdout", "", 0, "", false, nil)
 	state.finishPublicResult(result, nil)
 	verifyAppserverContracts(t, sink, result)
 	if len(result.Transcript) != 5 {
@@ -614,7 +614,7 @@ func TestRunStateTranscriptAlwaysMirrorsItemEvents(t *testing.T) {
 	if err := state.protocolError(); err != nil {
 		t.Fatalf("non-terminal trailing frame poisoned completed run: %v", err)
 	}
-	if checkpoint := state.snapshot(Options{}, "thread-mirror", "", "", 0, "", false).Checkpoint; checkpoint == nil || !checkpoint.Valid {
+	if checkpoint := state.snapshot(Options{}, "thread-mirror", "", "", 0, "", false, nil).Checkpoint; checkpoint == nil || !checkpoint.Valid {
 		t.Fatalf("trailing audit-only frame cleared checkpoint: %#v", checkpoint)
 	}
 }
@@ -628,7 +628,7 @@ func TestRunStateMalformedAndMissingTerminalNeverCheckpoint(t *testing.T) {
 	if malformed.protocolError() == nil {
 		t.Fatal("malformed terminal must record a protocol error")
 	}
-	if result := malformed.snapshot(Options{}, "thread-1", "", "", 0, "", false); result.Checkpoint != nil {
+	if result := malformed.snapshot(Options{}, "thread-1", "", "", 0, "", false, nil); result.Checkpoint != nil {
 		t.Fatalf("malformed terminal checkpoint = %#v", result.Checkpoint)
 	}
 
@@ -637,7 +637,7 @@ func TestRunStateMalformedAndMissingTerminalNeverCheckpoint(t *testing.T) {
 	if missing.hasTerminal() {
 		t.Fatal("fresh state unexpectedly has terminal")
 	}
-	if result := missing.snapshot(Options{}, "thread-1", "", "", 0, "", false); result.Checkpoint != nil {
+	if result := missing.snapshot(Options{}, "thread-1", "", "", 0, "", false, nil); result.Checkpoint != nil {
 		t.Fatalf("missing terminal checkpoint = %#v", result.Checkpoint)
 	}
 }
@@ -980,9 +980,14 @@ func TestRunCancellationReturnsPartialRawWithoutCheckpoint(t *testing.T) {
 	if result.Checkpoint != nil || result.RawStreams == nil || result.RawStreams.Stdout == "" {
 		t.Fatalf("cancelled partial result = %#v", result)
 	}
+	if result.Failure == nil || result.Failure.Code != driver.FailureCancelled {
+		t.Fatalf("cancel classification = %#v", result.Failure)
+	}
+
 	verifyAppserverContracts(t, sink, result)
-	if got := sink.streams[len(sink.streams)-1].Kind; got != driver.StreamRunError {
-		t.Fatalf("last public payload = %q, want %q", got, driver.StreamRunError)
+	terminal := sink.streams[len(sink.streams)-1]
+	if terminal.Kind != driver.StreamRunError || terminal.Error == nil || terminal.Error.Code != driver.FailureCancelled {
+		t.Fatalf("cancel terminal = %#v", terminal)
 	}
 }
 

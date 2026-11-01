@@ -193,9 +193,12 @@ func TestPersistentCodexDoesNotReplayAfterTurnStart(t *testing.T) {
 	a, req, spawnFile, _ := newPersistentCodexTest(t, "fail_after_prompt_once")
 	defer closeCodexTestAdapter(t, a)
 
-	_, err := a.Run(context.Background(), req, &testutil.EventRecorder{})
+	result, err := a.Run(context.Background(), req, &testutil.EventRecorder{})
 	if err == nil || errors.Is(err, errPersistentFallback) {
 		t.Fatalf("post-delivery disconnect must surface its original failure, got %v", err)
+	}
+	if result.Failure == nil || result.Failure.Code != driver.FailureAgentError || result.Checkpoint != nil {
+		t.Fatalf("independent process failure must remain an agent error without a checkpoint: %+v", result)
 	}
 	if got := helperSpawnCount(t, spawnFile); got != 1 {
 		t.Fatalf("post-delivery failure must not replay; spawns=%d", got)
@@ -241,39 +244,56 @@ func TestPersistentCodexCloseCancelAndIdleReapProcesses(t *testing.T) {
 		assertHelperInactive(t, activeFile)
 	})
 
-	t.Run("run context cancellation kills group", func(t *testing.T) {
-		a, req, spawnFile, activeFile := newPersistentCodexTest(t, "block_turn")
-		defer closeCodexTestAdapter(t, a)
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		done := make(chan error, 1)
-		go func() {
-			_, err := a.Run(ctx, req, &testutil.EventRecorder{})
-			done <- err
-		}()
+	for _, mode := range []string{"run context cancellation kills group", "close cancels active turn"} {
+		t.Run(mode, func(t *testing.T) {
+			a, req, spawnFile, activeFile := newPersistentCodexTest(t, "block_turn")
+			defer closeCodexTestAdapter(t, a)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type outcome struct {
+				result driver.Response
+				err    error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				result, err := a.Run(ctx, req, &testutil.EventRecorder{})
+				done <- outcome{result, err}
+			}()
 
-		// Synchronize cancellation on the helper receiving turn/start. A fixed
-		// startup timeout can expire before the race-instrumented Linux binary
-		// has even spawned, which tests scheduler speed rather than the
-		// post-prompt cancellation contract.
-		turnFile := filepath.Join(filepath.Dir(spawnFile), "turns.log")
-		waitForHelperRecordCount(t, turnFile, 1)
-		cancel()
+			// Synchronize cancellation on the helper receiving turn/start. A fixed
+			// startup timeout can expire before the race-instrumented Linux binary
+			// has even spawned, which tests scheduler speed rather than the
+			// post-prompt cancellation contract.
+			turnFile := filepath.Join(filepath.Dir(spawnFile), "turns.log")
+			waitForHelperRecordCount(t, turnFile, 1)
+			if mode == "close cancels active turn" {
+				closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer closeCancel()
+				if err := a.(driver.ProcessLifecycleDriver).CloseProcesses(closeCtx); err != nil {
+					t.Fatalf("close active process: %v", err)
+				}
+			} else {
+				cancel()
+			}
 
-		var err error
-		select {
-		case err = <-done:
-		case <-time.After(3 * time.Second):
-			t.Fatal("cancelled run did not return")
-		}
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("cancel error=%v", err)
-		}
-		if got := helperSpawnCount(t, spawnFile); got != 1 {
-			t.Fatalf("cancelled prompt must not replay; spawns=%d", got)
-		}
-		assertHelperInactive(t, activeFile)
-	})
+			var got outcome
+			select {
+			case got = <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("cancelled run did not return")
+			}
+			if !errors.Is(got.err, context.Canceled) {
+				t.Fatalf("cancel error=%v", got.err)
+			}
+			if got.result.Failure == nil || got.result.Failure.Code != driver.FailureCancelled || got.result.Checkpoint != nil {
+				t.Fatalf("cancel result=%+v", got.result)
+			}
+			if got := helperSpawnCount(t, spawnFile); got != 1 {
+				t.Fatalf("cancelled prompt must not replay; spawns=%d", got)
+			}
+			assertHelperInactive(t, activeFile)
+		})
+	}
 
 	t.Run("idle timeout", func(t *testing.T) {
 		old := codexPersistentIdleTimeout
