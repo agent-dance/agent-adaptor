@@ -75,7 +75,7 @@ Browser
 内部精确依赖的版本一致，避免出现两份 `HttpAgent`/`AbstractAgent`）以及
 stable `next@16.4.3`。CopilotKit 1.83 自带 AG-UI 1.0 客户端，会按 1.0 schema
 校验事件流（例如 `CUSTOM.value` 必填），因此后端必须使用发送完整 1.0 事件的
-`bridges/agui`。
+`bridges/agui`（AG-UI 1.0 bridge 总会发送 `CUSTOM.value`）。
 
 上游仍未修复的链路通过 `overrides` 提升，并都验证过运行时兼容：
 
