@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	adaptertest "github.com/agent-dance/agent-adaptor/v2/adaptertest"
@@ -37,9 +38,17 @@ func TestCodexDriverConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := Config{Model: "gpt-5.4"}
+	cfg := Config{Model: "gpt-5.4", ReasoningEffort: "low"}
 	cfg.CWD = workspace
-	if !live {
+	if live {
+		// Leave the model unset unless explicitly overridden, so the live CLI
+		// uses the authenticated profile's available model. A Git workspace
+		// also satisfies preflight when the resolved transport uses exec.
+		cfg.Model = strings.TrimSpace(os.Getenv("AGENT_ADAPTOR_CODEX_LIVE_MODEL"))
+		if output, err := exec.Command("git", "init", "--quiet", workspace).CombinedOutput(); err != nil {
+			t.Fatalf("initialize live conformance workspace: %v: %s", err, output)
+		}
+	} else {
 		// Hermetic isolation ensures probes do not read or write the
 		// operator's real HOME.
 		cfg.Env = []driver.EnvBinding{
@@ -67,7 +76,7 @@ func TestCodexDriverConformance(t *testing.T) {
 			driver.SessionParamProfileFingerprint,
 		),
 		adaptertest.WithWorkspace(workspace),
-		adaptertest.WithExpectedDetectedModel("gpt-5.4"),
+		adaptertest.WithExpectedDetectedModel(cfg.Model),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
 		adaptertest.WithMessageFixture("app-server", codexMessageFixture(true)),

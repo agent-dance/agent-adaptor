@@ -636,8 +636,9 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 	}
 	resp, err := d.Run(ctx, req, sink)
 	reportViolations(t, VerifyOutcome(&resp, err))
-	if err != nil {
-		t.Fatalf("live run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
+	if err != nil || resp.Failure != nil || resp.ExitCode != 0 || resp.Signal != "" || resp.TimedOut {
+		t.Fatalf("live run failed: err=%v failure=%+v exit=%d signal=%q timed_out=%v\nstderr tail: %s",
+			err, resp.Failure, resp.ExitCode, resp.Signal, resp.TimedOut, rawStderrTail(&resp))
 	}
 
 	reportViolations(t, VerifyRunEvents(sink.Events()))
@@ -694,8 +695,9 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 	}
 	resp, err := d.Run(ctx, req, sink)
 	reportViolations(t, VerifyOutcome(&resp, err))
-	if err != nil {
-		t.Fatalf("SO-02: native structured run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
+	if err != nil || resp.Failure != nil || resp.ExitCode != 0 || resp.Signal != "" || resp.TimedOut {
+		t.Fatalf("SO-02: native structured run failed: err=%v failure=%+v exit=%d signal=%q timed_out=%v\nstderr tail: %s",
+			err, resp.Failure, resp.ExitCode, resp.Signal, resp.TimedOut, rawStderrTail(&resp))
 	}
 	result := resp.StructuredOutput
 	if result == nil {
