@@ -208,7 +208,7 @@ HITL 只通过 ApprovalRequest 表达：
 
 - core 拥有队列、顺序、ID 去重、framing、取消与记账；Request.Messages 为本轮 MessagePort，禁用时为 nil。Driver 不得持有独立语义队列，不得在 Run 返回后使用 port 或 sink。
 - MessageCapability 只声明已验证的 immediate/tool/stop 边界、Interrupt、ContinueMode、framed MaxUnits/MessageUnit、ConfirmedDelivery、PersistsDelivered、MinVersion。turn_end 对可续跑 Driver 隐含，不要求列入 Boundaries；零值表示无中途边界、无打断、支持 resume 时由 core 续接。
-- MessageCapabilityResolver 每 invocation 按最终解析 Request 协商，与实际 transport 一致，不能超出 Descriptor。core 在派发前原子修正能力与预排队消息；不支持 Interrupt 必须拒绝，不得降成 Soon。内置 Driver 必须探测本机 CLI 版本；低于 MinVersion、版本未知或探测失败时裁掉未经验证的中途边界并 Notice，保留可用的 core resume。Inspect.Environment 报告同一版本与有效能力。
+- MessageCapabilityResolver 每 invocation 按最终解析 Request 协商，与实际 transport 一致，不能超出 Descriptor。core 在派发前原子修正能力与预排队消息；不支持 Interrupt 必须拒绝，不得降成 Soon。内置 Driver 必须探测本机 CLI 版本：已知版本低于 MinVersion 时裁掉中途边界、Interrupt 与确认交付并发布 Notice，保留可用的 core resume；版本未知或探测失败时保留声明能力，在 Inspect.Environment 以 warn 检查如实报告“未验证”，运行时仍依赖各 Driver 已验证的降级路径（注册拒绝、RPC 拒绝、relay 不可用时 Requeue 到 turn_end），不得因解析失败关闭较新 CLI 的能力。Inspect.Environment 报告同一版本与有效能力。
 - Window(true) 只能来自 provider 确认的活跃窗口，结束时必须 Window(false)；不得把本地进程启动等同于可投递。push Driver 监听 Signal，hook Driver 在真实回调中 Claim。
 - Claim 原子领取边界可交付项，保持接纳顺序；Soon 可在任意允许边界、AfterTurn 只在 turn_end、Interrupt 只在 immediate。Text 已包装，必须逐字交付。
 - Claim 后每项必须恰好一次 Ack，且发生在 Run 返回前。调用方 ctx/Cancel 不得抢先结算已 Claim 项；Driver 仍必须响应运行取消并停止 I/O、结算所有 claim。
@@ -249,8 +249,8 @@ Bridges：
 - `bridges/sse`、`agui`、`a2a` 只翻译公开 `Runner.Send` / `Stream` / `Event` / `Result` 合同；不得直接调用 Driver、复制 Thread 协调或实现第二套错误/HITL 策略。
 - `bridges/subagentstream.Project` 把现有流中的 typed `SubagentUpdate` 投影为 wire envelope；`Merge` 仅供宿主并入外部 typed worker source，必须保持父 `Done` 最后交付，不推断任务失败。Team 已组合 worker 事件，不需要再次 Merge 或独立 EventBus。
 - 外部 ThreadID/contextID 到 Thread key 的映射必须稳定且无碰撞；忙碌的任务模式不得静默并入，必须观察 `ErrThreadBusy`。
-- A2A 必须保持 ExposurePolicy 的最小暴露、敏感字段过滤与错误状态映射。当前 wire schema 未投影 `TurnEnd`、`MessageUpdate`、`SubagentUpdate`、`Done`；不得宣称完整转发团队事件。
-- 当前 A2A bridge 每次执行请求调用 `Runner.Send`，未把 working task 的补充路由到 active `Stream.Send`；不得把提案中的目标行为写成已实现合同。
+- A2A 必须保持 ExposurePolicy 的最小暴露、敏感字段过滤与错误状态映射。`MessageUpdate`、`TurnEnd` 与 `Done` 投影为 A2A 状态/产物；`ProcessInfo` 与 `SubagentUpdate` 不经 A2A 暴露，不得宣称完整转发团队事件。
+- 带 working task 的 `taskId` 的消息路由到该执行的 `Stream.Send`（接纳不等于交付，回执仍是原流的 `MessageUpdate`）；只带 `contextId` 时以任务模式 `Thread.Send`，该 context 忙时返回 `task_in_progress` 并给出 activeTaskId；已终结的 task 返回明确终态，不得以旧 ID 新开任务。
 - A2A 不提供可移植的审批应答扩展、会话 Fork、输出 schema 或补充 timing 协商；生命周期字段不得伪造成可应答的远端 ApprovalRequest。协议保真缺口必须明确文档化，不得静默丢失或伪造支持。
 
 Hosttools：
