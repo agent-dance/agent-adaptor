@@ -79,6 +79,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},
+		Messages:     claudeMessageCapability(),
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: true,
 			// Interactive mode uses stdio permission prompting
@@ -399,6 +400,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	}
 
 	interactive := wantsInteractiveClaude(req.Policy.HumanDecision)
+	messages := req.Messages != nil && a.ResolveMessageCapability(req).Continue == driver.ContinueInRun
 	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		if interactive {
 			return driver.Response{}, &engine.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Claude native structured output is not supported with interactive HITL"}
@@ -431,6 +433,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		skipPerms: req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoApprove,
 		browser:   req.Policy.Browser == driver.FeatureAllow,
 		streaming: req.Streaming && !interactive, interactive: interactive,
+		messages: messages,
 		resumeID: resumeID, engineID: persistentSessionKey(req), previousID: persistentPreviousSessionKey(req), prompt: rawPrompt,
 		profileFingerprint:  req.ProfilePayload.SessionFingerprint(),
 		settingsFingerprint: claudeSettingsFingerprint(bindings, effectiveCWD, effectiveProfile.Dir),
@@ -440,6 +443,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if writer != nil && !req.Spawn && persistentEligible(cfg, req) {
 		pparser := newClaudeParser(sink)
 		pparser.setHITLContext(req.RunID, req.Policy.HumanDecision)
+		if messages {
+			pparser.messages = newMessageSession(ctx, req.Messages)
+		}
 		if req.Streaming || interactive {
 			pparser.enableStreaming(req.RunID)
 		}
@@ -457,6 +463,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			return buildClaudeResponse(req, pparser, praw, 0, "", false, reportedModel, effectiveCWD, profileFingerprint)
 		}
 		if !errors.Is(persistentErr, errPersistentFallback) {
+			if messages {
+				pparser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: persistentErr.Error()}, 0, "", false)
+			}
 			return driver.Response{}, persistentErr
 		}
 	} else if writer != nil {
@@ -467,6 +476,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 
 	parser := newClaudeParser(sink)
 	parser.setHITLContext(req.RunID, req.Policy.HumanDecision)
+	if messages {
+		parser.messages = newMessageSession(ctx, req.Messages)
+	}
 	if req.Streaming || interactive {
 		// Interactive mode always streams (we need the partial_json deltas
 		// to reconstruct tool_use inputs), even when the resolved invocation
@@ -475,45 +487,52 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		// sink used by every Agent.Send invocation.
 		parser.enableStreaming(req.RunID)
 	}
-
-	runReq := clihelper.CommandRequest{
-		Command: command,
-		Args:    args,
-		CWD:     effectiveCWD,
-		Env:     ensureRootSandboxEnv(args, effectiveEnv),
-		Observe: parser.onChunk,
-	}
-
-	if interactive {
-		// Encode the initial user message as an NDJSON user frame rather
-		// than a raw text prompt: --input-format stream-json expects a
-		// protocol envelope.
-		initial, err := encodeInteractiveUserFrame(rawPrompt)
-		if err != nil {
-			return driver.Response{}, err
-		}
-		runReq.Prompt = initial
-		runReq.Stdin = clihelper.NewStdinController()
-
-		// Bind the parser to the interactive sink and stdin so tool_use
-		// frames route through sink.RequestDecision and the response is
-		// injected back via stdin.Write.
-		ic, ok := sink.(driver.DecisionCapableSink)
-		if !ok {
-			return driver.Response{}, errClaudeInteractiveSinkRequired
-		}
-		parser.enableInteractive(ctx, ic, runReq.Stdin)
+	var driverResult driver.Response
+	if messages {
+		// This path needs actual pipe-write completion, whereas the shared
+		// StdinController acknowledges enqueueing only. Both lifecycle modes
+		// therefore share the Claude control-process writer and parser.
+		driverResult, err = runMessageProcess(ctx, chatSpec, args, req, sink, parser, reportedModel, effectiveCWD, profileFingerprint)
 	} else {
-		runReq.Prompt = rawPrompt
-	}
+		runReq := clihelper.CommandRequest{
+			Command: command,
+			Args:    args,
+			CWD:     effectiveCWD,
+			Env:     ensureRootSandboxEnv(args, effectiveEnv),
+			Observe: parser.onChunk,
+		}
 
-	result, err := clihelper.Run(ctx, runReq, sink)
-	if err != nil {
-		return driver.Response{}, err
+		if interactive {
+			// Encode the initial user message as an NDJSON user frame rather
+			// than a raw text prompt: --input-format stream-json expects a
+			// protocol envelope.
+			initial, err := encodeInteractiveUserFrame(rawPrompt)
+			if err != nil {
+				return driver.Response{}, err
+			}
+			runReq.Prompt = initial
+			runReq.Stdin = clihelper.NewStdinController()
+
+			// Bind the parser to the interactive sink and stdin so tool_use
+			// frames route through sink.RequestDecision and the response is
+			// injected back via stdin.Write.
+			ic, ok := sink.(driver.DecisionCapableSink)
+			if !ok {
+				return driver.Response{}, errClaudeInteractiveSinkRequired
+			}
+			parser.enableInteractive(ctx, ic, runReq.Stdin)
+		} else {
+			runReq.Prompt = rawPrompt
+		}
+
+		result, runErr := clihelper.Run(ctx, runReq, sink)
+		if runErr != nil {
+			return driver.Response{}, runErr
+		}
+		parser.finalize()
+		raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
+		driverResult, err = buildClaudeResponse(req, parser, raw, result.ExitCode, result.Signal, result.TimedOut, reportedModel, effectiveCWD, profileFingerprint)
 	}
-	parser.finalize()
-	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
-	driverResult, err := buildClaudeResponse(req, parser, raw, result.ExitCode, result.Signal, result.TimedOut, reportedModel, effectiveCWD, profileFingerprint)
 	if err != nil {
 		return driver.Response{}, err
 	}
@@ -745,6 +764,13 @@ func buildClaudeExecArgs(cfg Config, req driver.Request, interactive bool) ([]st
 			"--replay-user-messages",
 			"--permission-prompt-tool", "stdio",
 		)
+	} else if req.Messages != nil && (!nativeStructured || req.Streaming) {
+		// Hooks need bidirectional input, but do not change permission policy
+		// or rich-event selection. Only explicit HITL uses stdio prompting.
+		args = append(args, "--input-format", "stream-json")
+		if req.Streaming {
+			args = append(args, "--include-partial-messages")
+		}
 	} else {
 		// One-shot observational mode reads the prompt as plain text from stdin.
 		args = append(args, "-")
