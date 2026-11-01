@@ -150,9 +150,10 @@ func conflict(code, message string) error {
 }
 
 // VerifyHistory implements the sse.Options.VerifyHistory extension point.
-// It compares IDs and roles, in order, excluding activities from both sides.
-// @ag-ui/client 1.0.3 prepareRunAgentInput filters only activity messages;
-// reasoning, tool results and tool-only assistants retain their IDs and roles.
+// It compares IDs and roles, in order, excluding activities and reasoning.
+// Reasoning is optional presentation state: assistant-ui 0.1.1 drops empty
+// reasoning on round-trip and all plain reasoning when showThinking is false.
+// User/assistant/tool identities still match strictly, including tool-only assistants.
 // Content and error are intentionally not compared. The trailing user turn is excluded.
 func (s *Session) VerifyHistory(ctx context.Context, in *agui.RunAgentInput, runner adaptor.Runner, key string) (string, bool, error) {
 	records, err := s.Events(ctx, key, 0)
@@ -181,7 +182,7 @@ func (s *Session) VerifyHistory(ctx context.Context, in *agui.RunAgentInput, run
 	pairs := func(ms []agui.Message) []identity {
 		out := []identity{}
 		for _, m := range ms {
-			if m.Role != "activity" {
+			if m.Role != "activity" && m.Role != "reasoning" {
 				out = append(out, identity{m.ID, m.Role})
 			}
 		}
@@ -649,6 +650,15 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 			if business.Message != "" {
 				message = business.Message
 			}
+		}
+	}
+	// This context belongs to the session/request, not the Driver. A host
+	// cancel, shutdown or request disconnect remains cancellation even if the
+	// killed provider reports an agent error. Retain its message for diagnosis.
+	if cancellation := ctx.Err(); cancellation != nil {
+		code = "run.cancelled"
+		if message == "" {
+			message = cancellation.Error()
 		}
 	}
 	record(adaptor.WithEventMeta(

@@ -523,7 +523,7 @@ synced, err := agent.SyncProfile(ctx)                // 設定リソースを明
 - [`tools`](./examples/tools)：実際のローカル provider へ typed な Go 関数を公開する。MCP を自分で管理する必要はない。
 - [`skills`](./examples/skills) / [`profiles`](./examples/profiles)：skill の解決と実体化、設定リソースと同期。
 - [`inspect`](./examples/inspect)：環境、モデル、クォータ、schema、skills と設定状態。
-- [`web-chat`](./examples/web-chat)：SSE/AG-UI のサーバ。フロントエンドは [`aguiclient`](./examples/web-chat/aguiclient) と [`copilotkit`](./examples/web-chat/copilotkit) の 2 種類。
+- [`web-chat`](./examples/web-chat)：SSE/AG-UI のサーバ。フロントエンドは [`aguiclient`](./examples/web-chat/aguiclient) と [`copilotkit`](./examples/web-chat/copilotkit) など。 [`assistant-ui`](./examples/web-chat/assistant-ui) は永続履歴、ツール失敗表示、任意の実行中監視を提供（既定は fake）。
 - [`a2a-server`](./examples/a2a-server)：A2A 経由で Agent を公開し、呼び出す。
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow)：計画、実装、レビューを 1 本のパイプラインにつなぐ。
 

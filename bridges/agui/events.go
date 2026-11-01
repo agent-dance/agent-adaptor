@@ -13,7 +13,8 @@ package agui
 // Protocol invariants:
 //   - the output always starts with RUN_STARTED (pre-start events buffer);
 //   - lifecycle START/CONTENT/END markers are idempotent and synthesized
-//     when the producer skipped the opening marker;
+//     when the producer skipped the opening marker; text/reasoning open only
+//     with their first non-empty content, so empty source lifecycles vanish;
 //   - all open lifecycles close before the terminal event;
 //   - when a Driver publishes no assistant text events, a non-empty final
 //     Result.Text is projected once as a complete assistant message before
@@ -57,6 +58,7 @@ type EventTranslator struct {
 
 	// Active lifecycles for idempotent START / CONTENT / END handling.
 	activeText      map[string]bool
+	textRoles       map[string]adaptor.Role // deferred START role; no wire opener until content
 	activeReason    map[string]bool
 	activeToolStart map[string]bool
 	activeSteps     map[string]bool
@@ -64,16 +66,17 @@ type EventTranslator struct {
 	assistantText   bool              // non-empty assistant TEXT_MESSAGE_CONTENT was emitted
 	subagents       *subagentTracker
 
-	decisionMode     DecisionMode
-	publicIdentity   bool
-	parentRunID      string
-	sdkRunID         string
-	providerThreadID string
-	threadKey        string
-	diagnostics      []Diagnostic
-	toolContentLimit int
-	lastAssistant    string
-	projectionHook   ProjectionHook
+	decisionMode      DecisionMode
+	publicIdentity    bool
+	parentRunID       string
+	sdkRunID          string
+	providerThreadID  string
+	threadKey         string
+	diagnostics       []Diagnostic
+	toolContentLimit  int
+	lastAssistant     string
+	projectionHook    ProjectionHook
+	noticePassthrough map[string]bool
 }
 
 // EventTranslatorOption configures an EventTranslator / Events call.
@@ -87,17 +90,19 @@ func WithEventDecisionMode(mode DecisionMode) EventTranslatorOption {
 }
 
 // NewEventTranslator returns a fresh translator with the default
-// DecisionAsToolCall approval mapping.
+// DecisionAsToolCall approval mapping and protocol-only Notice allowlist.
 func NewEventTranslator(opts ...EventTranslatorOption) *EventTranslator {
 	t := &EventTranslator{
-		activeText:       map[string]bool{},
-		activeReason:     map[string]bool{},
-		activeToolStart:  map[string]bool{},
-		activeSteps:      map[string]bool{},
-		toolOwners:       map[string]string{},
-		subagents:        newSubagentTracker(),
-		decisionMode:     DecisionAsToolCall,
-		toolContentLimit: 64 << 10,
+		activeText:        map[string]bool{},
+		textRoles:         map[string]adaptor.Role{},
+		noticePassthrough: map[string]bool{},
+		activeReason:      map[string]bool{},
+		activeToolStart:   map[string]bool{},
+		activeSteps:       map[string]bool{},
+		toolOwners:        map[string]string{},
+		subagents:         newSubagentTracker(),
+		decisionMode:      DecisionAsToolCall,
+		toolContentLimit:  64 << 10,
 	}
 	for _, o := range opts {
 		o(t)
@@ -367,20 +372,26 @@ func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguieve
 }
 
 func (t *EventTranslator) textDeltaLocked(e adaptor.TextDelta) []aguievents.Event {
-	if e.Role != adaptor.RoleUser && e.MessageID != "" && e.Phase != adaptor.PhaseEnd {
-		t.lastAssistant = e.MessageID
-	}
 	if e.MessageID == "" {
 		return nil
 	}
+	role, declared := t.textRoles[e.MessageID]
+	if !declared {
+		role = e.Role
+	}
+	// TOOL_CALL_START can materialize this declared tool-only assistant by
+	// parentMessageId even when no text lifecycle is ever opened.
+	if role != adaptor.RoleUser && e.Phase != adaptor.PhaseEnd {
+		t.lastAssistant = e.MessageID
+	}
 	switch e.Phase {
 	case adaptor.PhaseStart:
-		if t.activeText[e.MessageID] {
-			return nil
+		if _, seen := t.textRoles[e.MessageID]; !seen && !t.activeText[e.MessageID] {
+			t.textRoles[e.MessageID] = e.Role
 		}
-		t.activeText[e.MessageID] = true
-		return []aguievents.Event{aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOpt(e.Role))}
+		return nil
 	case adaptor.PhaseEnd:
+		delete(t.textRoles, e.MessageID)
 		if !t.activeText[e.MessageID] {
 			return nil
 		}
@@ -390,13 +401,13 @@ func (t *EventTranslator) textDeltaLocked(e adaptor.TextDelta) []aguievents.Even
 		if e.Text == "" {
 			return nil
 		}
-		if e.Role != adaptor.RoleUser && strings.TrimSpace(e.Text) != "" {
+		if role != adaptor.RoleUser && strings.TrimSpace(e.Text) != "" {
 			t.assistantText = true
 		}
 		out := []aguievents.Event{}
 		if !t.activeText[e.MessageID] {
 			t.activeText[e.MessageID] = true
-			out = append(out, aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOpt(e.Role)))
+			out = append(out, aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOpt(role)))
 		}
 		return append(out, aguievents.NewTextMessageContentEvent(e.MessageID, e.Text))
 	}
@@ -422,11 +433,9 @@ func (t *EventTranslator) thinkingLocked(e adaptor.Thinking) []aguievents.Event 
 	}
 	switch e.Phase {
 	case adaptor.PhaseStart:
-		if t.activeReason[e.MessageID] {
-			return nil
-		}
-		t.activeReason[e.MessageID] = true
-		return []aguievents.Event{aguievents.NewReasoningMessageStartEvent(e.MessageID, ReasoningRole)}
+		// START may never receive content (for example Codex hidden reasoning).
+		// Emit the wire opener together with the first non-empty delta.
+		return nil
 	case adaptor.PhaseEnd:
 		if !t.activeReason[e.MessageID] {
 			return nil
@@ -495,9 +504,10 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 // noticeLocked projects the Notice space:
 //   - step notices → STEP_STARTED / STEP_FINISHED;
 //   - approval notices → decision tool-call lifecycles (or CUSTOM);
-//   - everything else (lifecycle warnings, runtime, invocation, transcript
-//     items, driver pass-through kinds) → CUSTOM named by the notice kind,
-//     so hosts keep degradation warnings and provider extras visible.
+//   - known protocol warnings → CUSTOM;
+//   - operational/provider notices → nothing, unless explicitly opted in.
+//
+// Raw source records remain available to trusted host audit tooling.
 func (t *EventTranslator) noticeLocked(e adaptor.Notice) []aguievents.Event {
 	switch e.Kind {
 	case adaptor.NoticeStep:
@@ -523,7 +533,10 @@ func (t *EventTranslator) noticeLocked(e adaptor.Notice) []aguievents.Event {
 			t.activeSteps[e.Text] = false
 			return append(out, aguievents.NewStepFinishedEvent(e.Text))
 		}
-		return []aguievents.Event{customEvent(e.Kind, noticeValue(e))}
+		if t.noticePassthrough[e.Kind] {
+			return []aguievents.Event{customEvent(e.Kind, noticeValue(e))}
+		}
+		return nil
 
 	case adaptor.NoticeApprovalRequested:
 		if t.decisionMode == DecisionAsCustom {
@@ -537,7 +550,11 @@ func (t *EventTranslator) noticeLocked(e adaptor.Notice) []aguievents.Event {
 		}
 		return t.approvalNoticeResolvedLocked(e)
 	}
-	return []aguievents.Event{customEvent(defaultString(e.Kind, "codex.event"), noticeValue(e))}
+	if e.Kind == adaptor.NoticeLifecycle && e.Data["warning"] == "human_decision_retry_unsupported" ||
+		e.Kind == "agentAdaptor.input.warning" || e.Kind == "stream.dropped" || t.noticePassthrough[e.Kind] {
+		return []aguievents.Event{customEvent(defaultString(e.Kind, "notice"), noticeValue(e))}
+	}
+	return nil
 }
 
 // approvalRequestLocked projects a live *ApprovalRequest event (form B
@@ -695,6 +712,7 @@ func (t *EventTranslator) closeAllOpenLifecyclesLocked() []aguievents.Event {
 		out = append(out, aguievents.NewTextMessageEndEvent(id))
 	}
 	t.activeText = map[string]bool{}
+	t.textRoles = map[string]adaptor.Role{}
 	for _, id := range sortedActiveIDs(t.activeReason) {
 		out = append(out, aguievents.NewReasoningMessageEndEvent(id))
 	}

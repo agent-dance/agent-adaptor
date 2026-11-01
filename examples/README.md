@@ -1,6 +1,6 @@
 # Examples
 
-这些示例只使用 v1 的最终根包 API。除 `threads/codec` 和部分 profile 同步模式外，它们都会调用本机真实的 Codex、Claude、Cursor 或 CodeBuddy CLI；请先安装并登录对应 CLI。
+这些示例只使用 v1 的最终根包 API。除 `threads/codec`、`web-chat/assistant-ui` 的默认 fake 模式和部分 profile 同步模式外，它们都会调用本机真实的 Codex、Claude、Cursor 或 CodeBuddy CLI；请先安装并登录对应 CLI。
 
 通用选择参数：
 
@@ -28,6 +28,7 @@ go run ./examples/quickstart -agent=cursor -command=/absolute/path/to/agent
 
 - `web-chat`：最小 AG-UI SSE server 与原生浏览器页面。
 - `web-chat/aguiclient`：Vite + `@ag-ui/client` 直连 Go SSE bridge。
+- [`web-chat/assistant-ui`](web-chat/assistant-ui)：直连 assistant-ui、持久历史/Thread checkpoint、13 条工具命令中的失败、刷新与 opt-in 活跃观察；默认 fake，真实 CLI 显式启用。
 - `web-chat/copilotkit`：CopilotKit、approval responder 与 typed Event recorder。
 - `a2a-server`：本机 Agent 的 A2A server、streaming client 与 contextID→Thread 映射。
 

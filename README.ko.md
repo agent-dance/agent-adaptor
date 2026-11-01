@@ -523,7 +523,7 @@ synced, err := agent.SyncProfile(ctx)                // 설정 리소스를 명�
 - [`tools`](./examples/tools): 실제 로컬 provider에 typed Go 함수를 노출하며, MCP를 직접 관리하지 않는다.
 - [`skills`](./examples/skills) / [`profiles`](./examples/profiles): skill 해석과 물화, 설정 리소스와 동기화.
 - [`inspect`](./examples/inspect): 환경, 모델, 쿼터, schema, skills와 설정 상태.
-- [`web-chat`](./examples/web-chat): SSE/AG-UI 서버, [`aguiclient`](./examples/web-chat/aguiclient)와 [`copilotkit`](./examples/web-chat/copilotkit) 두 프런트엔드 포함.
+- [`web-chat`](./examples/web-chat): SSE/AG-UI 서버, [`aguiclient`](./examples/web-chat/aguiclient)와 [`copilotkit`](./examples/web-chat/copilotkit) 프런트엔드 포함. [`assistant-ui`](./examples/web-chat/assistant-ui)는 영속 기록, 도구 실패 표시, 선택적 실행 관찰을 제공한다(기본 fake).
 - [`a2a-server`](./examples/a2a-server): A2A로 Agent를 발행하고 호출한다.
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow): 계획, 구현, 리뷰를 하나의 파이프라인으로 엮는다.
 

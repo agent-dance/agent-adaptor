@@ -10,7 +10,7 @@ The public v1 model is Agent, Thread, Stream, Event, Result, and Driver. Start w
 | [`../AGENTS.md`](../AGENTS.md) | Final architecture boundaries, invariants, and release gates. |
 | [`api-reference.md`](./api-reference.md) | Complete public API and option scopes. |
 | [`tools.md`](./tools.md) | Provider-neutral host-defined Tools, schemas, errors, lifecycle, security, and Thread compatibility. |
-| [`agui.md`](./agui.md) | AG-UI 1.0 input support, public identity, diagnostics, history policy and tool metadata. |
+| [`agui.md`](./agui.md) | AG-UI 1.0 input support, public identity, diagnostics, history policy, tool metadata and the [direct assistant-ui example](../examples/web-chat/assistant-ui). |
 | [`streaming.md`](./streaming.md) | Unified Event consumption, cancellation, backpressure, AG-UI, and SSE. |
 | [`streaming-adapter-contract.md`](./streaming-adapter-contract.md) | Streaming and event obligations for Driver authors. |
 | [`structured-output.md`](./structured-output.md) | Typed and JSON-schema output. |

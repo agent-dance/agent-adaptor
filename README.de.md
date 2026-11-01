@@ -523,7 +523,7 @@ So binden Sie Ihre eigene Agent-CLI an: `driver.Driver` implementieren, `adapter
 - [`tools`](./examples/tools): typisierte Go-Funktionen einem echten lokalen provider bereitstellen, ohne MCP selbst zu verwalten.
 - [`skills`](./examples/skills) / [`profiles`](./examples/profiles): skill-Auflösung und -Materialisierung, Konfigurationsressourcen und Synchronisierung.
 - [`inspect`](./examples/inspect): Umgebung, Modelle, Kontingent, Schema, skills und Konfigurationsstatus.
-- [`web-chat`](./examples/web-chat): SSE-/AG-UI-Server mit den beiden Frontends [`aguiclient`](./examples/web-chat/aguiclient) und [`copilotkit`](./examples/web-chat/copilotkit).
+- [`web-chat`](./examples/web-chat): SSE-/AG-UI-Server mit den Frontends [`aguiclient`](./examples/web-chat/aguiclient) und [`copilotkit`](./examples/web-chat/copilotkit). [`assistant-ui`](./examples/web-chat/assistant-ui) ergänzt dauerhaften Verlauf, Werkzeugfehler und optionale Laufbeobachtung (standardmäßig fake).
 - [`a2a-server`](./examples/a2a-server): einen Agent über A2A veröffentlichen und aufrufen.
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow): Planung, Umsetzung und Review zu einer Pipeline verkettet.
 

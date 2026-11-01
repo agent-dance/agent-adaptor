@@ -154,3 +154,11 @@ Backend：
 - [`docs/streaming.md`](../../../docs/streaming.md)
 - AG-UI 协议：https://docs.ag-ui.com
 - `@ag-ui/client`：https://docs.ag-ui.com/sdk/js/client/overview
+
+
+The direct client now pins `@ag-ui/client@1.0.3`. Run `npm install` in `web/`
+to refresh the lockfile. Tool-result arrays are rendered through the official `contentToText` helper;
+the subscriber API remains compatible. For
+persistent completed history, failed-tool rendering and active-run joining, see
+[`assistant-ui`](../assistant-ui). CopilotKit retains its independently bundled
+AG-UI 0.0.57 client; a transitive major upgrade requires separate validation.

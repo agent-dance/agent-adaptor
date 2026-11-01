@@ -67,3 +67,51 @@ func TestPackageLockAGUICoreVersion(t *testing.T) {
 		t.Fatalf("@ag-ui/core: got %q, expected %q — update expectedAGUICoreNPM after intentional bump, then review Go ag-ui module pin in go.mod", pkg.Version, expectedAGUICoreNPM)
 	}
 }
+
+// CopilotKit owns its transitive 0.0.57 client. Direct examples share the
+// explicitly tested 1.0.3 contract in both manifests and lockfiles.
+func TestDirectClientPins(t *testing.T) {
+	t.Parallel()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
+	for _, example := range []string{"aguiclient", "assistant-ui"} {
+		raw, err := os.ReadFile(filepath.Join(root, "examples/web-chat", example, "web/package.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pkg struct {
+			Dependencies map[string]string `json:"dependencies"`
+		}
+		if err = json.Unmarshal(raw, &pkg); err != nil {
+			t.Fatal(err)
+		}
+		if got := pkg.Dependencies["@ag-ui/client"]; got != "1.0.3" {
+			t.Fatalf("%s @ag-ui/client: %q", example, got)
+		}
+		lock, err := os.ReadFile(filepath.Join(root, "examples/web-chat", example, "web/package-lock.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var locked struct {
+			Packages map[string]struct {
+				Version string `json:"version"`
+			} `json:"packages"`
+		}
+		if err = json.Unmarshal(lock, &locked); err != nil {
+			t.Fatal(err)
+		}
+		if got := locked.Packages["node_modules/@ag-ui/client"].Version; got != "1.0.3" {
+			t.Fatalf("%s locked @ag-ui/client: %q", example, got)
+		}
+		if example == "assistant-ui" {
+			for name, want := range map[string]string{"@assistant-ui/react": "0.15.32", "@assistant-ui/react-ag-ui": "0.1.1", "@assistant-ui/react-markdown": "0.14.24", "react": "19.3.1", "react-dom": "19.3.1"} {
+				if got := pkg.Dependencies[name]; got != want {
+					t.Fatalf("%s: %q, want %q", name, got, want)
+				}
+			}
+		}
+	}
+}

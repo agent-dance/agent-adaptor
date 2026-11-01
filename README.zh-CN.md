@@ -523,7 +523,7 @@ synced, err := agent.SyncProfile(ctx)                // 显式物化配置资源
 - [`tools`](./examples/tools)：向真实本地 provider 暴露 typed Go 函数，不用自己管 MCP。
 - [`skills`](./examples/skills) / [`profiles`](./examples/profiles)：skill 解析物化、配置资源与同步。
 - [`inspect`](./examples/inspect)：环境、模型、配额、schema、skills 与配置状态。
-- [`web-chat`](./examples/web-chat)：SSE/AG-UI 服务端，配 [`aguiclient`](./examples/web-chat/aguiclient) 与 [`copilotkit`](./examples/web-chat/copilotkit) 两个前端。
+- [`web-chat`](./examples/web-chat)：SSE/AG-UI 服务端，配 [`aguiclient`](./examples/web-chat/aguiclient) 与 [`copilotkit`](./examples/web-chat/copilotkit) 前端。 [`assistant-ui`](./examples/web-chat/assistant-ui) 提供持久历史、工具失败显示与可选活跃观察（默认 fake）。
 - [`a2a-server`](./examples/a2a-server)：通过 A2A 发布并调用 Agent。
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow)：规划、实现、评审串成一条流水线。
 

@@ -39,11 +39,6 @@
           "runId": "r1",
           "threadId": "t"
         },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
-        },
         "protocolVersion": "1.0",
         "runId": "r1",
         "threadId": "t",
@@ -1522,11 +1517,6 @@
           ],
           "runId": "r2",
           "threadId": "t"
-        },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
         },
         "protocolVersion": "1.0",
         "runId": "r2",
@@ -3029,11 +3019,6 @@
           "runId": "r1",
           "threadId": "t"
         },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
-        },
         "protocolVersion": "1.0",
         "runId": "r1",
         "threadId": "t",
@@ -3147,11 +3132,6 @@
           ],
           "runId": "r2",
           "threadId": "t"
-        },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
         },
         "protocolVersion": "1.0",
         "runId": "r2",
@@ -3289,11 +3269,6 @@
           "runId": "r1",
           "threadId": "t"
         },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
-        },
         "protocolVersion": "1.0",
         "runId": "r1",
         "threadId": "t",
@@ -3409,11 +3384,6 @@
           ],
           "runId": "r2",
           "threadId": "t"
-        },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
         },
         "protocolVersion": "1.0",
         "runId": "r2",
@@ -3553,11 +3523,6 @@
           "runId": "r1",
           "threadId": "t"
         },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
-        },
         "protocolVersion": "1.0",
         "runId": "r1",
         "threadId": "t",
@@ -3673,11 +3638,6 @@
           ],
           "runId": "r2",
           "threadId": "t"
-        },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
         },
         "protocolVersion": "1.0",
         "runId": "r2",
@@ -3817,11 +3777,6 @@
           "runId": "r1",
           "threadId": "t"
         },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
-        },
         "protocolVersion": "1.0",
         "runId": "r1",
         "threadId": "t",
@@ -3937,11 +3892,6 @@
           ],
           "runId": "r2",
           "threadId": "t"
-        },
-        "metadata": {
-          "agentAdaptor": {
-            "sdkRunId": ""
-          }
         },
         "protocolVersion": "1.0",
         "runId": "r2",

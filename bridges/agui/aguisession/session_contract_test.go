@@ -285,13 +285,13 @@ func TestRecordedValuesAreFrozenBeforeObserve(t *testing.T) {
 }
 
 // A fixed Thread must reserve its actual host key even when wire IDs differ.
-type auditDriver struct{}
+type statelessDriver struct{}
 
-func (auditDriver) Descriptor() driver.Descriptor {
-	return driver.Descriptor{Type: "audit", DisplayName: "Audit"}
+func (statelessDriver) Descriptor() driver.Descriptor {
+	return driver.Descriptor{Type: "stateless-test", DisplayName: "Stateless test"}
 }
-func (auditDriver) ValidateConfig(any) error { return nil }
-func (auditDriver) Run(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+func (statelessDriver) ValidateConfig(any) error { return nil }
+func (statelessDriver) Run(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
 	return driver.Response{}, nil
 }
 
@@ -316,7 +316,7 @@ func (r *barrierRecorder) Since(ctx context.Context, key string, after sessionre
 }
 
 func TestFixedThreadAdmissionUsesHostKey(t *testing.T) {
-	agent := adaptor.New(auditDriver{}, adaptor.WithThreadStore(memory.NewStore()))
+	agent := adaptor.New(statelessDriver{}, adaptor.WithThreadStore(memory.NewStore()))
 	defer agent.Close(context.Background())
 	fixed := agent.Thread("host-key")
 	rec := &barrierRecorder{EventRecorder: recorder(t), key: RecorderKey(fixed.Key()), entered: make(chan struct{}), release: make(chan struct{})}

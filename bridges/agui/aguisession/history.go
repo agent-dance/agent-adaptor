@@ -19,8 +19,18 @@ import (
 type ProjectedRecord struct {
 	// HostSeq is the recorder-assigned thread cursor.
 	HostSeq sessionrecorder.HostSeq `json:"host_seq"`
-	// Events is the ordered projection of this record.
+	// Events is the ordered projection of this record; JSON encodes [] when empty.
 	Events []events.Event `json:"events"`
+}
+
+// MarshalJSON keeps the event list an array even for source records with no
+// public projection, including filtered notices and deferred message openers.
+func (r ProjectedRecord) MarshalJSON() ([]byte, error) {
+	type record ProjectedRecord
+	if r.Events == nil {
+		r.Events = []events.Event{}
+	}
+	return json.Marshal(record(r))
 }
 
 type projector struct {

@@ -7,3 +7,4 @@
 node_modules/
 .next/
 dist/
+.local/assistant-ui/

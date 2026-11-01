@@ -68,7 +68,10 @@ started. The frozen schema does not permit top-level identity fields on
 `RUN_ERROR`; its public identity is in `metadata.agentAdaptor.threadId/runId`.
 SDK run ID, provider thread ID and bridge key appear as `sdkRunId`,
 `providerThreadId`, `threadKey` in the same metadata namespace on boundaries
-when observed. Public IDs never become provider resume IDs. Fallback identities also remain fixed after RUN_STARTED.
+when observed; unknown identity members are omitted, never empty strings. The
+recorded Session boundary precedes Stream construction, so its RUN_STARTED may
+omit sdkRunId; later boundaries include the observed Stream.RunID. Public IDs
+never become provider resume IDs. Fallback identities also remain fixed after RUN_STARTED.
 
 The default mapping is `bridgekey.Encode("agui", threadId)`.
 `ResolveThreadKey` lets the host authorize/map identity before execution. A client
@@ -143,6 +146,38 @@ uses the current/last assistant text message when known. Tool events include
 `ProcessInfo` is intentionally not projected: raw provider CLI protocol output
 is not conversation content and can contain unrelated or sensitive payloads.
 
+Text and reasoning open lazily on their first non-empty content delta. A source
+START/END pair with no content produces no AG-UI lifecycle or empty Message.
+A declared assistant ID is still retained as a tool-call parent: TOOL_CALL_START
+can create its tool-only assistant owner without an empty text lifecycle. These
+rules are shared by live SSE and recorded history, including old source records.
+
+Notice projection uses an allowlist by default to prevent local CLI paths,
+working directories, environment names and provider payloads from reaching a
+browser. The same translator serves `sse.Handler` and `aguisession`:
+
+| Source | Default wire projection |
+| --- | --- |
+| `NoticeStep` with `phase: started/finished` | `STEP_STARTED` / `STEP_FINISHED`, with lifecycle repair. Unknown phases require opt-in. |
+| Approval request/resolution Notices and typed requests | Decision tool-call lifecycles, or explicit `DecisionAsCustom` HITL events. |
+| `NoticeLifecycle` with `Data.warning == "human_decision_retry_unsupported"` | `CUSTOM` named `lifecycle`; the current capability-degradation warning. |
+| Input diagnostics (and `agentAdaptor.input.warning` Notice) | `CUSTOM` named `agentAdaptor.input.warning`. |
+| Typed `Dropped` (and `stream.dropped` Notice) | `CUSTOM` named `stream.dropped`. |
+| Typed `SubagentUpdate` | `ACTIVITY_SNAPSHOT` / `ACTIVITY_DELTA`. |
+| `invocation`, `runtime`, `transcript.item`, ordinary lifecycle reports, unknown warnings, provider kinds such as `codex.event` / `claude.*`, and other Notice kinds | Dropped from public projection. Source recording is retained for trusted host audit. |
+
+`WithNoticePassthrough(kinds ...string)` explicitly opts exact Notice kinds into
+CUSTOM delivery; there are no wildcards and an empty argument list enables
+nothing. Multiple calls accumulate. Configure it through `sse.Options.AGUIEvents`
+or `aguisession.Options.Events`, using the same policy for live and replay.
+Opted-in notices may contain sensitive local data: review/redact their projected
+values with `WithProjectionHook`. Filtering precedes that hook; use the opt-in
+when a hook needs an otherwise hidden Notice to construct a host activity/card.
+The source recorder and host `Observe` callback still see the full typed events;
+protect their storage/access separately. Protocol warnings remain in ordered
+`/events` history; Message[] does not acquire arbitrary CUSTOM data blocks.
+The example renders only known protocol data names, never unknown CUSTOM dumps.
+
 `WithProjectionHook` runs over projected content, including synthesized text
 and diagnostics. `RUN_STARTED`, `RUN_FINISHED` and `RUN_ERROR` bypass the hook;
 a hook that drops every content event still preserves the run boundaries. A host can redact/drop reasoning or
@@ -169,6 +204,13 @@ content bytes before truncation, including any exit suffix.
 The host supplies identity/authorization, checkpoint and durable history storage,
 retention/redaction policy, worker lifetime, and business facts. This handler
 provides neither durable UI history nor background execution/observation.
+The optional Session below provides recording and observation with host-injected
+backends. The runnable [assistant-ui example](../examples/web-chat/assistant-ui)
+shows durable JSONL history, persistent Thread checkpoints, two fake turns,
+failed tool 13, reload and active-run joining; real CLI mode is explicit opt-in.
+Its demo Resolve permits everyone and marks the production auth boundary.
+The host still supplies authorization, retention/redaction, durable deployment,
+worker routing/lifetime and domain facts.
 
 The deterministic handler fixture is `bridges/agui/testdata/handler-agui-1.0.sse`.
 Regenerate with `UPDATE_GOLDEN=1` with `go test ./bridges/sse -run TestAGUIHandlerGolden`.
@@ -200,8 +242,8 @@ Projection version `agui-session/2` records typed Notices with reserved kinds
 projection version, diagnostics, submitted user message and its ID) and
 `agentAdaptor.agui.terminal` (authoritative code/message and SDK run/key metadata).
 Older, missing or unknown projection versions produce
-`agui.projection_version_unsupported`, never successful replay. Draft version-1
-recordings require an explicit host migration; they are not silently reinterpreted.
+`agui.projection_version_unsupported`, never successful replay. Recordings from earlier projection versions require
+an explicit host migration; they are not silently reinterpreted.
 Source events cannot use either reserved Notice kind: the session cancels/drains
 and records `agui.reserved_notice` instead of accepting a forged boundary/terminal. Between them are the input user turn, source events including
 approvals, and any Result.Text fallback. Stream.Result is the terminal authority.
@@ -214,6 +256,12 @@ append never becomes RUN_FINISHED. Cleanup writes use a cancellation-detached
 context with a five-second timeout per write, so request cancellation can still
 persist its authoritative outcome. Recorder implementations must honor contexts. Inactive runs without terminal records project
 `run.incomplete`, never success. Disconnect cancels this request-scoped run.
+When the session's execution context is cancelled by host Cancel, Shutdown or a
+request-scoped disconnect, its terminal is `RUN_ERROR` with `code: run.cancelled`,
+even if the killed Driver returns an agent-error RunError. The terminal message
+retains the Driver diagnostic for inspection. A Driver failure without session
+cancellation retains its own code. The assistant-ui example renders cancellation
+as a separate status, live and after reload, rather than a process-error banner.
 The drain owns execution independently of the HTTP subscriber.
 
 `Events(ctx, key, after)` returns ordered `[]ProjectedRecord` with HostSeq per
@@ -252,8 +300,17 @@ later turns with earlier messages. Host-added projection-hook events must also
 use stable, conversation-unique IDs.
 
 `VerifyHistory(ctx, input, runner, key) (string, bool, error)` also fits the generic
-SSE handler extension. It compares IDs and roles in order, excluding activities
-and the trailing input user turn; content is not compared. Divergence returns
+SSE handler extension. It compares IDs and roles in order, excluding activities,
+reasoning and the trailing input user turn; content is not compared. Required
+user/assistant/tool IDs, roles and order still match strictly, including tool-only
+assistant messages. Reasoning is optional presentation state, not execution input:
+the provider checkpoint owns that context. In assistant-ui 0.1.1,
+`toAgUiMessages(fromAgUiMessages(history, {showThinking}))` drops empty plain
+reasoning and can omit all plain reasoning when showThinking=false. See the
+published [0.1.1 conversion implementation](https://unpkg.com/@assistant-ui/react-ag-ui@0.1.1/dist/runtime/adapter/conversions.js)
+(`fromAgUiMessages` and `convertAssistantMessage`) and the sanitized
+[real Codex regression fixture](../examples/web-chat/assistant-ui/web/testdata/codex-history.json).
+Both presentations can continue the same Thread. Divergence returns
 409 `agui.history_diverged`; `ResolveDivergence` may choose a fresh key with no
 recorded history. The destination is reserved and checked again before releasing
 the original reservation. Fixed Threads always reserve their actual host key and
@@ -284,8 +341,10 @@ The official live client fold does **not** set ToolMessage.error from result
 metadata. History folding adds it for assistant-ui history loading; live UIs
 read metadata.agentAdaptor for tool status. Verification compares only IDs and
 roles, ignoring both content and error. HttpAgent.prepareRunAgentInput in
-@ag-ui/client 1.0.3 clones messages and strips only role=activity: reasoning,
-tool results and tool-only assistants remain in the next request.
+@ag-ui/client 1.0.3 clones messages and strips only role=activity. Its raw
+messages can contain reasoning, while an assistant-ui round-trip may omit it;
+the verifier therefore ignores both activities and reasoning. Tool results and
+tool-only assistant identities remain required.
 
 Session SSE writes use the same deadline writer as the generic handler.
 Options.WriteTimeout defaults to 30 seconds per write; KeepAlivePing optionally
@@ -475,6 +534,19 @@ and closes before delivering a new RUN_STARTED with an unmatched old lifecycle.
 A new snapshot can then join the replacement run at its complete boundary.
 
 
+## Real-driver example profiles
+
+The [assistant-ui example](../examples/web-chat/assistant-ui) deliberately calls
+`exampleutil.OperatorProfileEnv` in real mode. It binds the operator HOME and,
+for Codex, CODEX_HOME from the explicit environment or HOME/.codex. Existing CLI
+login and config.toml custom-provider settings are therefore used. Set CODEX_HOME
+to another existing CLI profile to choose it explicitly. Claude/Cursor profile
+overrides are also captured when supplied. This is example host policy; Driver
+defaults remain unchanged. An SDK host without those explicit bindings still
+gets Codex's intentionally managed profile behavior. Changing bindings changes
+construction/session compatibility: use a fresh demo Thread/data directory when
+switching CLI profiles.
+
 ## Offline protocol fixture check
 
 Run `node bridges/agui/testdata/verify-client.mjs` to validate the golden handler
@@ -483,7 +555,10 @@ message folding. It uses the existing assistant-ui node_modules read-only and
 never opens a socket. `AGUI_NODE_MODULES` can point to another existing install.
 The script registers the standard `$anchor` annotation with Ajv and disables its
 `strictRequired` schema lint for allOf-inherited properties; instance validation
-retains every schema constraint. No package install or frontend change is needed.
+retains every schema constraint. Install the example dependencies with `npm ci` before running the check.
+`npm run test:integration` in `examples/web-chat/assistant-ui/web` includes this
+offline check alongside the HTTP official-client test; `npm run test:offline`
+checks the actual browser history adapter and failure renderer without sockets.
 The Go handler golden test independently compares the live normalized trace to
 the fixture; regenerate only after reviewing protocol changes. The same script
 independently checks the hand-derived Node-free reducer table and ten recorded

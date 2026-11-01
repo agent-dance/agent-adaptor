@@ -10,7 +10,7 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "@ag-ui/client": "0.0.57",
+    "@ag-ui/client": "1.0.3",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },

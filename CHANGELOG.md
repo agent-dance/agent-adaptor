@@ -6,78 +6,70 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- AG-UI snapshots with completed-history messages, an active-run boundary and
-  a join cursor for fresh clients attaching to an unattended run.
-
-- Opt-in unattended AG-UI sessions with bounded concurrency, host-owned lifetime,
-  shutdown, cursor catch-up/follow, cancellation and observer revocation.
-- Additive recorder change subscriptions and coordinated-backend contracts for
-  atomic sequence allocation and post-commit multi-worker notifications.
-
-- Optional `bridges/agui/aguisession` recorded execution, deterministic history
-  projection, Message folding, history verification and HTTP helpers.
-
-- AG-UI 1.0 input validation, structured transport errors, input diagnostics,
-  context projection, history fallback and host verification/request hooks.
-- Configurable tool-result truncation and live projection redaction/extension hooks.
+- Optional `bridges/agui/aguisession` recorded execution with one Stream drain,
+  durable typed source recording, ordered AG-UI events and materialized Message[]
+  history, plus cursor-bounded snapshots for completed history and active runs.
+- Opt-in unattended sessions with bounded concurrency, host-owned lifetime,
+  shutdown, catch-up/follow observation, cancellation and observer revocation.
+  Recorder subscriptions and coordinated-backend contracts support atomic
+  sequence allocation and notifications after durable commit.
+- A direct assistant-ui example with persistent Thread checkpoints and JSONL
+  history, deterministic fake mode (13 commands, one failure), opt-in real CLI
+  profiles, reload/observation/cancel UI, and official-client integration tests.
+- AG-UI 1.0 validation and conformance fixtures, structured transport errors,
+  input diagnostics, context projection, history fallback, configurable tool
+  result limits, and deterministic redaction/extension hooks.
 
 ### Changed
 
-- AG-UI observers retain incremental projection state after one catch-up read,
-  avoiding full-thread rereads and reprojection on follow notifications.
-
-- Recorded AG-UI sessions use one operation-aware authorization/key resolver,
-  shared request preparation and bounded SSE writes with optional keep-alives.
-
-- AG-UI run boundaries echo public identities and advertise protocol 1.0.
-  SDK/provider identities are namespaced metadata. Versioned requests require
-  public identities; legacy requests retain identity-only leniency.
-- AG-UI execution requires a trailing user message and rejects interrupt resume;
-  missing prior checkpoints reject unless history rehydration is enabled.
-  Migration: stateless hosts receiving full client history must configure a
-  ThreadStore with resumable Threads or explicitly enable
-  `sse.Options.AGUIInput.HistoryFallback`; otherwise subsequent turns return
-  HTTP 409 `agui.history_unrecoverable`. The bundled SSE examples enable fallback.
+- Run boundaries echo public request identities and advertise protocol 1.0;
+  observed SDK/provider identities use namespaced metadata. Versioned requests
+  require public IDs, while legacy requests retain identity-only leniency.
+- Execution requires a trailing user message and rejects interrupt resume.
+  Prior history needs a usable checkpoint or explicit text rehydration. Hosts
+  receiving complete client history must inject a ThreadStore or enable
+  `sse.Options.AGUIInput.HistoryFallback`; otherwise later turns return
+  `agui.history_unrecoverable`. Bundled stateless examples enable fallback.
+- History verification compares required message IDs/roles in order, excluding
+  activities and optional reasoning. Text/reasoning lifecycles open only on
+  non-empty content, accommodating assistant-ui reloads with thinking on or off.
+- Notice projection uses a protocol allowlist for security: invocation/runtime/
+  transcript/provider data can expose local paths, environment names and provider
+  internals. Exact additional kinds require `WithNoticePassthrough`; protocol
+  warnings, steps, approvals, drops and subagent activity remain supported.
+- The assistant-ui real-driver example explicitly binds the operator CLI profile
+  (HOME and Codex CODEX_HOME) for existing login/custom-provider configuration.
+  Driver defaults are unchanged; changing bindings requires a compatible Thread.
+- Direct clients pin `@ag-ui/client` 1.0.3. CopilotKit retains its independently
+  bundled 0.0.57 client/core. Session projection format `agui-session/2` uses
+  run-scoped provider IDs and an idempotent submitted-user seed; older recording
+  formats require migration. Recorder-key encoding remains version 1.
 
 ### Fixed
 
-- AG-UI observation pairs recorder reads with stable admission/completion cuts,
-  preserving suffixes across consecutive runs and avoiding false incomplete-run
-  terminals. Snapshot boundary waits are notification-driven and validated.
-- Fixed-Thread AG-UI sessions use their actual host key for default history,
-  observation and cancellation, matching execution admission.
-- Unattended cancellation reaches pending admission; shutdown interrupts
-  preparation and shares bounded cleanup waiting across repeated callers.
-- Recorder Close releases change subscriptions and rejects coordinated reads and
-  writes. Observer cursor stamping preserves opaque metadata; revoked observers
-  close cleanly through error delivery, and established SSE errors stay SSE.
-
-- Recorded AG-UI history now matches the official client reducer's metadata,
-  activity replacement and corrected tool-result rules, including JSON patches.
-- Recorded sessions reserve actual resolved Thread keys, recheck fresh branch
-  destinations, reject forged control Notices and never report terminal-write
-  failure or an empty-reason business error as successful completion. A checkpoint
-  predating a failed recorded turn cannot silently attest that turn's history.
-- Session projection version 2 scopes provider IDs by run, preserves complete
-  submitted user messages through an idempotent input seed, and stamps events
-  before redaction hooks. Draft version-1 recordings require explicit migration;
-  the SHA-256 recorder-key mapping remains unchanged.
-- SSE flush errors cancel recorded execution; cancellation still records cleanup.
-  CopilotKit second turns explicitly rehydrate history, and its recovery panel
-  consumes typed recorder envelopes and live approval fields.
-
-- AG-UI run identities stay fixed after the opening boundary; step lifecycles
-  close before terminal events and empty custom notices include their payload.
-- AG-UI child tool ownership stays consistent with its opener, and subagent
-  activity patches no longer change after subsequent tracker updates.
-- Stateless AG-UI Agents accept public thread IDs without requiring a store;
-  opt-in history fallback now executes on those Agents. Host/storage preparation
-  failures report HTTP 500 instead of being misclassified as malformed input.
-- Opaque AG-UI metadata preserves JSON number precision and large values.
-  Fractional exit codes are not rounded into integers, and empty command output
-  retains its exit-code suffix.
-- Tool result failure/exit status survives recorded numeric representations,
-  with explicit metadata and assistant-message parent attribution.
+- Codex one-shot/persistent app-server and batch execution classify cancellation
+  as cancelled rather than agent failure, including explicit process shutdown.
+  They retain available raw output and never persist a cancelled checkpoint.
+  Session-initiated cancellation
+  records `run.cancelled` even when a Driver reports an error from the killed
+  process; independent failures keep their codes and diagnostics remain available.
+- Recorded execution fails closed on storage errors and forged control Notices.
+  Duplicate/active runs and diverged or unrecoverable histories are rejected;
+  failed/incomplete turns cannot be attested by an older healthy checkpoint.
+- Snapshot/observation reads pair committed storage with stable admission state,
+  preserve suffixes across runs, and avoid false incomplete-run outcomes. Follow
+  retains its projector and reads only new records after catch-up.
+- Cancellation reaches pending admission; cleanup and SSE writes are bounded,
+  write/flush failures cancel request-scoped runs, shutdown can be retried, and
+  revocation detaches observers. Recorder Close releases subscriptions and rejects
+  further operations. Fixed Thread execution/read/cancel use the actual host key.
+- Live/history output preserves Result.Text fallback, tool failure/exit status,
+  provider-neutral parent/subagent attribution, activity updates and opaque
+  metadata. Tool output truncation respects UTF-8 and retains integral exit codes.
+- Unknown identity metadata is omitted; event queries encode empty lists as [].
+  The assistant-ui page suppresses unknown data blocks, uses mode-appropriate copy,
+  and displays cancelled status live and after reload. The direct aguiclient
+  handles content-array tool results with the official text conversion helper.
 
 ## [1.1.2] - 2026-08-07
 

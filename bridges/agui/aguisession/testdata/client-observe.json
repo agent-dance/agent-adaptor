@@ -28,7 +28,6 @@
           "timestamp": 1793448000000,
           "metadata": {
             "agentAdaptor": {
-              "sdkRunId": "",
               "seq": 9
             }
           },
@@ -77,15 +76,15 @@
     },
     {
       "host_seq": 10,
-      "events": null
+      "events": []
     },
     {
       "host_seq": 11,
-      "events": null
+      "events": []
     },
     {
       "host_seq": 12,
-      "events": null
+      "events": []
     },
     {
       "host_seq": 13,
@@ -116,23 +115,22 @@
     },
     {
       "host_seq": 14,
+      "events": []
+    },
+    {
+      "host_seq": 15,
       "events": [
         {
           "type": "TEXT_MESSAGE_START",
           "timestamp": 1793448000000,
           "metadata": {
             "agentAdaptor": {
-              "seq": 14
+              "seq": 15
             }
           },
           "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message6:active2:a1",
           "role": "assistant"
-        }
-      ]
-    },
-    {
-      "host_seq": 15,
-      "events": [
+        },
         {
           "type": "TEXT_MESSAGE_CONTENT",
           "timestamp": 1793448000000,

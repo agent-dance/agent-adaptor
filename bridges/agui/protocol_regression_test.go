@@ -213,7 +213,7 @@ func TestTranslatorConcurrentCalls(t *testing.T) {
 }
 
 func TestEmptyCustomNoticeMatchesFrozenSchema(t *testing.T) {
-	tr := NewEventTranslator()
+	tr := NewEventTranslator(WithNoticePassthrough("empty"))
 	out := tr.Translate(adaptor.RunStarted{})
 	out = append(out, tr.Translate(adaptor.Notice{Kind: "empty"})...)
 	out = append(out, tr.CloseRun(nil)...)

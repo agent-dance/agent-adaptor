@@ -177,3 +177,10 @@ a structured `answer` without either is rejected explicitly.
 Projection version 2 uses a RUN_STARTED input seed for the submitted user and
 run-scoped provider message/tool IDs. Existing draft version-1 records require
 an explicit migration; see [the AG-UI contract](../../../docs/agui.md).
+
+
+For direct assistant-ui, persistent Thread checkpoints and opt-in Snapshot/Observe
+joining, see [`../assistant-ui`](../assistant-ui). This example retains its
+CopilotKit-owned AG-UI client/core 0.0.57 pins: forcing the direct client 1.0.3
+transitively is not a trivial compatible upgrade. The Go session endpoint is
+shared; the direct examples exercise the published AG-UI 1.0 client separately.

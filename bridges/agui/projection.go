@@ -24,6 +24,21 @@ func WithProjectionHook(h ProjectionHook) EventTranslatorOption {
 	return func(t *EventTranslator) { t.projectionHook = h }
 }
 
+// WithNoticePassthrough opts exact Notice kinds into CUSTOM projection in
+// addition to protocol-relevant defaults. There are no wildcards; no arguments
+// enables nothing. Options accumulate and capture their arguments by value.
+// These notices may expose local paths, environment names or provider payloads.
+// Review/redact them with WithProjectionHook before exposing them to clients.
+// Apply the same options to live and recorded projection for consistent replay.
+func WithNoticePassthrough(kinds ...string) EventTranslatorOption {
+	allowed := append([]string(nil), kinds...)
+	return func(t *EventTranslator) {
+		for _, kind := range allowed {
+			t.noticePassthrough[kind] = true
+		}
+	}
+}
+
 // WithRunIdentity separates public request identity from SDK/provider IDs.
 // Without it, low-level callers retain SDK/provider identity fallback behavior.
 func WithRunIdentity(threadID, runID, parentRunID string) EventTranslatorOption {
@@ -85,7 +100,10 @@ func (t *EventTranslator) startedEvent() events.Event {
 }
 
 func (t *EventTranslator) boundaryMetadata(e events.Event) {
-	m := map[string]any{"sdkRunId": t.sdkRunID}
+	m := map[string]any{}
+	if t.sdkRunID != "" {
+		m["sdkRunId"] = t.sdkRunID
+	}
 	if t.providerThreadID != "" {
 		m["providerThreadId"] = t.providerThreadID
 	}
@@ -96,7 +114,9 @@ func (t *EventTranslator) boundaryMetadata(e events.Event) {
 		m["threadId"] = t.threadOrDefault()
 		m["runId"] = t.runOrDefault()
 	}
-	e.GetBaseEvent().Metadata = map[string]any{"agentAdaptor": m}
+	if len(m) > 0 {
+		e.GetBaseEvent().Metadata = map[string]any{"agentAdaptor": m}
+	}
 }
 
 func (t *EventTranslator) warningEvents() []events.Event {
