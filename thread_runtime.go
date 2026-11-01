@@ -120,9 +120,10 @@ func (r *threadRuntime) begin(ctx context.Context, st *runStream) error {
 	r.stopExecution = context.AfterFunc(r.ownerCtx, st.cancel)
 	if inherited {
 		lease := r.owner.OwnershipLease()
+		ttl := engine.LeaseTTL()
 		attemptCtx, cancel := context.WithTimeout(ctx, invocationCleanupTimeout)
 		err, completed := engine.BoundedSessionStoreCall(attemptCtx, func(callCtx context.Context) error {
-			return r.agent.defaults.threadStore.RenewLease(callCtx, threadstore.Lease{Target: lease.Target, Owner: lease.Owner, Token: lease.Token}, engine.LeaseTTL())
+			return r.agent.defaults.threadStore.RenewLease(callCtx, threadstore.Lease{Target: lease.Target, Owner: lease.Owner, Token: lease.Token}, ttl)
 		})
 		cancel()
 		if err != nil {
