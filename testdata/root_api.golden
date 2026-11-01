@@ -836,6 +836,18 @@ type SkillSnapshot = driver.SkillSnapshot
 
 const Soon Timing = 0
 
+type Standby interface {
+	Cancel()
+	Events() <-chan Event
+	Send(ctx context.Context, text string, opts ...CallOption) error
+}
+
+methodset Standby {
+	value Cancel()
+	value Events() <-chan Event
+	value Send(ctx context.Context, text string, opts ...CallOption) error
+}
+
 type Stream interface {
 	Cancel()
 	Events() <-chan Event
@@ -930,6 +942,20 @@ type ThreadOption interface {
 
 methodset ThreadOption {
 	value private applyThread(*Thread)
+}
+
+type ThreadRunner interface {
+	Checkpoint(ctx context.Context) (*Checkpoint, error)
+	Key() string
+	Runner
+	Standby(ctx context.Context) (Standby, error)
+}
+
+methodset ThreadRunner {
+	value Checkpoint(ctx context.Context) (*Checkpoint, error)
+	value Key() string
+	value Send(ctx context.Context, text string, opts ...CallOption) Stream
+	value Standby(ctx context.Context) (Standby, error)
 }
 
 methodset Thread {
