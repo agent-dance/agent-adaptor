@@ -126,7 +126,7 @@ func (adapter) ValidateConfig(cfg any) error {
 	return nil
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -136,10 +136,10 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	bindings, err := effectiveBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "codebuddy_profile_error", Level: "fail", Message: "CodeBuddy profile resolution failed.", Detail: err.Error()})
-		return driverutil.SummarizeEnvironment(DriverType, checks), nil
+		return codebuddyVersion(ctx, config).Environment(DriverType, (adapter{}).Descriptor().Messages, checks), nil
 	}
 	checks = append(checks, authChecks(bindings)...)
-	return driverutil.SummarizeEnvironment(DriverType, checks), nil
+	return codebuddyVersion(ctx, config).Environment(DriverType, (adapter{}).Descriptor().Messages, checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {

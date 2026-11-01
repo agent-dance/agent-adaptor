@@ -82,7 +82,7 @@ func (adapter) ValidateConfig(cfg any) error {
 	}
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -92,7 +92,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	bindings, err := effectiveCursorBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "cursor_profile_error", Level: "fail", Message: "Cursor profile resolution failed.", Detail: err.Error()})
-		return driverutil.SummarizeEnvironment(DriverType, checks), nil
+		return cursorVersion(ctx, config).Environment(DriverType, cursorMessageCapability(), checks), nil
 	}
 	cursorHome := resolveCursorHome(bindings)
 	if _, err := os.Stat(cursorHome); err == nil {
@@ -113,7 +113,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	}
 	checks = append(checks, cursorAuthChecks(bindings)...)
 	checks = append(checks, cursorConfigChecks(bindings)...)
-	return driverutil.SummarizeEnvironment(DriverType, checks), nil
+	return cursorVersion(ctx, config).Environment(DriverType, cursorMessageCapability(), checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
@@ -323,6 +323,13 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Cursor CLI does not expose native JSON Schema output"}
 	}
 	cfg := readConfig(req.Config)
+	if req.Messages != nil {
+		var err error
+		req, err = cursorVersion(ctx, cfg).PrepareRun(ctx, req, sink, DriverType, cursorMessageCapability())
+		if err != nil {
+			return driver.Response{}, err
+		}
+	}
 	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
 		cfg.Model = m

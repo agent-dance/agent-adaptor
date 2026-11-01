@@ -70,13 +70,20 @@ const (
 
 // EnvironmentReport is the normalized health report returned by
 // Agent.Inspect().Environment. Status and Checks are authoritative; Healthy
-// reports whether Status is EnvironmentPass.
+// reports whether the base driver is usable (warnings do not make it unhealthy).
 type EnvironmentReport struct {
 	DriverType string
-	Status     EnvironmentStatus
-	Healthy    bool
-	Summary    string
-	Checks     []EnvironmentCheck
+	// Version is the detected local CLI version, or empty when unknown.
+	Version string
+	// Messages is the effective local message capability after CLI version
+	// gating. Descriptor.Messages remains the driver's static maximum. An
+	// unknown version retains that maximum with a warning in Checks; invocation
+	// resolution may further trim it for the selected transport or workspace.
+	Messages MessageCapability
+	Status   EnvironmentStatus
+	Healthy  bool
+	Summary  string
+	Checks   []EnvironmentCheck
 }
 
 // EnvironmentCheck is one probe result within an EnvironmentReport. Code is the

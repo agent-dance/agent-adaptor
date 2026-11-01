@@ -25,6 +25,10 @@ const codeBuddyPersistentHelperEnv = "GO_WANT_AGENT_ADAPTOR_CODEBUDDY_PERSISTENT
 
 func TestMain(m *testing.M) {
 	if os.Getenv(codeBuddyPersistentHelperEnv) == "1" {
+		if len(os.Args) == 2 && os.Args[1] == "--version" {
+			fmt.Println("1.0.0")
+			os.Exit(0)
+		}
 		os.Exit(runCodeBuddyPersistentHelper())
 	}
 	os.Exit(m.Run())

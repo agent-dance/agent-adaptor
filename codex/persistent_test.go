@@ -25,6 +25,10 @@ const codexHelperEnv = "GO_WANT_AGENT_ADAPTOR_CODEX_HELPER"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(codexHelperEnv) == "1" {
+		if len(os.Args) == 2 && os.Args[1] == "--version" {
+			fmt.Println("codex-cli 0.166.0")
+			os.Exit(0)
+		}
 		os.Exit(runCodexHelper())
 	}
 	os.Exit(m.Run())

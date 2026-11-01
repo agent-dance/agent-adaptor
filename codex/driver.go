@@ -93,7 +93,7 @@ func (adapter) ValidateConfig(cfg any) error {
 	}
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -103,11 +103,11 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	bindings, err := effectiveCodexBindings(config.CommonConfig, nil, driver.AgentIdentity{})
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "codex_profile_error", Level: "fail", Message: "Codex profile resolution failed.", Detail: err.Error()})
-		return driverutil.SummarizeEnvironment(DriverType, checks), nil
+		return codexVersion(ctx, config).Environment(DriverType, codexMessageCapability(), checks), nil
 	}
 	checks = append(checks, codexAuthChecks(bindings)...)
 	checks = append(checks, codexConfigChecks(bindings)...)
-	return driverutil.SummarizeEnvironment(DriverType, checks), nil
+	return codexVersion(ctx, config).Environment(DriverType, codexMessageCapability(), checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
@@ -349,6 +349,13 @@ func (adapter) StreamCapability() driver.StreamCapability {
 
 func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
+	if req.Messages != nil {
+		var err error
+		req, err = codexVersion(ctx, cfg).PrepareRun(ctx, req, sink, DriverType, codexMessageCapability())
+		if err != nil {
+			return driver.Response{}, err
+		}
+	}
 	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
 		cfg.Model = m

@@ -342,6 +342,7 @@ func TestMessageClaimsAwaitWriteAndFailExactlyOnce(t *testing.T) {
 
 func TestMessageResolverTransport(t *testing.T) {
 	port := newMessageTestPort()
+	cfg := Config{CommonConfig: CommonConfig{Command: versionCommand(t, "2.1.110 (Claude Code)", "exit 99")}}
 	for _, tc := range []struct {
 		name    string
 		a       adapter
@@ -358,6 +359,7 @@ func TestMessageResolverTransport(t *testing.T) {
 		{name: "native-streaming", req: driver.Request{Messages: port, Streaming: true, OutputSchema: &driver.OutputSchema{}, StructuredOutputSource: driver.StructuredOutputSourceNative}, enabled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			tc.req.Config = cfg
 			got := tc.a.ResolveMessageCapability(tc.req)
 			want := driver.MessageCapability{}
 			if tc.enabled {
