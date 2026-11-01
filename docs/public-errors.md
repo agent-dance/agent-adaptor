@@ -7,9 +7,11 @@ Thread storage, A2A client, and hosttool contracts.
 Use `errors.Is` for a category and `errors.As` when the table names a typed
 error. Error strings are diagnostics, not matching contracts.
 
+All SDK imports use `github.com/agent-dance/agent-adaptor/v2`.
+
 ## One execution error path
 
-`Runner.Run` and `Stream.Result` use one verdict model:
+`Stream.Result()` and terminal `Done` use one verdict model:
 
 - success returns `*Result, nil`;
 - a completed business failure returns `*RunError`, whose `Result` retains
@@ -18,7 +20,7 @@ error. Error strings are diagnostics, not matching contracts.
   ordinary wrapped errors.
 
 ```go
-result, err := runner.Run(ctx, prompt)
+result, err := runner.Send(ctx, prompt).Result()
 if err != nil {
 	var runErr *adaptor.RunError
 	if errors.As(err, &runErr) {
@@ -31,14 +33,14 @@ if err != nil {
 _ = result
 ```
 
-`Stream` itself returns immediately; setup and execution failures are read
-from `Stream.Result()` after its event channel closes. Programmer-contract
+`Runner.Send` returns its Stream immediately; setup and execution failures use
+`Stream.Result()` and the final `Done{Result, Err}` event. Result can be read directly without subscribing; its pair is identical to Done, including pointer identity. A business failure has a nil direct Result and a non-nil RunError.Result. Programmer-contract
 violations documented as panics, such as constructing an Agent with a nil
 Driver or creating a Thread with an empty key, are not error sentinels.
 
 ## Agent lifecycle
 
-`ErrAgentClosed` means `Agent.Close` has started. New `Run`/`Stream` calls on
+`ErrAgentClosed` means `Agent.Close` has started. New `Send` calls on
 the Agent or any Thread derived from it fail with this sentinel and do not
 restart the Driver's process pool. `Close` itself is idempotent; its context
 error reports a bounded cleanup failure rather than changing this sentinel.
@@ -81,7 +83,7 @@ the exact same identities as their owner-package variables.
 | `ErrInvalidOutputSchema` | `driver.ErrInvalidOutputSchema` | `*adaptor.InvalidOutputSchemaError` (`Reason`, `Cause`) | A schema cannot be derived, parsed, normalized, or compiled. |
 | `ErrStructuredOutputUnsupported` | `driver.ErrStructuredOutputUnsupported` | `*adaptor.StructuredOutputUnsupportedError` (`Driver`, `Reason`) | Neither native enforcement nor Prompt plus local validation can honor the request. |
 | `ErrInvalidDriverConfig` | `driver.ErrInvalidDriverConfig` | `*adaptor.InvalidDriverConfigError` (`Driver`, `Cause`) | `Driver.ValidateConfig` rejected the captured configuration. |
-| `ErrInvalidPolicy` | `driver.ErrInvalidPolicy` | `*adaptor.InvalidPolicyError` (`Driver`, `Field`, `Value`) | A policy enum, action, or retry value is out of domain. |
+| `ErrInvalidPolicy` | `driver.ErrInvalidPolicy` | `*adaptor.InvalidPolicyError` (`Driver`, `Field`, `Value`) | A policy enum, action, retry value, or message limit is out of domain. |
 | `ErrPolicyCapabilityUnsupported` | `driver.ErrPolicyCapabilityUnsupported` | `*adaptor.PolicyCapabilityUnsupportedError` (`Driver`, `Dimension`, `Value`) | A valid, explicitly selected sandbox, web-search, or browser value is unsupported. |
 | `ErrHumanDecisionModeUnsupported` | `driver.ErrHumanDecisionModeUnsupported` | `*adaptor.HumanDecisionModeUnsupportedError` (`Driver`, `Kind`, `Mode`) | An explicit approval mode is absent from `Descriptor.RunPolicyCaps`. |
 
@@ -100,6 +102,35 @@ if errors.Is(err, adaptor.ErrInvalidPolicy) {
 	// Stable category without typed detail.
 }
 ```
+
+## Message admission and delivery errors
+
+Stream.Send and Standby.Send return nil on admission, not on delivery. Rejected input is a `*adaptor.MessageError` with ID, original Text, Reason, and wrapped Err. Use errors.As to retain the text for rerouting; use errors.Is for the cause.
+
+| Cause/category | Meaning |
+|---|---|
+| ErrRunFinished | The Stream has sealed; send on a new execution or a live Standby instead. |
+| ErrMessageUnsupported | Messages are disabled, the Driver cannot continue, or requested Interrupt is unsupported. |
+| context.Canceled / context.DeadlineExceeded | Admission was cancelled or its context ended while waiting for queue space. |
+| MessageLimitExceeded reason | Framed text exceeds the Driver's size limit; no separate size sentinel exists. |
+| MessageProviderRejected reason | Invalid author/timing or unsupported admission; inspect the wrapped cause. |
+| ErrAgentClosed | A Standby send was attempted after Agent shutdown started. |
+
+Once admitted, outcomes arrive on reliable MessageUpdate events and final Result.Messages()/Undelivered(), rather than as a second send return. Delivery failures do not necessarily fail the execution.
+
+| MessageFailure | Wire value | Meaning |
+|---|---|---|
+| MessageCancelled | cancelled | Execution cancellation or withdrawal of an unclaimed Stream message. |
+| MessageProviderRejected | provider_rejected | Provider rejection or no safe continuation path. |
+| MessageTimeout | timeout | A delivery attempt timed out without a successful fallback. |
+| MessageLimitExceeded | limit_exceeded | Execution cannot start another provider turn. |
+| MessageRunFailed | run_failed | Execution failed before delivery. |
+
+Boundary-specific failures can requeue for checkpoint continuation, reporting Accepted again; an ambiguous earlier attempt is marked as a possible duplicate. A Driver-claimed item is settled by its acknowledgement, even when its sender context ends. Stream send contexts can withdraw unclaimed input; Standby send contexts govern admission only, so an accepted HTTP message survives request completion.
+
+A Standby remains alive after an execution failure. Only classified rate-limit/network/provider-server failures with undelivered work retry automatically, at most once. A run_failed message can carry to the next execution and report failed, then delivered under the same ID. Without an eligible retry, carried input waits for a host message. Cancel clears pending input instead.
+
+MessageID deduplicates within the Thread (up to 1000 delivered receipts, seven days). A crash after provider acceptance but before receipt persistence can replay the message. A third-party in-run-only Driver without resume reports failure for input admitted at its final boundary race. See the [delivery matrix and limits](./streaming.md#12-message-delivery-capabilities).
 
 ## Host-defined Tool errors
 
@@ -128,14 +159,15 @@ particular store implementation.
 
 | Sentinel | Meaning | Typical host action |
 |---|---|---|
-| `ErrThreadStoreRequired` | A stateful Thread operation was requested without `WithThreadStore`. | Fix Agent construction. |
 | `ErrThreadNotFound` | A resume-only key or fork parent has no active record. | Return not-found or offer a new Thread. |
-| `ErrThreadBusy` | Another owner holds the required lease. | Retry with bounded backoff. |
+| `ErrThreadBusy` | A task execution or live Standby already owns this key, or another process holds its lease. | Route extra input to the existing Stream/Standby; route cross-process input to the owner. |
 | `ErrThreadIncompatible` | Driver/config/identity/resolved-environment fingerprint or codec compatibility failed. | Keep the old record; explicitly create a new Thread if desired. |
 | `ErrThreadLeaseLost` | The run lost lease ownership, so its state was not persisted. | Treat the outcome as non-authoritative and investigate the store. |
 | `ErrThreadCheckpointMissing` | A nominally successful Thread run did not prove a healthy resumable checkpoint. | Preserve the previous healthy record and inspect the Driver. |
 | `ErrThreadAlreadyExists` | A fork target key already has an active conversation. | Choose another target key; parent and target remain unchanged. |
 | `ErrResumeRejected` | The Driver rejected a resume and the selected mode did not allow a fresh retry. | Inspect compatibility/auth state or explicitly create a new Thread. |
+
+Named Threads use a private in-memory store without WithThreadStore. Reopening Standby on the same Agent/key returns the existing live handle; it does not raise ErrThreadBusy. Standby creation during a task returns ErrThreadBusy directly, while task-mode sends report it through Result/Done.
 
 The root contract promises `errors.Is` for these rows, not store-specific
 typed details. A `driver.SessionConfigFingerprintError` can remain discoverable
@@ -145,7 +177,7 @@ canonicalization caused the incompatibility.
 ## Approval responder errors
 
 These are method errors from `ApprovalRequest.Approve`, `Deny`, and `Answer`,
-not run verdicts.
+not run verdicts. A request returned by Forward shares the original responder; answering either copy resolves both. Origin adds attribution, not another response channel.
 
 | Sentinel | Meaning |
 |---|---|
@@ -224,9 +256,7 @@ recovery cause; it has no dedicated sentinel.
 | `sessionrecorder.ErrJSONLEventBackendClosed` | An operation was attempted after the durable event backend closed. |
 | `sessionrecorder.ErrJSONLEventLogCorrupt` | A malformed, truncated, or inconsistent JSONL audit log could not be replayed faithfully. |
 
-`hosttools/a2adelegation.DelegationError` is a typed remote/business failure
-with `Code`, `Message`, `Retryable`, `RemoteStatus`, and `Metadata`. It
-implements `error` but has no sentinel and no unwrap contract.
+For team/delegation and remote A2A error contracts, see [A2A integration](./a2a.md) and the relevant package godoc.
 
 The `profile`, `memory`, and bridge packages currently define no additional
 SDK-owned stable error sentinels. They return documented standard errors,

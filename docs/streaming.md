@@ -1,28 +1,23 @@
 # Streaming guide
 
-This guide is for hosts that need to render text, thinking, tool calls, run status, or approval requests in real time. The final API exposes a single typed `Event` stream: both `Agent` and `Thread` return a `Stream` from `Runner.Stream`, and the authoritative outcome is read from `Stream.Result()` after the run ends.
+In v2, `Agent.Send` and `Thread.Send` return one `Stream` for one execution. Observe typed events, wait synchronously with `Result()`, or use both. Each execution ends with authoritative `Done{Result, Err}`. Supplemental input belongs on `Stream.Send`; continuous conversations use `Thread.Standby`.
 
-The complete public types are listed in the [API reference](./api-reference.md), and the approval policy is described in [run policy](./run-policy.md).
+The complete public types are in the [API reference](./api-reference.md); approvals are described in [run policy](./run-policy.md).
 
 ## 1. One execution pipeline, one event stream
 
-```go
-type Runner interface {
-	Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
-	Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
-}
-
-type Stream interface {
-	Events() <-chan Event
-	Result() (*Result, error)
-	RunID() string
-	Cancel()
-}
+```text
+Runner.Send(context.Context, string, ...CallOption) Stream
+Stream.Send(context.Context, string, ...MessageOption) error
+Stream.Events() <-chan Event
+Stream.Result() (*Result, error)
+Stream.RunID() string
+Stream.Cancel()
 ```
 
-`Run` is strictly equivalent to calling `Stream`, draining `Events()` to completion, and then calling `Result()`. Both share the same option merging, resource resolution, Driver invocation, Thread coordination, and result archiving logic.
+Every execution uses the same option resolution, workspace/runtime/skill/MCP preparation, Thread coordination, Driver dispatch, and finalization. One execution can contain multiple provider turns when messages require continuation.
 
-Calling `Stream` only states that the host wants to observe live events; it does not force any particular provider protocol. Core selects the provider transport from the resolved invocation, the Driver's `StreamCapability`, and structured-output compatibility; the host has no additional streaming switch.
+Provider transport is negotiated from resolved capabilities and schema/policy compatibility. Calling Events or Result does not switch provider protocols. A coarse provider still returns the same Stream interface.
 
 ## 2. Minimal consumer
 
@@ -31,118 +26,95 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"log"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/codex"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/codex"
 )
 
 func main() {
-	ai := adaptor.New(codex.Driver(codex.Config{Model: "gpt-5.4"}))
-	stream := ai.Stream(context.Background(), "Write a haiku")
+	ai := adaptor.New(codex.Driver(codex.Config{}))
+	defer ai.Close(context.Background())
+	stream := ai.Send(context.Background(), "Write a haiku")
 	defer stream.Cancel()
 
 	for ev := range stream.Events() {
 		switch e := ev.(type) {
 		case adaptor.TextDelta:
-			if e.Phase == adaptor.PhaseContent {
-				fmt.Print(e.Text)
-			}
-		case adaptor.Thinking:
-			// Render reasoning when needed; simply ignore it otherwise.
+			fmt.Print(e.Text)
 		case adaptor.ToolCall:
 			if e.Phase == adaptor.PhaseStart {
 				fmt.Printf("\n[tool %s]\n", e.Name)
 			}
 		case adaptor.Dropped:
-			fmt.Printf("\n[dropped %d events]\n", e.Count)
+			log.Printf("dropped %d incremental events", e.Count)
+		case adaptor.Done:
+			if e.Err != nil {
+				log.Print(e.Err)
+			} else {
+				fmt.Printf("\nfinal: %s\n", e.Result.Text)
+			}
 		}
 	}
-
-	result, err := stream.Result()
-	if err != nil {
-		var runErr *adaptor.RunError
-		if errors.As(err, &runErr) {
-			fmt.Printf("run failed: %s: %s\n", runErr.Reason, runErr.Message)
-			return
-		}
-		panic(err)
-	}
-	fmt.Printf("\nresult: %s\n", result.Text)
 }
 ```
 
-Key semantics:
+Send returns immediately and RunID is immediately available. Startup failures also emit Done. Result is safe to call concurrently and repeatedly; its pair is identical to Done's, including pointer identity. Call `Events()` before ordinary traffic when you need live progress.
 
-- `Stream` returns immediately, and `RunID()` is available right away.
-- Pre-start errors use the same shape: `Events()` is closed and `Result()` returns the error.
-- A normal run that is not cancelled closes `Events()` after every accepted terminal event has been delivered and the provider, runtime services, and workspace have been released. A closed channel means no further events will arrive, and `Result()` is already available at that point.
-- `Result()` may be called concurrently and repeatedly, and returns a consistent outcome.
-- Event types you do not care about can be omitted from the type switch, but the channel must still be drained continuously.
-
-A complete runnable example is in [`examples/streaming`](../examples/streaming/main.go); an interactive example with a Thread is in [`examples/streaming/chat`](../examples/streaming/chat/main.go).
+A runnable task consumer is in [`examples/streaming`](../examples/streaming/main.go). [`examples/streaming/chat`](../examples/streaming/chat/main.go) streams one prompt on a named Thread; it is not a continuous input loop or Standby example.
 
 ## 3. Event vocabulary and ordering
 
-Every semantic and operational signal of a run arrives on the same `<-chan adaptor.Event`:
-
 | Event | Purpose |
 |---|---|
-| `RunStarted` / `RunFinished` | Run lifecycle; the final success or failure is still decided by `Stream.Result()` |
-| `TextDelta` | Assistant text, with `PhaseStart` / `PhaseContent` / `PhaseEnd` |
-| `Thinking` | Reasoning lifecycle |
-| `ToolCall` / `ToolResult` | Tool call arguments, boundaries, and results |
-| `ProcessInfo` | Subprocess spawn and raw stdout/stderr chunks |
-| `Notice` | Invocation, runtime, step, transcript item, and approval audit information |
-| `*ApprovalRequest` | Host approval request with an exactly-once responder |
-| `Dropped` | Aggregated report of deltas discarded under the default backpressure policy |
-| `SubagentUpdate` | Live delegation progress |
+| `RunStarted` / `RunFinished` | Execution lifecycle; RunFinished is informational. |
+| `TextDelta` / `Thinking` | Text/reasoning with PhaseStart, PhaseContent, PhaseEnd. |
+| `ToolCall` / `ToolResult` | Tool boundaries, arguments, and results. |
+| `MessageUpdate` | Admission, delivery, requeue, or failure of supplemental input. |
+| `TurnEnd` | One provider turn's Result/Err and processed MessageIDs; Turn is one-based. |
+| `Done` | Final Result/Err after validation, checkpoint handling, and cleanup; always last. |
+| `ProcessInfo` | Spawn and raw stdout/stderr chunks. |
+| `Notice` | Invocation, runtime, step, transcript, approval, and recovery information. |
+| `*ApprovalRequest` | Exactly-once live responder. |
+| `Dropped` | Counts and sequence ranges of discarded events. |
+| `SubagentUpdate` | Typed optional host-component progress. |
 
-The `Meta()` of every event returns the authoritative SDK envelope:
+Every event's Meta holds SDK RunID, opaque ThreadKey (empty on direct Agent tasks), strictly increasing Sequence, receive Time, optional TurnID, and provider coordinates in Source. Provider IDs and sequence numbers never override SDK ordering. Standby spans multiple RunIDs; sequence restarts per execution. Persistent replay/broadcast needs a host cursor and host storage.
 
-- `RunID`: the ID of this execution.
-- `ThreadKey`: the opaque Thread key supplied by the host.
-- `Sequence`: assigned by the SDK in the receive order of the unified sink; strictly increasing within a single run.
-- `Time`: the time at which the SDK received the event.
-- `Source`: optional raw provider/Driver coordinates; it never overrides the authoritative SDK fields.
+TurnEnd precedes final execution checks; a successful turn can still be followed by a Done error from persistence or cleanup. Do not treat TurnEnd or RunFinished as execution completion. Per-turn snapshots are intended for replies; final audit/message accounting comes from Done or Result.
 
-Concurrent producers are serialized by the same broker, so the channel receive order matches `EventMeta.Sequence`. A bridge may use it as a wire cursor within a single run, and should not promote provider sequence numbers into a second authoritative ordering. A recorder that needs to persist and resume across multiple runs must allocate its own host-scoped cursor (`sessionrecorder.HostSeq`), because `EventMeta.Sequence` restarts for every new run.
+Notice selectors relevant to delivery and recovery:
+
+| Selector | Meaning |
+|---|---|
+| Kind `limit.approaching` | Approaching the turn limit; system wrap-up guidance is queued. |
+| Kind `thread.continuity` | Fresh provider session after incompatibility or resume rejection. |
+| Kind `thread.persistence` | Storage unavailable; in-process checkpoint remains authoritative during retries. |
+| Kind `thread.ownership` | Standby lease release failed. |
+| Kind `NoticeLifecycle`, Metadata code `cursor_hook_unavailable` | Tool delivery unavailable; use turn-end resume. |
+| Kind `NoticeLifecycle`, Metadata code `claude_hooks_unavailable` | Hook initialization unavailable; use turn-end resume. |
+| Kind `NoticeLifecycle`, Data warning `human_decision_retry_unsupported` | Approval retry degrades to abort. |
+
+These codes live in `Metadata["code"]` or `Data["warning"]` as listed, not a Notice.Code field. Preserve unknown notice kinds and extension data. Unobserved approval requests produce an explanatory lifecycle notice without a dedicated code.
 
 ## 4. Result, errors, and cancellation
 
-Events are in-flight observations; `Stream.Result()` is the terminal authority:
+The execution verdict has one Go error path:
 
-- Success: returns `*Result, nil`.
-- Business failure: returns `nil, *RunError`, with the partial or complete result in `RunError.Result`.
-- Infrastructure failure: returns `nil, error`, preserving the `errors.Is/As` chain.
+- Success: Result and nil error.
+- Business failure: nil Result and `*RunError`, carrying the available result in RunError.Result.
+- Infrastructure failure: nil Result and wrapped error, preserving errors.Is/As.
 
-`Result.Text`, `Summary`, `Raw()`, `Transcript()`, and `Services()` are independent layers. Do not rebuild the final result from a `RunFinished` event, and do not concatenate live deltas yourself into an audit-grade Raw or transcript.
+Done contains exactly this pair. Raw stdout/stderr, normalized Transcript, final Text, short Summary, observed Services, message outcomes, and schema output remain separate. Across provider turns, Text is the last turn's answer, Usage is summed, and audit streams include all invocations. Raw.Terminal is the last recognized official terminal payload.
 
-`Cancel()` is idempotent and unblocks pending event publication, approval waits, and the run context. Buffered events may still be readable after cancellation; keep ranging until `Events()` closes, then call `Result()` to obtain the final cancellation error.
+Cancel is idempotent. It cancels the execution context, fails pending messages, and unblocks producers and approval waiters. A Driver-claimed message is settled by its acknowledgement. Drain buffered critical events through Done and closure after cancellation.
 
-A consumer that plans to stop reading events early must call `Cancel()` first. It is not enough to stop ranging and then wait on `Result()`: reliable events or blocking mode may be waiting for channel space.
+For synchronous consumption, `agent.Send(ctx, prompt).Result()` needs no event-draining goroutine. If Events was never called, Result discards ordinary traffic and retains critical events plus a Dropped summary. Events may be read afterwards, but that is not a full ordinary-event replay. An Events subscriber that disconnects should cancel and drain the remaining critical events.
 
 ## 5. Backpressure
 
-The default buffer for ordinary events is 1024 and can be adjusted when constructing the Agent; the SDK reserves separate capacity for terminal events, which does not count against that number:
-
-```go
-ai := adaptor.New(
-	codex.Driver(codex.Config{}),
-	adaptor.WithEventBuffer(256),
-)
-```
-
-The default policy only allows dropping replayable or high-frequency deltas:
-
-- `PhaseContent` of `TextDelta`, `Thinking`, and `ToolCall`
-- stdout/stderr `ProcessInfo`
-- `SubagentUpdate{Kind: SubagentDelta}`
-
-Lifecycle boundaries, approvals, terminal events, tool results, transcript items, and `Dropped` itself are reliable events. When a drop occurs, the SDK emits an aggregated `Dropped` whose `Count`, `ByKind`, `FirstSequence`, `LastSequence`, `Reason`, and `Source` describe the gap. Once an explicit cancellation enters abort teardown, deltas that have not yet entered the channel and a pending aggregated `Dropped` may be abandoned, but the authoritative `RunFinished` uses the separately reserved capacity and is still delivered as the last event.
-
-Use the construction-scope option when lossless events are required:
+Ordinary-event capacity defaults to 1024. Configure it at construction:
 
 ```go
 ai := adaptor.New(
@@ -152,120 +124,79 @@ ai := adaptor.New(
 )
 ```
 
-Without cancellation, blocking mode never drops events, but a slow consumer applies backpressure to the Driver; cancellation releases those blocks and enters teardown. Whichever policy is used, production hosts should drain continuously and call `Cancel()` immediately when they disconnect or abandon consumption.
+In default drop mode, only replayable high-frequency content may drop: text/thinking/tool-argument PhaseContent, stdout/stderr chunks, and subagent deltas. Lifecycle boundaries, tool results, transcript notices, approval requests, MessageUpdate, TurnEnd, Done, and drop reports remain reliable during normal consumption.
+
+Dropped includes Count, ByKind, FirstSequence, LastSequence, Reason, Source, and Details. Critical publications enqueue immediately even at capacity. WithBlockingEvents makes ordinary producers wait for space while Events is consumed; cancellation releases waits. Result-only consumption and cancellation can discard ordinary events into a loss summary. Done remains authoritative and last, following any pending drop report.
+
+The channel is single-consumer, not a broadcast bus. Hosts should fan out after one continuous drain.
 
 ## 6. Streaming conversations on a Thread
 
-`Thread` and `Agent` implement the same `Runner`. A stateful conversation only adds a Thread coordination layer; it does not create a second stream:
-
 ```go
-import "github.com/agent-dance/agent-adaptor/memory"
-
-ai := adaptor.New(
-	codex.Driver(codex.Config{Model: "gpt-5.4"}),
-	adaptor.WithThreadStore(memory.NewStore()),
-)
-
-stream := ai.Thread("tenant-7/conversation-42").Stream(ctx, "Continue")
-defer stream.Cancel()
+ai := adaptor.New(codex.Driver(codex.Config{}))
+thread := ai.Thread("tenant-7/conversation-42")
+stream := thread.Send(ctx, "Continue")
 for ev := range stream.Events() {
-	// The same adaptor.Event vocabulary.
+	fmt.Printf("%s %d %T\n", ev.Meta().RunID, ev.Meta().Sequence, ev)
 }
 result, err := stream.Result()
+if err != nil {
+	return err
+}
+fmt.Println(result.Text)
 ```
 
-The Thread key is an opaque string supplied by the host. Hosts should hold it verbatim; do not assemble provider session IDs yourself, and do not derive consumer identity from `Source.ThreadID` in events.
+Named Threads use private memory by default. Inject a durable WithThreadStore for restart recovery and shared lease coordination. Store and compare host keys verbatim; provider session IDs are checkpoint details.
+
+A task-mode Thread is exclusive. Another Thread.Send fails with ErrThreadBusy rather than joining current work. Send additional guidance on the current Stream. A live Standby reserves the same Thread even while idle (§13).
 
 ## 7. Approval requests
 
-Without an installed `OnApproval` callback, requests that need a human answer appear directly on the same event stream:
+Call Events early, or install OnApproval for synchronous use. An Ask request arriving before Events was ever called and without a handler immediately uses the timeout fallback and emits a lifecycle notice.
 
 ```go
-for ev := range stream.Events() {
-	switch req := ev.(type) {
-	case *adaptor.ApprovalRequest:
-		switch req.Kind {
-		case adaptor.ApprovalQuestion:
-			_ = req.Answer(ctx, "yes")
-		default:
-			_ = req.Approve(ctx)
-		}
+func decide(ctx context.Context, req *adaptor.ApprovalRequest) error {
+	if req.Kind == adaptor.ApprovalQuestion {
+		return req.Answer(ctx, "Use the existing database")
 	}
+	return req.Approve(ctx)
 }
 ```
 
-`Approve`, `Deny`, and `Answer` are exactly-once; a duplicate, expired, kind-mismatched, or responder-less request returns a stable error immediately. Timeout, rejection, and retry behaviour is decided solely by `Policy.Approvals`; bridges do not build a second policy.
+Subscribe to `*ApprovalRequest` for a UI and retain its live responder in host storage. Approve, Deny, and Answer resolve exactly once, including forwarded copies. Origin identifies an optional member/task; Forward preserves the same responder while attributing a copy. Kind mismatches, expiry, duplicate replies, and zero/unbound requests return stable errors promptly. Policy.Approvals owns timeout, rejection, and retry handling.
 
-Hosts that cannot interact inside the event loop can install a callback with `adaptor.OnApproval`. Both consumption styles share the same request and outcome contract.
+A Standby internally consumes execution events even before an external subscriber. Configure OnApproval or an explicit approval policy when no UI will answer; do not rely on Result-only detection for Standby.
 
 ## 8. AG-UI bridge
 
-A host that already has an AG-UI transport layer can translate a `Stream` directly:
-
 ```go
-import "github.com/agent-dance/agent-adaptor/bridges/agui"
-
-stream := ai.Stream(ctx, prompt)
+stream := ai.Send(ctx, prompt)
 defer stream.Cancel()
-
-for ev := range agui.EventsContext(ctx, stream) {
-	// ev is an AG-UI events.Event; write it to SSE, a WebSocket, or a recorder.
+for event := range agui.EventsContext(ctx, stream) {
+	fmt.Printf("%T\n", event)
 }
 ```
 
-`agui.EventsContext`:
+Import `github.com/agent-dance/agent-adaptor/v2/bridges/agui`. EventsContext emits RUN_STARTED first, completes text/thinking/tool boundaries, and derives one RUN_FINISHED/RUN_ERROR from Stream.Result after draining. This is the same authoritative outcome carried by Done. MessageUpdate and TurnEnd become custom `message.update` and `turn.end` events; raw process chunks have no AG-UI projection. Approvals can map to tool-call or custom events.
 
-- Guarantees that `RUN_STARTED` is the first item of the output.
-- Completes and deduplicates text, thinking, and tool-call lifecycle boundaries.
-- Produces exactly one `RUN_FINISHED` or `RUN_ERROR` from `Stream.Result()` after all open lifecycles are closed.
-- Cancels the underlying `Stream` when the context ends, and keeps every downstream send cancellable.
-- Maps approvals to configurable tool-call or custom events.
-
-Local programs without a request-scoped context can use `agui.Events(stream)`; HTTP/WebSocket handlers should prefer `EventsContext` to avoid leaking a fan-out goroutine after the client disconnects.
-
-The AG-UI input helper `RunAgentInput` extracts the last non-empty user text; `UserTurnEvents` builds the canonical user `TextDelta` triple. Drivers only produce assistant text, and `RoleUser` is synthesized solely by a bridge or a host.
+Cancellation ends downstream sends and cancels the underlying execution. Use EventsContext for request-scoped consumers. `RunAgentInput` extracts the last non-empty user text; `UserTurnEvents` synthesizes a user text lifecycle. Drivers emit assistant text.
 
 ## 9. HTTP SSE bridge
 
-`sse.Handler` accepts any `adaptor.Runner`:
-
 ```go
-import (
-	"net/http"
-	"time"
-
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
-)
-
 mux := http.NewServeMux()
-mux.Handle("/v1/chat", sse.Handler(ai, sse.Options{
-	Protocol:          sse.AGUI,
-	CORSAllowedOrigin: "*",
-	Options: []adaptor.CallOption{
-		adaptor.WithTimeout(2 * time.Minute),
-	},
+mux.Handle("/agent", sse.Handler(ai, sse.Options{
+	Protocol: sse.AGUI,
+	Options:  []adaptor.CallOption{adaptor.WithTimeout(2 * time.Minute)},
 }))
 ```
 
-The final `Options` fields:
+Import `github.com/agent-dance/agent-adaptor/v2/bridges/sse`. Handler accepts any Runner and starts request-bound Send calls. Options include Protocol (AGUI default or Raw), KeepAlivePing, CORSAllowedOrigin, WriteTimeout (30 seconds by default, reset before each underlying write/flush), and per-execution Options. Request bodies are limited to 4 MiB.
 
-- `Protocol`: `sse.AGUI` (the zero value) or `sse.Raw`.
-- `KeepAlivePing`: when non-zero, writes an SSE comment to keep proxy connections alive.
-- `CORSAllowedOrigin`: when non-empty, writes CORS headers.
-- `WriteTimeout`: resets the write deadline before each underlying Write/Flush, defaulting to 30 seconds; it is not a budget for a whole frame or a whole run. A `ResponseWriter` without deadline support falls back transparently.
-- `Options`: `[]adaptor.CallOption` appended to every `Runner.Stream`.
-
-AG-UI mode accepts the standard `RunAgentInput`:
+AG-UI mode accepts RunAgentInput:
 
 ```json
-{
-  "threadId": "conversation-42",
-  "runId": "browser-turn-8",
-  "messages": [
-    {"id": "m-8", "role": "user", "content": "Write a haiku"}
-  ]
-}
+{"threadId":"conversation-42","runId":"browser-turn-8","messages":[{"id":"m-8","role":"user","content":"Write a haiku"}]}
 ```
 
 Raw mode accepts:
@@ -274,33 +205,137 @@ Raw mode accepts:
 {"prompt":"Write a haiku","sessionKey":"conversation-42"}
 ```
 
-When the handler receives a session identity and the `Runner` is an `*adaptor.Agent` with a Thread Store, it binds to `Agent.Thread`. If the caller passed an `*adaptor.Thread` in the first place, the host-pinned Thread is kept. The AG-UI `threadId` uses a collision-free tuple encoding; the Raw `sessionKey` is preserved verbatim.
+An Agent binds incoming session identities to named Threads automatically: AG-UI IDs use collision-free tuple encoding; Raw sessionKey remains verbatim. A host-pinned Thread stays pinned. The handler is a task-mode endpoint; it does not automatically open Standby or accept supplemental messages for a running Stream. Hosts implement those routes and retain the live handle.
 
-A client disconnect cancels the request context and the underlying `Stream`. Raw frames use `EventMeta.Sequence` as the SSE `id` and support reading `Last-Event-ID` as a fallback cursor; persistent replay remains the host's responsibility.
+Client disconnection cancels request-bound work. Raw message/turn frames are `message.update` and `turn.end`; its final run frame is derived from Result after draining rather than a literal Go Done event. Raw sequence cursors/Last-Event-ID do not provide persistent replay. SSE carries approval information outward; a callback or authenticated companion route must hold and answer the live responder.
 
-SSE is a one-way transport, so approval requests can only be sent as informational frames. Interactive approval should use `OnApproval`, or the host should hold the live responder and expose an authenticated companion endpoint.
-
-A complete server example is in [`examples/web-chat`](../examples/web-chat/main.go), an AG-UI client in [`examples/web-chat/aguiclient`](../examples/web-chat/aguiclient/main.go), and a CopilotKit integration in [`examples/web-chat/copilotkit`](../examples/web-chat/copilotkit/server.go).
+Runnable servers and clients are in [`web-chat`](../examples/web-chat), [`aguiclient`](../examples/web-chat/aguiclient), and [`copilotkit`](../examples/web-chat/copilotkit).
 
 ## 10. Driver streaming fidelity
 
-Every `Runner` has `Stream`; `driver.StreamCapability` only describes the granularity of native provider events. It is neither another execution capability nor an A2A transport capability.
-
-The declarations of the current built-in Drivers are:
+`driver.StreamCapability` describes native event granularity, independently of message-delivery capabilities.
 
 | Driver | Native | TokenLevel | Reasoning | ToolCallArgs | HITL |
 |---|---:|---:|---:|---:|---:|
-| Codex | ✓ | ✓ | ✓ | ✓ | — |
-| Claude | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Cursor | — | — | — | — | — |
-| CodeBuddy | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Codex | yes | yes | yes | yes | no |
+| Claude | yes | yes | yes | yes | yes |
+| Cursor | no | no | no | no | no |
+| CodeBuddy | yes | yes | yes | yes | yes |
 
-When a capability is false, the host still uses the same `Stream`. The events may only carry coarser lifecycle, process, transcript, and final result information; a host should not create another call path because fidelity is lower.
-
-When a structured-output schema is incompatible with a rich-event provider transport, core may select a compatible batch provider transport while still exposing the run through the unified `Event` channel. This decision does not change the public semantics of `Run` and `Stream`.
+A false field still leaves the same public Stream available. Coarse providers may expose process, transcript, lifecycle, and final output without token deltas. Structured-output negotiation can select a batch transport without changing the public handle.
 
 ## 11. AG-UI version alignment
 
-The Go side pins `github.com/ag-ui-protocol/ag-ui/sdks/community/go` through `go.mod`; the CopilotKit example pins `@ag-ui/core` through [`examples/web-chat/copilotkit/web/package-lock.json`](../examples/web-chat/copilotkit/web/package-lock.json). The two version coordinates differ, so upgrading either side requires revalidating the event lifecycle and schema.
+The Go dependency is pinned by go.mod, and frontend dependencies by the CopilotKit lockfile. Their version coordinates differ. `go test ./internal/aguiversion/...` checks both pins; deliberate upgrades require updating its expectations and revalidating the bridge fixtures.
 
-`go test ./internal/aguiversion/...` verifies both pins. When upgrading deliberately, update the expected versions in `internal/aguiversion/align_test.go` and review the `bridges/agui` fixtures.
+## 12. Message delivery capabilities
+
+This matrix comes from Descriptor.Messages, invocation resolvers, and message tests in [`codex`](../codex/messages.go), [`claude`](../claude/messages.go), [`cursor`](../cursor/messages.go), and [`codebuddy`](../codebuddy/driver.go). Turn-end continuation is implied when resume or in-run continuation is supported.
+
+| Driver / transport | Mid-turn boundaries | Interrupt | Continuation | Maximum framed message / unit | Provider-echo confirmation | Declared minimum CLI |
+|---|---|---|---|---|---|---|
+| Codex app-server | immediate (`turn/steer`) | yes (`turn/interrupt`, then restart turn) | in-run; resume also covers final-boundary races | 0 / bytes: no known limit | no | 0.100.0 |
+| Codex exec | none | no | checkpoint resume at turn end | 0 / bytes: no known limit | no | none declared for exec continuation |
+| Claude stream-json input | tool, stop | no | in-run; resume fallback | 0 / bytes: no known limit | no | 2.1.110 |
+| Claude batch native-schema transport | none | no | checkpoint resume | 0 / bytes: no known limit | no | none declared for this resolved transport |
+| Cursor | tool, when relay is available | no | checkpoint resume | **9936 / UTF-16 code units** | yes, `hookAdditionalContexts` | 2026.10.14 |
+| CodeBuddy | none | no | checkpoint resume | 0 / bytes: no known limit | no | none declared |
+
+Zero MaxUnits is not a promise of unlimited provider capacity. Core measures the **framed** text, including author guidance/custom Format. Cursor reserves 64 units for its nonce wrapper out of the provider's 10000-unit hook budget, leaving MaxUnits=9936 for core-framed input. Batches that exceed the hook budget requeue excess input for continuation. Cursor retains this per-message limit even when its tool boundary is trimmed.
+
+These are declarations, not runtime version certification. The current EnvironmentReport exposes health checks, not a resolved Messages matrix, and no general MinVersion gate is enforced by core. Ensure your CLI meets the listed minimum. Actual hook initialization, workspace eligibility, transport, and policy can narrow delivery. Pi/OpenCode and the proposal's ACP presets are not v2 integrations in this tree.
+
+Only Codex declares PersistsDelivered=true. Core preserves bounded delivered guidance for other Drivers and replays it on resume as needed. ConfirmedDelivery refers to a provider echo for boundary injection, not confirmation that the model obeyed it; other deliveries are acknowledged through their concrete transport's acceptance/write path.
+
+### Sending, timing, and outcomes
+
+```go
+stream := ai.Send(ctx, "Fix the build")
+if err := stream.Send(ctx, "Keep the current dependency versions",
+	adaptor.MessageID("review-42"),
+	adaptor.From(adaptor.Author{Kind: adaptor.AuthorHuman, ID: "maintainer"}),
+	adaptor.When(adaptor.Soon),
+); err != nil {
+	return err
+}
+result, err := stream.Result()
+if err != nil {
+	return err
+}
+for _, outcome := range result.Messages() {
+	fmt.Println(outcome.ID, outcome.State, outcome.Boundary, outcome.Mechanism)
+}
+```
+
+Soon uses the earliest available boundary, falling back to continuation. AfterTurn waits for a new provider turn within this execution. Interrupt aborts and continues the active turn; unsupported Drivers return ErrMessageUnsupported. Neither Soon nor Interrupt inserts input into tokens already being generated.
+
+Nil means admitted. MessageUpdate emits Accepted, Delivered, or Failed; a boundary-specific retry can emit Accepted again. Boundary is immediate/tool/stop/turn_end; Mechanism reports the actual path (for example `codex.turn_steer`, `claude.hook.post_tool_use`, `cursor.hook.post_tool_use`, or `core.resume`). Failed updates return original Text and a stable Reason. Result.Messages preserves final outcomes in admission order; Undelivered filters failures. Prelaunch sends need no readiness check.
+
+Stream.Send accepts only MessageOption. Admission failure returns MessageError with original ID/Text/Reason and a wrapped cause; errors.Is detects ErrRunFinished, ErrMessageUnsupported, or context cancellation. The send context withdraws only unclaimed input. Once claimed, the acknowledgement wins. Queue capacity defaults to 32 and blocks senders until space or cancellation.
+
+MessageID deduplicates within the Thread; at most 1000 delivered IDs are retained for seven days. Starting-prompt duplicates finish with zero turns and empty Text. Durable deduplication requires a durable store. A crash after provider acceptance and before receipt persistence can replay input. A third-party Driver with in-run continuation but no resume cannot recover input admitted at its final boundary race; the outcome is failed, never silently dropped.
+
+Boundary-specific failures such as an RPC timeout, turn-ID mismatch, relay failure, or missing echo requeue input for turn-end continuation. Ambiguous delivery carries a possible-duplicate note. Cancellation, execution failure, unavailable healthy checkpoint, or MaxTurns exhaustion can still fail the message.
+
+### Cursor hook relay
+
+Call the relay helper before other main logic:
+
+```go
+package main
+
+import "github.com/agent-dance/agent-adaptor/v2/cursor"
+
+func main() {
+	cursor.RunHookRelayIfRequested()
+}
+```
+
+The real host continues its startup after this call. The helper recognizes the SDK's private relay invocation and exits after serving it. Keep heavy initialization out of init functions: every hook can re-execute the host. Config.HookRelay can supply explicit argv instead.
+
+The resolver enables tool delivery only on non-Windows managed workspaces (git-worktree/cloud-sandbox/driver-managed strategy), with a usable directory and no existing `.cursor/hooks.json`. A plain WithWorkspace or SharedWorkspace does not opt into hook installation; a real manager must supply an appropriately managed lease. Existing hook files, including another run's SDK file, are left untouched.
+
+Relay probe, listener, or installation failure emits `cursor_hook_unavailable` and uses checkpoint resume at turn end. Cursor print mode has no stop-hook delivery. A host binary that omits the helper therefore still supports turn-end input, with later delivery.
+
+Claude registers main-loop tool and Stop callbacks, filtering nested agent/tool loops. Rejected or timed-out hook initialization emits `claude_hooks_unavailable`; pending input continues through resume. Claude Interrupt remains unsupported.
+
+## 13. Standby conversations
+
+Use Thread.Send for a task with one execution result. Use Standby when messages and replies arrive over the lifetime of a chat:
+
+```go
+func serveChat(serverCtx context.Context, agent *adaptor.Agent) (adaptor.Standby, error) {
+	sb, err := agent.Thread("chat-42").Standby(serverCtx)
+	if err != nil {
+		return nil, err
+	}
+	events := sb.Events()
+	go func() {
+		for event := range events {
+			switch e := event.(type) {
+			case adaptor.TurnEnd:
+				if e.Result != nil {
+					fmt.Println(e.MessageIDs, e.Result.Text, e.Err)
+				}
+			case adaptor.Done:
+				if e.Err != nil {
+					fmt.Println("execution failed:", e.Err)
+				}
+			}
+		}
+	}()
+	return sb, nil
+}
+```
+
+Retain the returned handle in the server. An input handler calls `sb.Send(r.Context(), text, MessageID(id))`; the request context bounds admission, while accepted work uses serverCtx. Message-only input joins active processing; idle input starts an execution. Execution options such as WithModel or WithTimeout queue a separate execution after current work. No input is required to open or subscribe.
+
+Standby exposes Send, Events, Cancel, with no overall Result. Per-turn TurnEnd provides replies; per-execution Done gives the finalized verdict. Before its first Events subscription, events are discarded. After subscribing, keep draining and broadcast from the host if needed.
+
+A live Standby owns the Thread lease even while idle. Task-mode Thread.Send and another process's ownership attempt fail with ErrThreadBusy. Within the same Agent, another Standby call for that key returns the live handle; the first context retains lifetime ownership.
+
+`sb.Cancel()` stops current processing and fails pending input with MessageCancelled, then keeps accepting input. Cancel the lifetime context to close Standby and its Events channel. Agent.Close also shuts down Agent-owned work.
+
+An execution failure leaves Standby alive. Only classified rate-limit, network, and provider-server failures with pending work retry automatically, at most once. A structured retry-after hint is honored; otherwise the fallback delay is 250 ms. Cancellation and context deadlines are not retried.
+
+Undelivered input with reason run_failed carries to the next execution under the same MessageID. It can emit failed, then accepted/delivered. Without an eligible retry, carried input waits for the next host message; it does not start a busy retry loop. The same provider-acceptance/receipt-persistence crash window described above applies to Standby recovery.
