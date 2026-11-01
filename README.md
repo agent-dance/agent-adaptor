@@ -22,7 +22,7 @@ Switching to Claude Code only means swapping the Driver in the constructor; the 
 
 - **Structured output**: define a Go struct, call `RunAs[T]`, and the agent runs under a constraint that returns a populated object.
 - **Multi-protocol decoration**: built-in A2A/AGUI decoration turns an Agent into a standard agent with SSE + AGUI streaming in one line, so a custom front end or client is all you need for a complete agent service (a runnable CopilotKit front end is included).
-- **Multi Agent**: cross-Driver team agents — for example Codex as the leader agent autonomously coordinating a Plan Agent (Codex), a Coding Agent (Claude), and a Reviewer Agent (Cursor), with all progress and output aggregated into the leader's event stream (see the examples/showcases/team-agent-workflow showcase).
+- **Teams**: a host-selected leader coordinates members on any Driver — for example Codex leading a Plan member (Codex), a Coding member (Claude) and a Reviewer member (Cursor) — or Remote A2A members, with task updates and worker approvals aggregated into the leader's Event stream. See the [team guide](./docs/team.md) and the examples/showcases/team-agent-workflow showcase.
 - **Agent isolation**: clone the machine's agent configuration into a dedicated directory and link its login state, keeping configuration changes isolated. Running several Codex/Claude Code instances in parallel for concurrent development or different roles becomes trivial.
 
 ## Install
@@ -474,39 +474,41 @@ task, err := client.Send(ctx, clienta2a.SendRequest{
 })
 ```
 
-Use `SendStream` / `Subscribe` when you need the intermediate steps. Whether reasoning, tool calls, approval events, or diagnostic fields are exposed outward is controlled by `ExposurePolicy`, which defaults to minimal exposure.
+Use `SendStream` / `Subscribe` when you need the intermediate steps. Whether reasoning, tool calls, approval events, or diagnostic fields are exposed outward is controlled by `ExposurePolicy`, which defaults to minimal exposure. See [A2A integration](./docs/a2a.md) for exposure controls, Remote members and protocol limits.
 
 ## Multi-agent collaboration
 
-`agent-adaptor` supports cross-Driver multi-agent collaboration over the standard A2A protocol (which therefore also covers any remote A2A agent).
-
-The value of cross-Driver collaboration is preserving the fit between a model and its native `Harness`: GPT models perform better on Codex, and Claude models are stronger in Claude Code. `agent-adaptor` is therefore designed to let each model collaborate from the harness that suits it best, rather than settling for one generic harness that supports many models but performs poorly just to enable multi-model collaboration.
-
-The core code looks like this:
+[`hosttools/team`](./hosttools/team) combines a delegation-first leader with
+host-selected local Agents, nested Teams or Remote A2A members. Local members
+can use different Drivers. The leader gets four fixed tools; workers report
+through the leader, and task/member updates and local worker approvals share
+one Event stream.
 
 ```go
-leader := adaptor.New(leaderDriver)
-workers, err := team.New(team.Config{
-    Leader: leader,
-    Members: []team.Member{
-        {Key: "plan", Name: "Codex Planner", Runner: planner},
-        {Key: "impl", Name: "Claude Code Implementer", Runner: implementer},
-        {Key: "review", Name: "Codex Reviewer", Runner: reviewer},
-    },
-})
-if err != nil { return err }
-defer workers.Close(ctx)
-
-stream := workers.Send(ctx, "Plan, implement, and review TASK.md")
-for event := range stream.Events() {
-    if update, ok := event.(adaptor.SubagentUpdate); ok {
-        fmt.Printf("[%s] %s: %s\n", update.Member, update.Kind, update.Delta)
-    }
+func Coordinate(ctx context.Context, leader, planner, implementer *adaptor.Agent) (*adaptor.Result, error) {
+	t, err := team.New(team.Config{
+		Leader: leader,
+		Members: []team.Member{
+			{Key: "plan", Description: "Plan the change", Runner: planner},
+			{Key: "impl", Description: "Implement and test", Runner: implementer},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer t.Close(context.Background())
+	return t.Thread("issue-123").Send(ctx, "Plan and implement TASK.md").Result()
 }
-result, err := stream.Result()
 ```
 
-The complete [`team-agent-workflow`](./examples/showcases/team-agent-workflow) adds role-level sandboxes, a structured `PLAN.md` artifact, workspace auditing, and a CopilotKit page with live subagent cards, all started with one command:
+Import `context`, `adaptor "github.com/agent-dance/agent-adaptor/v2"` and
+`"github.com/agent-dance/agent-adaptor/v2/hosttools/team"`. The host retains
+ownership of its Agents. Use `Thread(key).Standby(ctx)` for ongoing input;
+`Thread.Send` on a busy scope reports `ErrThreadBusy`. The [team guide](./docs/team.md)
+covers Remote members, tools, approvals, limits, durable recovery and lazy Fork.
+
+The [live showcase](./examples/showcases/team-agent-workflow) runs a local
+plan → implement → review workflow with role sandboxes and a CopilotKit page:
 
 ```bash
 ./examples/showcases/team-agent-workflow/start-all.sh claude

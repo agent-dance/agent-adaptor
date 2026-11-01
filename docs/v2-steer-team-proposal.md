@@ -630,310 +630,352 @@ Cursor 在 headless 模式下没有输入通道。它在每次工具调用后，
 
 ---
 
-## 7. 团队：`hosttools/team`
+## 7. 团队：`hosttools/team`（实现裁决）
 
-### 7.1 入口
+以下以当前代码与合同测试为准；原设计和实现不同处在对应小节明确记录。
+完整英文用法见 [team guide](team.md)。
 
-```go
-t, err := team.New(team.Config{
-	Leader:  leaderAgent,      // *adaptor.Agent
-	Members: []team.Member{...},
-	Store:   store,            // TaskStore；nil 表示内存实现
-	Limits:  team.Limits{},    // 零值使用 §7.9 的默认值
-})
-defer t.Close(ctx)
+### 7.1 入口与成员
 
-s := t.Send(ctx, objective)                   // 一次性团队任务（匿名 scope）
-s := t.Thread("ws/issue-123").Send(ctx, task) // 带记忆的团队任务
-sb, err := t.Thread("chat-42").Standby(serverCtx) // 团队待命
-```
-
-`*team.Team` 实现 `adaptor.Runner`，`*team.Thread` 实现 `adaptor.ThreadRunner`。因此 Team 可以直接接入 bridges，也可以作为另一个团队的成员（嵌套）。
+`team.New` 返回 `(*team.Team, error)` 并打开一个 loopback MCP listener。
+Team 实现 `adaptor.Runner`；Team Thread 实现 `adaptor.ThreadRunner`。
+以下函数可接入宿主已构造的 Agents（导入根包为 adaptor，另导入 hosttools/team）：
 
 ```go
-type Member struct {
-	Key         string
-	Name        string
-	Description string   // 进入名册
-	Skills      []string // 进入名册
-	Runner      adaptor.Runner // Local 成员
-	Remote      *RemoteSpec    // Remote A2A 成员（沿用 v1 RemoteAgentSpec 的鉴权与策略字段）
-	Continuity  Continuity     // PerTask（默认）| PerScope：同一 scope 内复用该成员的 Thread
-	Input       map[string]any // 可选的入参 JSON Schema，由 team_delegate 在服务端校验
-	Output      map[string]any // 可选的结构化结果 schema
-	MaxActive   int            // 同时运行的任务上限
-	Timeout     time.Duration  // 单个任务的时限；零值使用默认值，不允许无限
+func NewTeam(leader, implementer *adaptor.Agent) (*team.Team, error) {
+	return team.New(team.Config{
+		Leader: leader,
+		Members: []team.Member{{
+			Key: "impl", Description: "实现与测试", Runner: implementer,
+			Continuity: team.PerScope,
+		}},
+		Store: team.NewMemoryStore(),
+	})
 }
 ```
 
-leader 与成员的 Thread key 用公开的无碰撞编码（长度前缀）从 `(scope, "leader")` 和 `(scope, "member", key)` 推导，和 multica 的 `workspace/issue/agent` 是同一个思路。
+`Config` 的最终字段为 `Leader`、`Members`、`Store`、`Limits`、`Surface`。
+`Member` 的最终字段为 `Key`、`Name`、`Description`、`Skills`、`Runner`、
+`Remote`、`Continuity`、`Input`、`Output`、`MaxActive`、`Timeout`；Runner 与
+Remote 必须且只能指定一个。Skills 是名册描述，不安装 skill。
 
-### 7.2 一次团队执行
+- `t.Send(ctx, text)`：匿名私有内存 scope，不使用持久化 Config.Store。
+- `t.Thread(key).Send(ctx, text)`：具名任务；ctx 约束整个团队执行。
+- `t.Thread(key).Standby(lifetime)`：具名待命；首次 ctx 持有生命周期，重复调用取同一对象。
+- task-mode Send 在 active execution、live Standby（即使空闲）或其他进程的有效
+  scope lease 下返回失败 Stream，`Done.Err` / `Result()` 可匹配 `ErrThreadBusy`。
+  不自动并入；补充用原 Stream.Send，待命输入用 Standby.Send。
+- Standby 无整体 Result/RunID；Cancel 中止当前团队处理与队列但继续待命，结束 ctx 才退出。
+  消息选项可并入；带 execution options 的消息等自己的下一次执行。
+- `Team.Close(ctx)` 是宿主组件资源回收操作，幂等停止 listener、执行与 Standby，
+  不关闭宿主 Agents。根执行对象依然使用 Cancel，没有新增执行动词。
 
-- 一次团队执行按 §5.1 结束：leader 空闲、没有运行中或排队中的任务、没有需要唤醒 leader 的消息。
-- leader 的一轮可以任意长，也可以做任意实际工作。它只在"自己手上没事可做"时结束本轮，从不为了等 worker 而结束，也从不阻塞在等 worker 上，所以不需要 `team_wait` 或 StopGate。
-- 每一轮 leader 都会产生一个 `TurnEnd`。worker 的活动以 `SubagentUpdate` 出现在同一条事件流里。
-- `Cancel` 中止整个团队执行，包括运行中的任务。
-- 团队执行的 Result 中：`Text` 是 leader 最后一轮的文本，`Usage` 是 leader 加所有 worker 的合计，`Subagents()` 列出各任务的成员、状态、摘要与各自的用量。
+Local Agents 与嵌套 Team 直接支持对话；自定义 Runner 可以实现
+`ConversationProvider.Conversation(key) adaptor.ThreadRunner`。
+内部 key 使用 `EncodeKey` 的字节长度前缀，分别编码 `(scope, "leader")`、
+`(scope, "member", memberKey)` 或 `(scope, "task", taskID)`，宿主 key 原样保存。
 
-**leader 是完整的 Agent，遵循"委派优先"**
+### 7.2 一次团队执行与委派优先
 
-leader 就是宿主构造的一个普通 `*adaptor.Agent`：它有自己的 sandbox、工具、skills、MCP，团队只在此基础上加了 4 个 `team_*` 工具。它的工作分三类：
+一次执行在 leader 完成收尾、没有 running/queued worker、没有待处理的唤醒消息
+或投递时结束。leader 每个 provider turn 产生 TurnEnd，worker 活动以 typed
+SubagentUpdate 并入同一流，最后一个事件为 Done，与 Result() 一致。
 
-| 工作 | 谁来做 |
-|---|---|
-| 统筹：理解需求、拆分任务、派发、纠偏、验收、合并 worker 的产出、回答用户 | leader |
-| 适合某个成员的工作：成员的描述或 skills 覆盖这项工作 | **派发给 worker，leader 不亲自做** |
-| 没有任何成员能承接的工作 | leader 亲自实现 |
+leader 是完整 Agent。Preamble 要求委派优先：理解、拆分、派发、纠偏、验收、集成与
+回答归 leader；成员描述/skills 能承接的工作必须派发；没有成员能承接的才亲自实现。
+这是模型指令，SDK 不判断业务角色。宿主可用只读 sandbox 强制纯统筹。workspace
+仍由各 Agent 配置；共享目录写冲突由宿主/leader 拆分工作解决。
 
-这条"委派优先"规则写在团队注入的 Preamble 里，是团队模式的默认工作原则。它规定的是"如何使用团队"，并没有定义任何业务角色，所以不违反 `AGENTS.md` 中"SDK 不定义宿主的团队角色"的约束。宿主可以在此基础上收紧，但不能放宽：
+派发返回后 leader 可做独立工作；需要 worker 结果时结束本轮，通知会重新唤醒，
+不阻塞工具调用，不需要 wait 工具。若没有派发却声称等待，执行会正常结束并暴露回答；
+宿主可以用具名 Thread 跟进。
 
-- **默认（委派优先）**：leader 有可写的 sandbox，只亲自做统筹工作和没有成员能承接的工作。
-- **纯派发器**（multica squad 的模式）：给 leader 只读 sandbox，再在指令里写"只协调，不亲自实现"。只读 sandbox 让这一点由机制保证，而不只是一句提示。
+### 7.3 leader 代传、旁注与唤醒
 
-"委派优先"是写给模型的规则，SDK 无法在机制上判断一项工作"是否适合派发"。宿主需要硬约束时，用只读 sandbox。
+- 用户输入只给 leader；leader 按 task handle 转达 worker；worker 只给 leader，
+  不直接寻址其他 worker。作者由 capability 推导，peer 不具备人的权威。
+- worker 显式 send、任务终态和宿主消息唤醒 leader；leader 主动取消的任务不再次唤醒。
+- leader 忙时通知以 Soon 并入，实际边界由 Driver 能力决定，可为 immediate、tool、
+  stop 或 turn_end 续接。**实现不承诺“当前工具调用结束前”的通用延迟上界**。
+- leader 空闲时 worker 通知默认两秒窗口合并；host 输入可立即开下一次 leader 执行。
+- 进度旁注不单独唤醒，随下一次通知投递；任务终态通常提供该唤醒。leader 主动取消
+  的任务未读旁注保留在对应 Subagents().Unread。
 
-一个典型过程：
+### 7.4 固定工具面
 
-```text
-leader 第 1 轮：读需求 → 拆成三项 → team_delegate(impl, 实现) + team_delegate(review, 审查现有接口)
-                 → 第三项是迁移脚本，名册里没有成员能做 → 自己实现（编辑文件、跑测试）
-                 期间 review 完成 → 在 leader 下一个工具边界并入 → leader 把审查意见用 team_send 转给 impl
-                 → 迁移脚本完成，手上没事了，结束本轮
-（impl 运行中，leader 空闲，不占用任何 LLM 调用）
-leader 第 2 轮：被 impl 的完成事件唤醒 → 验收 impl 的产出 → 回答用户 → 团队静止，执行结束
-```
-
-leader 需要某个 worker 的结果才能继续时，直接结束本轮即可：结果到达时它会被唤醒，而且 leader 的 Thread 是连续的，结束本轮不会丢失任何上下文。
-
-**leader 正忙时收到 worker 的通知**
-
-在委派优先下，leader 只在做统筹工作或没有成员能承接的工作时才会长时间忙碌，所以大多数通知到达时 leader 是空闲的，会直接开新的一轮。leader 正忙的情况按 §7.3 处理：在工具边界并入，不打断。
-
-**工作目录冲突由 leader 负责**
-
-worker 的任务都由 leader 拆分和派发，任务之间、以及任务与 leader 自己的工作之间会不会冲突，leader 在拆分时就知道。SDK 不为此提供额外机制；工作目录仍然是每个成员 Agent 自己的配置（`WithWorkspace` / `WithWorkspaceSpec`）。
-
-### 7.3 leader 代传与唤醒
-
-- **用户只和 leader 说话**：团队的 `Send`/`sb.Send` 永远发给 leader，没有直接发给 worker 的入口。
-- **leader 转达给 worker**：通过 `team_send` 投给运行中的任务，底层是该任务 Stream 上的 `Send`，带 `From(AuthorAgent)`。
-- **worker 只能发给 leader**：worker 之间不直接通信，需要协调时由 leader 转达。
-- **消息到达时 leader 的状态**：
-  - leader 正在跑（包括正在亲自干活）：以 `Soon` 并入当前这一轮，在 leader 的下一个工具边界被看到。worker 的通知默认不使用 `Interrupt`，不会打断 leader 手上的工作。用户可以显式用 `When(Interrupt)` 打断 leader。
-  - leader 空闲（即使 worker 还在干活）：在同一次团队执行内为 leader 开新的一轮。
-  - 延迟上界：worker 的提问最多等到 leader 当前这次工具调用结束。leader 长时间运行一个工具（例如跑完整测试）时，worker 的提问会等待；需要更快响应时，worker 可以先继续做不依赖答案的部分。
-- **唤醒 leader 的事件**：任务进入终态（成功、失败，或者不是由 leader 自己发起的取消、中断）；worker 发给 leader 的消息；用户消息。
-- **不唤醒 leader 的事件**：worker 的进度更新。它们作为旁注，附在下一次唤醒里一起投递。
-
-旁注的不变式：旁注总是挂在某个任务上，而任务的终态事件一定会唤醒 leader。所以旁注不会被永久搁置，团队静止的判断可以安全地忽略它们。唯一的例外是 leader 自己取消的任务，它的旁注列在 `Result.Subagents()` 对应项的 `Unread` 中。
-
-**唤醒合并**：默认 2 秒窗口内到达的多个唤醒事件，合并成 leader 的一轮。
-
-### 7.4 工具面
-
-| 工具 | leader | worker | 输入 → 输出 |
+| 工具 | leader | Local worker | 输入 → 输出 |
 |---|---|---|---|
-| `team_delegate` | ✓ | 仅嵌套团队时 | `{member, objective, input?, continue?}` → `{task, state}` |
-| `team_send` | ✓（发给某个任务） | ✓（只能发给 leader） | leader：`{task, text, when?}`；worker：`{text, expect_reply?}` → 投递结果 |
-| `team_status` | ✓ | ✓（只读本 scope） | `{tasks?}` → 名册、成员忙闲、任务状态（含 `waiting_approval`）、最近进展摘要 |
-| `team_cancel` | ✓ | ✗ | `{task, reason}` |
+| `team_delegate` | ✓ | 外层不提供 | `{member, objective, input?, continue?}` → `{task, state:"queued"}` |
+| `team_send` | 发给运行中的任务 | 只能发给 leader | leader `{task,text,when?}`；worker `{text,expect_reply?}` → 接纳结果 |
+| `team_status` | ✓ | 只读同 scope | `{tasks?}` → 名册、active/max_active、任务状态/摘要/reason |
+| `team_cancel` | ✓ | ✗ | `{task,reason}` → 取消结果 |
 
-工具数量与成员数无关：leader 4 个，worker 2 个（解决 T2）。具体做法：
+leader 四个、Local worker 两个，数量与成员数无关；嵌套 Team 自己的工具属于内层，
+`Surface.Prefix` 可替换默认 team_。成员自己的工具不投影给 leader。Remote 不接收
+本进程 loopback 的 worker 工具，工具面由远端服务管理。
 
-- **名册是数据**：通过 `RunAttachment.Preamble` 在每次执行开头注入，不进入 Thread fingerprint，名册变化不会让会话失效；`team_status` 也能随时查询。Preamble 包含名册、工具、唤醒规则与委派优先原则（见 §7.2）。
-- `team_delegate.member` 在 schema 中是成员 key 的枚举。
-- **成员专属入参在服务端校验**：`Member.Input` 不进入工具 schema；校验失败时返回结构化错误，并附上该成员的 schema 摘要。
-- **成员自己的工具永远只在成员的执行里**，不投影到 leader。
-- **`team_send` 发给已结束的任务时返回错误**，提示使用 `team_delegate(continue: task)`。
+名册通过 RunAttachment.Preamble 注入，不进入 fingerprint。delegate.member
+枚举成员 key；Member.Input 在服务端登记前校验，失败返回结构化错误与 schema；
+Member.Output 只用于本地成员结构化输出。worker expect_reply 是 schema 提示，
+当前实现所有显式 send 都唤醒，不同步等待回答。发送到 finished/queued 任务分别返回
+`task_finished` / `task_queued`；完成后应 delegate(continue: task)。
 
 ### 7.5 任务与会话连续
 
-- 每次委派产生一个带句柄的 Task（解决 T3），状态为 `queued → running → waiting_approval? → succeeded | failed | cancelled | interrupted`。
-- `team_delegate` 返回之前，任务必须已经登记为 queued，所以"刚派发、还没启动"的任务也计入"运行中"。
-- 成员同时运行的任务达到 `MaxActive` 时，新任务保持 queued，等有空位再启动，不返回错误；`team_status` 中可见。
-- `Continuity=PerTask` 时，任务用成员的 `Send`（匿名，可并发）；`PerScope` 时，任务用成员在该 scope 下的 Thread，上下文连续。
-- `continue: task` 让同一成员在那个任务的上下文上继续（解决 T4）。
+任务状态为 queued → running → waiting_approval? → succeeded | failed | cancelled |
+interrupted。delegate 在返回前持久登记；MaxActiveTasks、Member.MaxActive 与同一
+conversation 单 writer 共同约束调度，超额排队。
 
-### 7.6 worker 的审批请求
+**实现对 PerTask 的细化**：Agent/嵌套 Team 使用每任务隔离 Thread，保留显式 continue
+所需上下文，而不是一律匿名 Send。普通 Runner 无 conversation 支持时使用 Send，
+不能继续。PerScope 在同一 scope 内共享成员 Thread，即使 MaxActive 大于一也串行。
+continue 必须指向同成员终态任务，本地验证健康 checkpoint；Remote 验证已观察 context。
+每次继续都有新 task handle，不覆盖旧结果。
 
-**决定**：worker 的 `ApprovalRequest` 带着 `Origin{Member, Task}`，直接出现在团队的事件流中，宿主用同样的 `Approve`/`Deny`/`Answer` 应答。没有人应答时，按该成员自己的 `Policy.Approvals` 处理（包括 §5.5 的立即兜底）。等待期间，任务状态为 `waiting_approval`，`team_status` 中可见。
+### 7.6 worker 审批与 Remote 限制
 
-**考虑过的方案**：
+Local worker 的 bound ApprovalRequest 在同一流转发，携带 Origin{Member, Task} 并
+共享原 exactly-once responder；宿主用 Approve/Deny/Answer。成员自己的 OnApproval
+与 Policy.Approvals 决定超时/兜底，等待状态为 waiting_approval。同步-only 消费按
+成员无消费者策略兜底。leader 不代用户审批；任务问题用 team_send 向 leader 提问。
 
-| 方案 | 结论 | 理由 |
-|---|---|---|
-| O1 禁止审批，成员必须配置自动策略 | 不强制，作为可选配置保留 | O3 下给成员配置自动策略就等价于 O1 |
-| O2 交给 leader 批准 | 排除 | 权限审批是安全控制，让另一个 LLM 来批等于变相自动批准，而且 worker 可以在请求内容里诱导 leader |
-| O3 直接交给宿主 | **采用** | 复用 `ApprovalRequest` 与 `Policy.Approvals`，不引入新概念；宿主代码与单 Agent 相同；只阻塞该 worker |
-| O4 Question 交给 leader，其余交给宿主 | 排除 | 原生 Question 工具的语义就是"问用户"，leader 代答等于冒充用户。worker 对任务本身有疑问时，应该走 `team_send` 发给 leader，这在成员的 briefing 中写明 |
+**Remote 最终裁决**：客户端未协商 portable approval-response 扩展。input-required
+只报告 waiting_approval，不能构造可应答的 ApprovalRequest。AllowInputRequired=true
+时继续观察，由远端策略处理；默认失败。原“映射成同样 ApprovalRequest”设计不成立。
 
-Remote 成员如果以 `input-required` 状态暴露审批，就映射为同样的 `ApprovalRequest`；不暴露的话，由远端自己的策略处理。
+### 7.7 持久化、恢复与 lazy Fork
 
-### 7.7 持久化、恢复与 Fork
+TaskStore 保存 task、leader inbox、immutable artifact 与 Fork lineage。必须提供
+scope owner/token fencing、CAS revision、原子 task/wake 提交、按序独占 claim、
+exact claim token 应答和过期 reclaim，并通过 teamstoretest.Run。MemoryStore 不做
+崩溃持久化或自动保留期清理；具名 scope 的 durable store 由宿主实现。Agent Thread
+stores 另行持久化，不可由 TaskStore 替代。
 
-- **TaskStore** 保存任务记录与 leader 收件箱中的消息，状态机为 pending → delivering → delivered/failed，带 claim token，并支持崩溃后回收（沿用 multica `task_supplement` 的语义）。配套提供内存实现和 `teamstoretest` 一致性套件。
-- **具名团队 Thread 的组成**：leader 的 Thread、`PerScope` 成员的 Thread，以及该 scope 的任务记录。
-- **进程重启后**：未进入终态的任务一律标记为 `interrupted`，并在下一次团队执行开始时通过 Preamble 告知 leader，由 leader 决定是否重新派发。待命需要宿主重新调用 `Standby`。
-- **Fork**：要求父 Thread 当前没有执行、也不在待命。会 fork leader 的 Thread 和所有 `PerScope` 成员的 Thread，并复制已进入终态的任务记录。不满足条件时返回 `ErrThreadBusy`。
-- **一次性团队任务（匿名 scope）** 使用内存实现，进程崩溃即丢失。这是一次性任务的定义所决定的，文档中写明；需要恢复能力就使用具名 Thread 加持久化存储。
+恢复取得 lease 后，首次具名执行在 leader 前把非终态任务标为 interrupted，reason
+为 execution_lost，Preamble 告知 leader，由其决定重派；不会自动重新启动 worker。
+Standby 需宿主重开，重开本身不启动执行。
+
+宿主消息先保存再交 provider，保留原 MessageID、内容、From、Timing。delivered ID
+去重，failed ID 可按原内容重交。Go execution options 不序列化；RequiresOptions
+消息在 owner 丢失后保持 Deferred，直到宿主恢复原选项并以原 ID 重交后 dispatch，
+禁止用新默认值执行。无 execution options 的 pending 消息可在 lease 恢复后重新领取。
+provider 接收后、回执持久化前崩溃仍可能重放，MaybeDuplicate 标注含糊投递；不承诺
+provider exactly-once。匿名团队 scope 崩溃即丢失。
+
+Fork 的最终签名是 `(*team.Thread).Fork(newKey) (*team.Thread, error)`：
+
+- 父/目标 scope 都必须 idle 且无 live Standby；父 leader checkpoint 健康；目标无
+  task/inbox/artifact/lineage 或 leader checkpoint。busy 报 ErrThreadBusy，冲突报错。
+- atomically 复制终态任务和 artifact，记录 lineage，不复制 inbox，不修改父历史。
+- **lazy Fork**：leader 与支持的 Local PerScope 成员在子首次执行时通过 core Fork；
+  父 checkpoint 在那时读取，不是 Fork 调用时的快照。provider/兼容错误可延后出现；
+  无父 checkpoint 的未使用成员 fresh start。Agent/嵌套 Team 支持，自定义 provider
+  可以在 lazy 阶段拒绝。
+- PerTask conversation 链接清空，复制的历史不能 continue 回写父对话。
+- A2A 无 portable conversation Fork；只要名册有 PerScope Remote 就明确拒绝。
 
 ### 7.8 用量与结果
 
-- `Result.Usage` 是 leader 加所有 worker 的合计。
-- `Result.Subagents()` 中每一项包含 `Member`、`Task`、`State`、`Summary`、`Usage`、`Unread`。
-- 计费（H4）按成员拆分时读取 `Subagents()`。
+Team 用 ComposeResults 按顺序组合所有 leader 执行，Text、Summary、Model、Provider、
+Metadata、structured output 来自最后一个；Raw stdout/stderr、Transcript、Services、
+Messages 串接，message turn 编号重基。Raw.Terminal 保留最后观察 payload（单 slot）。
+Turns 为 leader provider turns，Usage 合计观察到的 leader/worker 用量并防重复计数。
 
-### 7.9 上限、超时与防卡死
+Subagents() 返回 Member、Task、State、Summary、Usage、Unread 摘要副本；完整本地
+worker Result 与 RemoteSnapshot（含非文本 artifact/protocol data）、RemoteTask、
+RemoteContext 保存在 TaskStore。Remote 不伪造本地 Raw/Transcript/Usage。worker
+失败可由 leader 处理，不能仅用 team Result 成功判断所有子任务成功。
 
-| 上限 | 默认值 | 防止什么 |
+### 7.9 上限、超时与失败
+
+| 上限 | 默认值 | 作用域 |
 |---|---|---|
-| `MaxLeaderTurns`（每次团队执行） | 50 | review 打回 → impl 修改 → review 又打回这类跨轮次循环 |
-| `MaxTasks`（每次团队执行） | 20 | 无限派发 |
-| `MaxActiveTasks` | 4 | 并发过多 |
-| agent 消息上限（每轮总数 / 每个发送者） | 10 / 3（沿用 multica ✅） | leader 与 worker 互相刷消息 |
-| `Member.Timeout` | 30 分钟，不允许无限 | worker 卡死导致团队永不静止 |
-| Remote 断线判失败 | 2 分钟 | 远端状态未知导致永不静止 |
-| 唤醒合并窗口 | 2 秒 | 几个任务同时完成触发一连串 leader 轮次 |
+| MaxLeaderTurns | 50 | 每次团队执行所有 leader provider turns |
+| MaxTasks | 20 | 每次团队执行新登记任务 |
+| MaxActiveTasks / Member.MaxActive | 4 / 1 | 并发，超额排队；同 conversation 仍单 writer |
+| MaxAgentMessages / MaxSenderMessages | 10 / 3 | 每个 leader turn 的显式 send |
+| Member.Timeout | 30 分钟 | 每个已启动任务；零为默认，负数拒绝，不无限 |
+| Remote 无观察时限 | 2 分钟 | 断线或静默流判 failed/unknown_state |
+| WakeWindow | 2 秒 | 空闲 worker 通知合并 |
+| RetryBackoff | 100 毫秒 | leader 最小重试退避 |
 
-触及上限时按 §5.4 的统一规则处理。worker 的 Liveness 使用 R5 的机制：判定无进展之前，先以 `AuthorSystem` 注入一次提醒，仍然无进展才终止。leader 亲自干活时的长轮次，由 leader Agent 自己的 Liveness 与 `WithTimeout` 约束，和单 Agent 完全一样；`MaxLeaderTurns` 只限制轮数，不限制单轮时长。
+临近上限发 limit.approaching Notice，尚有预算时注入 system 收尾通知。到硬上限停止
+接纳，leader 收尾后取消未完成任务。必须中止工作时返回匹配 ErrLimitExceeded 的
+RunError，ReasonLimitExceeded 携带部分 Result；正好在 cap 处干净结束可以成功。
 
-**leader 某一轮失败**（进程崩溃、网络中断等）：运行中的任务继续运行，不受影响。可重试的失败按 `RetryAfter` 退避后，通过 resume 重新唤醒 leader，最多重试 2 次；resume 被拒绝时按 §5.7 开新会话，并在前缀中列出当前所有任务的状态。重试用尽或失败不可重试时，才取消运行中的任务，以 `RunError` 结束团队执行，并携带部分 Result。
+每次启动 leader 时，在 caller options 之后用 RunSettings.CapMessageTurns 降低 core
+剩余轮预算，不覆盖其余 policy，也不提高宿主更小的 cap。core 每次执行默认 20 轮；
+leaf cap 到达可正常结束并报告 pending 消息 MessageLimitExceeded。团队仍受总预算
+约束。MaxLeaderTurns 不限制单轮时间，宿主设置 leader timeout 与外层 ctx。
+
+leader 错误只有实现 team.RetryableError 且 RetryAfter>=0 才最多重试两次；ctx
+取消/截止不重试。重试期间 worker 继续，退避至少 RetryBackoff。不可重试或耗尽时
+取消 worker，携带部分 Result。Standby 另有最多一次 RetryableError 重试且需
+undelivered input；否则 carry 等下一条宿主消息。同 ID 可先 failed/run_failed 后
+再 delivered。**Team 未实现原提案的自动 worker R5 提醒**；宿主可先发 system
+提醒再 Cancel，Member.Timeout 为运行上限。
 
 ### 7.10 安全
 
-- agent 发出的消息统一使用"同伴输入，不具备人的权威"模板。
-- 消息的作者（From）由 capability token 推导，工具入参中没有 from 字段，模型无法冒充。
-- 消息与回执中只保留稳定的原因码，provider 的原始报错只写入本地日志（沿用 multica ✅）。
-- 单条消息与单次合并有字节上限，超出部分以 artifact 引用代替。
+工具 schema 严格拒绝伪造 From/target，peer/system 输入明确不具备人的权威。task
+reason 为稳定原因码；不承诺所有本地错误都只进入日志。单条通知/send 超 64 KiB、
+合并通知超 256 KiB 时保存完整 immutable artifact，以同 scope MCP resource 引用
+替代，不静默截断。secret 不进入 metadata、Service reports 或普通日志。
 
-### 7.11 传输
+### 7.11 传输与 Remote 最终边界
 
-- **单 listener**：每个 Team 一个 loopback MCP server（解决 T7）。每次执行得到一个 capability token，通过 `ServiceRef.SecretEnv` 注入。token 编码 `(scope, actor, runID, 可见工具, 可达目标)`，server 只信任 token。
-- **Remote 成员**：`team_send` 映射为对同一 taskId 的 A2A `message/send`。远端不接受时按 §6.4 处理。
-- **嵌套**：成员本身是 Team 时，它的 `team_*` 工具只出现在它自己的执行里，名字前缀可配置，不会与外层冲突。
+每个 Team 仅一个 IPv4 loopback listener。每 execution token 绑定 scope、actor、
+task、runID、工具与可达目标，通过 SecretEnv 注入，detach 撤销。嵌套使用独立 Team
+listener 与可配置 prefix，不为每个 worker 开 listener。
 
----
+RemoteSpec 最终包含 AgentCardURL、可选 fingerprint pin AgentCard、Protocol（空或
+"a2a"）、Tenant、Auth、HTTPClient、TrustedAuthOrigins、AcceptedOutputModes、
+PreferredTransports、Policy。discovery 与凭证沿用 clients/a2a 的 origin 限制。
 
-## 8. 宿主用法走查
-
-**一次性 CLI**
-
-```go
-res, err := agent.Send(ctx, "修复 #123").Result()
-// 团队：res, err := t.Send(ctx, objective).Result()
-```
-
-**看过程的一次性任务**：事件流的最后一个事件就是结果，不需要再调用 `Result()`。
-
-```go
-for ev := range t.Send(ctx, objective).Events() {
-	switch e := ev.(type) {
-	case adaptor.TurnEnd:        ui.LeaderReply(e.Result.Text)
-	case adaptor.SubagentUpdate: ui.Task(e.Task, e.Member, e.State, e.Delta)
-	case *adaptor.ApprovalRequest: ui.AskApproval(e) // worker 审批带 e.Origin()
-	case adaptor.Done:           finish(e.Result, e.Err)
-	}
-}
-```
-
-**完成前验证**（以前的 StopGate 场景）：用带记忆的任务做跟进，每次尝试都有自己的 Result，便于审计。
-
-```go
-th := agent.Thread("ws/pr-42")
-res, err := th.Send(ctx, "实现功能 X").Result()
-for i := 0; err == nil && i < 3; i++ {
-	report, ok := runTests()
-	if ok { break }
-	res, err = th.Send(ctx, "测试失败，请修复：\n"+report).Result()
-}
-```
-
-**Web 聊天（单 Agent 或团队相同）**
-
-```go
-sb, err := t.Thread(chatID).Standby(serverCtx) // 打开对话时调用一次
-go func() { for ev := range sb.Events() { hub.Broadcast(chatID, ev) } }() // 多个页面由宿主的 hub 广播
-
-func onMessage(w http.ResponseWriter, r *http.Request) {
-	sb.Send(r.Context(), body.Text, adaptor.MessageID(body.ID), adaptor.From(user(r)))
-}
-func onStop(w http.ResponseWriter, r *http.Request) { sb.Cancel() }
-```
-
-**IM 机器人**：入站消息调用 `sb.Send`；每收到一个 `TurnEnd`，就把 `Result.Text` 发回聊天，并用 `MessageIDs` 引用它回答的是哪几条消息。
-
-**看门狗、预算与外部事件**
-
-- R5 Liveness 在判定无进展前自动注入一次 `AuthorSystem` 提醒。
-- 单 Agent 的预算收尾：宿主在 `TurnEnd.Result.Usage` 接近预算时，调用 `s.Send(ctx, "请开始收尾", adaptor.From(system))`。
-- 外部事件（CI 失败、base 分支更新、新的 review）：调用 `s.Send` 或 `sb.Send`，带 `From(system)`。
-
-**补充 HITL**：拒绝某个工具调用后，再给出方向。
-
-```go
-req.Deny("不要直接改 public API")
-s.Send(ctx, "改为新增一个内部函数，再由旧 API 调用它", adaptor.From(user))
-```
-
-**bridges**
-
-- **A2A**：带 `taskId` 且该 task 正在工作的消息 → `s.Send`；只带 `contextId` → `th.Send`（任务模式）；该 context 正忙时返回明确的"任务进行中"状态。
-- **AG-UI**：每次 run 对应 `th.Send`，运行中的用户输入对应 `s.Send`；需要持久对话的前端可以改用 `Standby`。
-- **会话录制器**：只记录 `Done` 的安全字段。
+RemotePolicy 默认 PollInterval=1s、MaxPolls=1800、MaxArtifactBytes=1MiB；MaxTimeout
+可缩短成员 timeout，RequireStreaming 拒绝不支持流的 endpoint。PerScope 使用已
+观察 remote context。team_send 调用同一 task/context 的 A2A message/send，远端
+拒绝返回工具错误。**补充仅 Soon**，Interrupt/AfterTurn 匹配 ErrMessageUnsupported；
+不静默改变 timing。**无 output-schema 协商**，Remote Member.Output 构造即拒绝；
+media modes 不能替代 schema。初始请求遇含糊失败不重放；观察丢失两分钟失败唤醒。
+Remote input-required 与 Fork 限制见 §7.6–§7.7。
 
 ---
 
-## 9. multica 场景走查
+## 8. 宿主用法走查（最终 API）
 
-multica 保留自己的服务端编排（评论作为黑板、服务端存储任务、CLI 作为工具面）。v2 给它的是 core 的消息投递能力，以及与它语义一致的合同。
+以下示例函数需导入 context、fmt、根包 adaptor、hosttools/team；回调由宿主实现。
 
-**M1 评论纠偏运行中的任务（H1）**
+**一次性 CLI / 完成前验证**：用具名 Thread 跟进，每次尝试有独立 Result。
 
 ```go
-th := agent.Thread("ws/issue-123/agent-a")
-s := th.Send(ctx, taskPrompt) // 服务端保证此时这个 issue 没有任务在跑
-
-go func() {
-	for c := range claimedComments(taskID) { // 不再需要 SupplementReady：执行开始前的消息会被缓冲
-		err := s.Send(ctx, c.Body, adaptor.MessageID(c.ID), adaptor.From(author(c)))
-		if errors.Is(err, adaptor.ErrRunFinished) {
-			ackFailed(c, "turn_ended") // 服务端按普通评论触发新任务
+func VerifyTask(ctx context.Context, t *team.Team, key, objective string,
+	verify func(context.Context) (string, bool),
+) (*adaptor.Result, error) {
+	th := t.Thread(key)
+	res, err := th.Send(ctx, objective).Result()
+	for attempt := 0; err == nil; attempt++ {
+		report, passed := verify(ctx)
+		if passed {
+			return res, nil
 		}
-	}
-}()
-
-for ev := range s.Events() {
-	switch e := ev.(type) {
-	case adaptor.MessageUpdate:
-		if e.State != adaptor.MessageAccepted {
-			ack(e.ID, e.State == adaptor.MessageDelivered, string(e.Reason))
+		if attempt == 3 {
+			return res, fmt.Errorf("verification failed after three follow-ups: %s", report)
 		}
-	case adaptor.Done:
-		postFinalComment(e.Result, e.Err)
-	default:
-		writeToIssue(ev)
+		res, err = th.Send(ctx, "测试失败，请派发修复：\n"+report).Result()
 	}
+	return res, err
 }
 ```
 
-由于 §5.1 的统一定义，评论只要被接纳，就一定在这次任务里得到处理。原来"执行已结束"（`turn_ended`）的失败只会发生在 `s.Send` 被拒绝的那一刻，是同步的、明确的。
+**看过程的一次性任务**：Done 自带权威结果。approval 回调必须由宿主显示/应答，
+worker 请求的 Origin 标明来源；不要把权限审批交给 leader。
 
-**M2 squad 派发后结束本轮**：multica 的服务端重新触发逻辑就是团队里的唤醒。`TaskStore` 的状态机与 `task_supplement` 一致，上限（每轮 10 次、每个发送者 3 次）一致。multica 不需要使用 `hosttools/team` 的 MCP 工具面。
+```go
+func ObserveTask(ctx context.Context, t *team.Team, objective string,
+	publish func(adaptor.Event), ask func(*adaptor.ApprovalRequest),
+) (*adaptor.Result, error) {
+	s := t.Send(ctx, objective)
+	defer s.Cancel()
+	for ev := range s.Events() {
+		switch e := ev.(type) {
+		case *adaptor.ApprovalRequest:
+			ask(e)
+		case adaptor.Done:
+			return e.Result, e.Err
+		default:
+			publish(ev)
+		}
+	}
+	return s.Result()
+}
+```
 
-**M3 leader 纠偏 worker（`--steer`）**：服务端校验权限与上限后，daemon 侧同 M1，带 `From(AuthorAgent)`，内置模板自动加上"不是来自人"。
+**Web/IM**：打开对话时一次调用 t.Thread(chatID).Standby(serverCtx)，一次订阅 Events，
+由宿主 hub 广播多个页面。每个请求调用 sb.Send(requestCtx, text, MessageID(id),
+From(user))；IM 在 TurnEnd 用 MessageIDs 引用输入。停止按钮 sb.Cancel，离开对话
+结束 server-owned ctx。带 WithModel 等 execution options 的输入排在当前执行之后。
+未订阅前不缓冲事件；详细可编译函数见 [team guide](team.md)。
 
-**M4 worker 回复时 leader 正在运行**：对 leader 的任务 Stream 调用 `s.Send(From(AuthorAgent))`，并入当前任务；被拒绝时，服务端触发新任务。
+**看门狗、预算与外部事件**：宿主根据真实观察发 Stream.Send 或 Standby.Send，带
+AuthorSystem；接近预算先提醒收尾，再按宿主策略 Cancel。Team 不自动实现 R5。
 
-**M5 聊天中途补充（H2）**：任务模式下用 `s.Send`；如果 multica 的聊天改为常驻，就用 `Standby`。
+**HITL 补充**：先应答审批，再补方向；以下函数用于 Permission/PlanReview，Question
+使用 Answer。
 
-**M6 多 provider 一致**：`SupportsTaskSupplement` 的版本表（✅ `pkg/agent/version.go`：codex 0.100.0、claude 2.1.110、cursor 2026.10.14、kiro 2.33.0、grok 1.0.14）迁移为各 Driver 的 `MessageCapability.MinVersion`。daemon 通过 `Inspect().Environment` 读取实际能力，并据此上报 `can_supplement`。
+```go
+func DenyAndRedirect(ctx context.Context, req *adaptor.ApprovalRequest,
+	s adaptor.Stream, user adaptor.Author,
+) error {
+	if err := req.Deny(ctx, "不要直接改 public API"); err != nil {
+		return err
+	}
+	return s.Send(ctx, "新增内部函数并验证现有调用方", adaptor.From(user))
+}
+```
 
-**M7 daemon 重启**：执行随进程结束；服务端把投递中的评论按 `turn_ended` 处理并重新触发（与现在一致）。具名团队 Thread 的任务按 §7.7 标记为 `interrupted`。
+**bridges 的实现边界**：
 
-**M8 autopilot 长任务**：R5 Liveness 先提醒、后终止；工具预算接近上限时，按 §5.4 先注入"开始收尾"，再硬性停止。
+- A2A 当前每次执行请求调用 target.Send，**未实现**原设计的 working taskID →
+  active Stream.Send 路由；upstream 可拒绝 working-task 请求。context 绑定的忙碌
+  Thread 报错，bridge 投影为 failed task，不静默并入。ThreadByContextID 仅适配
+  *adaptor.Agent；发布 Team 可传已选择的 Team Thread。wire schema 未投影
+  TurnEnd/MessageUpdate/SubagentUpdate/Done，不能宣称团队事件完整透传。
+- AG-UI 一次 run 对应 Runner.Send，MessageUpdate/TurnEnd 投影为 custom events，
+  typed SubagentUpdate 为 Activity。当前 Team 未填旧 Activity 所需的完整 result/
+  provider-name 字段，因此不能承诺 plan 下载和 provider badge 的端到端保真。
+- session recorder 使用 typed Event 信封与宿主脱敏策略，不能把任意完整 Done.Result
+  直接当成安全日志输出；本任务不变更 recorder 的实现。
 
-**可删除的 multica 代码**：重叠的 provider 换成 agent-adaptor 后，`claude_supplement.go`（239 行）、`cursor_supplement.go`（511 行），以及 `codex.go`、`kiro.go`、`grok.go` 中的 supplement 部分都可以删除。
+---
+
+## 9. multica 场景走查（实现与限制）
+
+multica 可保留评论黑板、服务端任务存储与 CLI 工具面，只使用 core 消息能力，
+不强制采用 Team MCP surface。完整宿主函数见 [team guide](team.md)。
+
+**M1 评论纠偏**：运行开始后就能 Send，无需 SupplementReady。同步错误保留原评论；
+接纳后用 MessageUpdate/Result.Messages 确认 delivered/failed，不能将 accepted 当
+成功。ErrRunFinished 时由宿主调度具名 Thread 新执行；有上限、取消或 provider
+失败时，已接纳消息仍可能明确失败。
+
+```go
+func ForwardComment(ctx context.Context, s adaptor.Stream, id, body string,
+	from adaptor.Author,
+) error {
+	return s.Send(ctx, body, adaptor.MessageID(id), adaptor.From(from), adaptor.When(adaptor.Soon))
+}
+```
+
+**M2 派发后结束本轮**：Team 自动登记 queued task、保活 worker、合并完成通知并重新
+唤醒 leader。multica 自己编排时保留 claim/ack 与调度；不是必须迁入 SDK。
+
+**M3 leader 纠偏 worker**：Team 使用 team_send(task, text)，core Stream.Send 携带
+AuthorAgent。宿主自编排须自己校验权限与上限；Remote 只支持 Soon，其他 timing
+明确拒绝。对终态任务改用 delegate(continue: task)。
+
+**M4 worker 回复时 leader 正忙**：Team 自动以 Soon 补充，投递失败留在 durable inbox
+重试；空闲时按 WakeWindow 唤醒。延迟由 Driver boundary 决定，不保证当前工具结束。
+
+**M5 聊天中途输入**：任务模式使用已持有的 Stream.Send；常驻用 Standby.Send。另一次
+Thread.Send 不并入而报 ErrThreadBusy；sb.Cancel 保留待命。
+
+**M6 多 provider**：按各 Driver Descriptor.Messages / resolved capability 与 Inspect
+Environment 核实，不硬编码旧 multica 版本表或宣称所有 provider 支持相同 timing。
+Cursor in-run 需要宿主 hook relay。只有 InRun、无 resume 的 Driver 在最终 boundary
+竞态可能报告 failed，而不是无声丢失。Pi/OpenCode 不属于 v2 能力承诺。
+
+**M7 daemon 重启**：未终态团队任务变 interrupted，leader 决定重派。宿主以原 MessageID
+重发未确认评论；含 execution options 的 held record 必须恢复原选项再重交。provider
+接收与回执落盘之间仍有可重放窗口，不承诺无重复。重开 Standby 后需 host input
+启动下一次执行。
+
+**M8 autopilot 长任务**：MaxLeaderTurns、MaxTasks、message caps 与 Member.Timeout
+提供边界；宿主 watchdog 可先 system 提醒再取消。Team 未自动实现原 R5 提醒。
+临近上限通知与部分 Result 保留，不能把 limit hard stop 当成功。
+
+只有完成 provider fixture/live 以及 multica 宿主接入验证，才可删除对应 provider 的
+supplement 实现；SDK 文档不把未完成的 multica 迁移视为已验收。
 
 ---
 
@@ -970,7 +1012,7 @@ for ev := range s.Events() {
 | 1 | 三类投递场景（立即、下一次调用、排队合并） | 已实现：`When`：`Interrupt` / `Soon` / `AfterTurn` | §4.4 |
 | 2 | 为什么需要 `SteerReady` | 已实现：不需要：执行开始前的消息会被缓冲 | §5.2-6 |
 | 3 | 各 Agent 原生 API 差异 | 已实现：Driver 能力矩阵加统一 SPI | §6 |
-| 4 | multica 的持久化 claim/ack | 留在宿主；`MessageUpdate` 与 `Result.Messages()` 提供结果；TaskStore 语义一致 | §4.5、§7.7、§9 |
+| 4 | multica 的持久化 claim/ack | 留在宿主；MessageUpdate / Result.Messages 提供回执；TaskStore 使用 fencing/claim，provider 接收与回执落盘间仍可重放 | §7.7、§9 |
 | 5 | 区分人与 agent 的权威 | 已实现：`From` 加内置模板 | §4.4、§5.3 |
 | 6 | Claude hook 被子 agent 继承 | 已实现：过滤 `agent_id` 与 `parent_tool_use_id` | §6.2 |
 | 7 | 取消与投递的竞态 | 已实现：领取后只由 Ack 决定 | §5.2-1、2 |
@@ -986,11 +1028,11 @@ for ev := range s.Events() {
 | 17 | T1 leader 阻塞 | 事件驱动的 leader | §7.2、§7.3 |
 | 18 | T2 工具面随成员数增长 | leader 4 个、worker 2 个，名册作为数据 | §7.4 |
 | 19 | T3 结果被覆盖 | 任务句柄 | §7.5 |
-| 20 | T4 会话不连续 | `Continuity` 与 `continue` | §7.5 |
+| 20 | T4 会话不连续 | PerTask 为 Agent/Team 隔离 Thread；PerScope 共享单 writer；continue 验证 checkpoint/context | §7.5 |
 | 21 | T5 没有上行通道 | worker 用 `team_send` 发给 leader | §7.3、§7.4 |
 | 22 | T6 子任务生命周期 | 团队执行持续到整个团队静止 | §7.2 |
 | 23 | T7 每次运行一个 sidecar | 单 listener 加 capability token | §7.11 |
-| 24 | T8 弱类型的 SubagentUpdate | 强类型 | §4.5 |
+| 24 | T8 弱类型的 SubagentUpdate | typed Task/Member/Kind/State/Delta/Summary；当前 A2A wire 无投影，AG-UI 旧 detail 字段有保真限制 | §7.8、§8 |
 | 25 | 用户直接找 worker | 不提供，由 leader 代传 | §7.3 |
 | 26 | worker 之间的通信 | 不提供，由 leader 转达 | §7.3 |
 | 27 | 一次性进程什么时候退出 | 已实现：执行在静止时结束，`Result()` 或 `Done` 返回 | §5.1、§8 |
@@ -998,16 +1040,16 @@ for ev := range s.Events() {
 | 29 | 由宿主决定是否常驻 | 已实现：宿主选择用法；待命由宿主的 ctx 决定何时结束 | §3、§4.9 |
 | 30 | leader 说"我等着"却没有派发 | 模型行为风险，不是接口缺口：执行正常结束，回答可见；briefing 要求"需要等待时必须先派发"；宿主可以用带记忆的任务跟进 | §7.2、§8 |
 | 31 | 不唤醒 leader 的旁注怎么算 | 旁注的不变式 | §7.3 |
-| 32 | worker 卡死 | `Member.Timeout`（不允许无限）加 R5 | §7.9 |
+| 32 | worker 卡死 | Member.Timeout 默认 30 分钟；Team 无自动 R5 提醒，宿主可先 system 提醒再取消 | §7.9 |
 | 33 | 跨轮次的循环 | `MaxLeaderTurns` 与统一的上限规则 | §5.4、§7.9 |
 | 34 | 收尾瞬间的竞态 | 必须在 leader 的轮次收尾完成之后才判断静止；Thread 层面的原子路由 | §5.1、§7.2 |
 | 35 | 任务登记时机 | `team_delegate` 返回前必须已登记 | §7.5 |
-| 36 | Remote 断线 | 2 分钟后判失败 | §7.9 |
+| 36 | Remote 断线 | 两分钟无成功观察（含静默流）failed/unknown_state；初始请求不自动重放 | §7.11 |
 | 37 | 唤醒风暴 | 2 秒合并窗口 | §7.3 |
 | 38 | 一次性任务用内存存储时崩溃 | 已裁决：内存 store 不保证崩溃恢复；具名 Thread 配宿主持久 store | §7.7 |
 | 39 | `Post`/`WaitIdle`/`CloseIfIdle`/`Idle` 让人困惑 | 已实现：全部删除 | §10 |
 | 40 | `Open`/`Session` 命名 | 已实现：删除 | §10 |
-| 41 | 团队作为 Runner 但不贴切 | 三种用法加 `Standby` | §3、§7.1 |
+| 41 | 团队作为 Runner | Team.Send / Thread.Send / Thread.Standby；busy 不并入，TaskStore lease 排他 | §7.1 |
 | 42 | `Close` 与 `Cancel` 让人困惑 | 已实现：执行句柄只有 Cancel，Agent.Close 继续保留；待命退出由 ctx 决定 | §4.2、§4.3 |
 | 43 | `KeepOpen`/`UntilCanceled` 命名 | 已实现：改为 `Standby` | §10 |
 | 44 | 停止按钮 | 已实现：`sb.Cancel()` 中止当前处理，继续待命 | §4.3 |
@@ -1022,9 +1064,9 @@ for ev := range s.Events() {
 | 53 | 迁移成本 | 已实现：迁移表 | §12 |
 | 54 | `Agent.Send` 的语义 | 已实现：宿主语义为匿名 Thread，内部无状态 target，不创建具名 store record | §3 |
 | 55 | 问题 A（返回的 Stream 不处理这条消息） | 已实现：任务模式不并入、待命不返回 Stream、执行结束的统一定义 | §4.10、§5.1 |
-| 56 | 问题 B（worker 审批） | O3 | §7.6 |
-| 57 | 团队的持久化、恢复与 Fork | TaskStore，标记 `interrupted`，有条件的 Fork | §7.7 |
-| 58 | 团队用量 | 合计加 `Subagents()` | §7.8 |
+| 56 | worker 审批 | Local O3 + Origin + 原 responder；Remote 无审批应答扩展，input-required 按远端策略 | §7.6 |
+| 57 | 团队持久化、恢复与 Fork | interrupted、原 ID 重交；需选项消息 held 到重交；lazy Fork lineage；PerScope Remote 拒绝 | §7.7 |
+| 58 | 团队用量 | ComposeResults 保留 leader 审计层，Usage 合计，Subagents 摘要，完整 member result/snapshot 在 Store | §7.8 |
 | 59 | 包装模板何时使用 | 已实现：只在并入时 | §5.3 |
 | 60 | 匿名 Thread 的 checkpoint | 已实现：本次执行内健康 checkpoint 续接，缺失时明确失败；无跨调用历史 | §6.4 |
 | 61 | 跨进程使用同一个 Thread | 已实现：租约规则，返回 `ErrThreadBusy` | §4.10 |
@@ -1034,11 +1076,11 @@ for ev := range s.Events() {
 | 65 | 多个页面同时查看 | 边界已确认：由宿主 hub 广播，SDK 只提供单消费 channel | §1、§8 |
 | 66 | Cursor 的 hooks.json 与用户仓库 | 已实现：只在受管理的工作目录里写，否则降级 | §6.3 |
 | 67 | 看门狗提醒、预算收尾、外部事件、HITL 补充、完成前验证 | 已实现：统一用 `Send` 加 `From(system)`；验证用带记忆的任务跟进 | §8 |
-| 68 | 嵌套团队 | Team 实现 Runner，工具名前缀可配置 | §7.1、§7.11 |
-| 69 | bridges 的映射 | A2A、AG-UI、会话录制器 | §8 |
-| 70 | multica M1–M8 | 逐项走查 | §9 |
+| 68 | 嵌套团队 | Team/ConversationProvider，Surface.Prefix 可配；外层 worker grant 不提供 delegate/cancel | §7.1、§7.4 |
+| 69 | bridges 映射 | A2A active-task supplement 与 v2 event projection 未实现；AG-UI Activity detail 字段有保真限制 | §8 |
+| 70 | multica M1–M8 | 按实现核实，receipt 不等于 admission；provider 重放窗口、Remote timing 与 R5 限制明确 | §9 |
 | 71 | leader 是全能的还是只派发 | 完整的 Agent，遵循委派优先：统筹归 leader，适合成员的工作必须派发，没有成员能承接的才亲自做；宿主可以收紧为纯派发器（只读 sandbox） | §0、§7.2 |
-| 72 | leader 正在亲自干活时 worker 的通知 | 以 `Soon` 在工具边界并入，不打断；延迟上界是 leader 当前这次工具调用 | §7.3 |
+| 72 | leader 忙时 worker 通知 | Soon 按实际 Driver boundary；无通用工具调用延迟上界 | §7.3 |
 | 73 | leader 与 worker 同时写同一个工作目录 | 任务由 leader 拆分和派发，冲突由 leader 在拆分时避免；SDK 不提供额外机制 | §7.2 |
 | 74 | 边界投递失败 | 已实现：改为在本轮结束后续接投递 | §5.2-9 |
 | 75 | 待领取队列满 | 已实现：`Send` 阻塞等待空位 | §5.2-10 |
@@ -1048,8 +1090,8 @@ for ev := range s.Events() {
 | 79 | 待命中切换模型 | 已实现：模型变化进入 fingerprint；新会话前缀或 ResumeOnly 不兼容错误，无 ResumeTolerant | §5.7 |
 | 80 | checkpoint 持久化失败 | 已实现：进程内权威加后台重试 | §5.7 |
 | 81 | 进程崩溃时未投递的消息 | 已裁决：持久回执有界去重；provider 接受至回执落盘的崩溃窗口仍可重投 | §5.2-3、§5.7 |
-| 82 | 团队 leader 某一轮失败 | 任务继续，leader 有界重试唤醒 | §7.9 |
-| 83 | 成员任务达到 `MaxActive` | 任务排队 | §7.5 |
+| 82 | 团队 leader 失败 | RetryableError/RetryAfter 最多两次，worker 期间继续；耗尽或不可重试取消并返部分 Result | §7.9 |
+| 83 | 成员达到 MaxActive | 排队；PerScope conversation 即使 MaxActive>1 仍单 writer | §7.5 |
 | 84 | 开了待命却没有人读事件 | 已实现：未调用 `Events()` 时不缓冲 | §4.3 |
 | 85 | 哪些情况保留为错误 | 已实现：忙碌、模式冲突、跨进程持有、执行结束后补充、打断不支持、消息过大、不支持续接、上限硬停、ctx 取消，各自有理由 | §5.7 |
 
