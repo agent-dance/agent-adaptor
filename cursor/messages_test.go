@@ -28,6 +28,10 @@ const cursorMessageHelperEnv = "AGENT_ADAPTOR_CURSOR_MESSAGE_TEST"
 func TestMain(m *testing.M) {
 	RunHookRelayIfRequested()
 	if mode := os.Getenv(cursorMessageHelperEnv); mode != "" {
+		if len(os.Args) == 2 && os.Args[1] == "--version" {
+			fmt.Println("2026.10.14-fixture")
+			os.Exit(0)
+		}
 		os.Exit(runCursorMessageHelper(mode))
 	}
 	os.Exit(m.Run())
@@ -140,7 +144,7 @@ func managedHookRequest(t *testing.T, p driver.MessagePort) driver.Request {
 }
 
 func TestCursorMessageCapability(t *testing.T) {
-	d := Driver(Config{HookRelay: []string{"relay"}})
+	d := Driver(Config{CommonConfig: CommonConfig{Command: versionCommand(t, "2026.10.14-fixture", "exit 99")}, HookRelay: []string{"relay"}})
 	caps := d.Descriptor().Messages
 	if !reflect.DeepEqual(caps.Boundaries, []driver.Boundary{driver.BoundaryTool}) || caps.Interrupt || caps.Continue != driver.ContinueResume || !caps.ConfirmedDelivery || caps.PersistsDelivered || caps.Unit != driver.MessageUnitUTF16 || caps.MinVersion != "2026.10.14" || caps.MaxUnits != hookContextLimit-hookTagOverhead {
 		t.Fatalf("capability: %+v", caps)

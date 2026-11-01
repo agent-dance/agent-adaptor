@@ -269,6 +269,8 @@ methodset EnvironmentProbe {
 
 type EnvironmentReport struct {
 	DriverType string
+	Version string
+	Messages MessageCapability
 	Status EnvironmentStatus
 	Healthy bool
 	Summary string

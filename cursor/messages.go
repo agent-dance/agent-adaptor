@@ -58,7 +58,7 @@ func (adapter) ResolveMessageCapability(req driver.Request) driver.MessageCapabi
 	if cursorHookEligibility(req, chooseCWD(cfg.CommonConfig, req.Workspace)) != nil {
 		caps.Boundaries = nil
 	}
-	return caps
+	return cursorVersion(context.Background(), cfg).Capability(caps)
 }
 
 func cursorHookEligibility(req driver.Request, cwd string) error {

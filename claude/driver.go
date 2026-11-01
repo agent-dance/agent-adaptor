@@ -116,7 +116,7 @@ func (adapter) ValidateConfig(cfg any) error {
 	}
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -126,12 +126,12 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "claude_profile_error", Level: "fail", Message: "Claude profile resolution failed.", Detail: err.Error()})
-		return driverutil.SummarizeEnvironment(DriverType, checks), nil
+		return claudeVersion(ctx, config).Environment(DriverType, claudeMessageCapability(), checks), nil
 	}
 	checks = append(checks, claudeAuthChecks(bindings)...)
 	checks = append(checks, claudeModelCompatibilityChecks(config)...)
 	checks = append(checks, claudeConfigChecks(bindings)...)
-	return driverutil.SummarizeEnvironment(DriverType, checks), nil
+	return claudeVersion(ctx, config).Environment(DriverType, claudeMessageCapability(), checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, cfg any) ([]driver.ModelInfo, error) {
@@ -332,6 +332,13 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 
 func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
+	if req.Messages != nil {
+		var err error
+		req, err = claudeVersion(ctx, cfg).PrepareRun(ctx, req, sink, DriverType, claudeMessageCapability())
+		if err != nil {
+			return driver.Response{}, err
+		}
+	}
 	if err := validateClaudeSessionRequest(req); err != nil {
 		return driver.Response{}, err
 	}

@@ -43,7 +43,7 @@ func (a adapter) ResolveMessageCapability(req driver.Request) driver.MessageCapa
 	}
 	if req.Messages != nil || wantsInteractiveClaude(req.Policy.HumanDecision) ||
 		(a.persistent != nil && !req.Spawn && persistentEligible(readConfig(req.Config), req) && persistentSessionKey(req) != "") {
-		return claudeMessageCapability()
+		return claudeVersion(context.Background(), readConfig(req.Config)).Capability(claudeMessageCapability())
 	}
 	return driver.MessageCapability{}
 }

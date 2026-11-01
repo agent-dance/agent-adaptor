@@ -52,7 +52,7 @@ func (p *codexMessageTestPort) Ack(id string, a driver.MessageAck) {
 }
 
 func TestMessageCapabilityTransportResolver(t *testing.T) {
-	d := Driver(Config{})
+	d := Driver(Config{CommonConfig: CommonConfig{Command: versionCommand(t, "codex-cli 0.166.0", "exit 99")}})
 	resolver, ok := d.(driver.MessageCapabilityResolver)
 	if !ok {
 		t.Fatal("resolver missing")

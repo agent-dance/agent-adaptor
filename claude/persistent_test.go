@@ -24,6 +24,11 @@ import (
 const claudePersistentHelperEnv = "GO_WANT_AGENT_ADAPTOR_CLAUDE_PERSISTENT_HELPER"
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "--version" &&
+		(os.Getenv(messageHelperEnv) == "1" || os.Getenv(claudePersistentHelperEnv) == "1") {
+		fmt.Println("2.1.110 (Claude Code)")
+		os.Exit(0)
+	}
 	if len(os.Args) > 1 && os.Args[1] == claudeScriptedHelperArg {
 		os.Exit(runClaudeScriptedHelper())
 	}
