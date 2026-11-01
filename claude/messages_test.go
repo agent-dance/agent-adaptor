@@ -43,7 +43,7 @@ func (p *messageTestPort) Claim(b driver.Boundary) []driver.MessageItem {
 	}
 	var items, pending []driver.MessageItem
 	for _, item := range p.pending {
-		if item.Timing == driver.TimingSoon || item.Timing == driver.TimingAfterTurn && b == driver.BoundaryTurnEnd {
+		if item.Timing == driver.TimingSoon || item.Timing == driver.TimingAfterTurn && (b == driver.BoundaryTurnEnd || b == driver.BoundaryStop) {
 			items = append(items, item)
 		} else {
 			pending = append(pending, item)
@@ -274,7 +274,7 @@ func TestMessageWindowAndSubagents(t *testing.T) {
 	if !reflect.DeepEqual(port.windows, []bool{true, false}) {
 		t.Fatalf("windows=%v", port.windows)
 	}
-	if !reflect.DeepEqual(port.claims, []driver.Boundary{driver.BoundaryTool, driver.BoundaryTool, driver.BoundaryTurnEnd}) {
+	if !reflect.DeepEqual(port.claims, []driver.Boundary{driver.BoundaryTool, driver.BoundaryTool, driver.BoundaryStop}) {
 		t.Fatalf("claims=%v", port.claims)
 	}
 }
@@ -829,7 +829,7 @@ func TestMessageStopCombinesBoundariesAndCompletesOnce(t *testing.T) {
 	if len(turns) != 2 || turns[0].Text != "first" || turns[1].Text != "final" {
 		t.Fatalf("turns=%+v", turns)
 	}
-	if !reflect.DeepEqual(port.claims, []driver.Boundary{driver.BoundaryTurnEnd}) {
+	if !reflect.DeepEqual(port.claims, []driver.Boundary{driver.BoundaryStop}) {
 		t.Fatalf("claims=%v", port.claims)
 	}
 }

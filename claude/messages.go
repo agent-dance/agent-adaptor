@@ -297,7 +297,7 @@ func (p *claudeParser) prepareMessageHook(payload map[string]any) bool {
 		if event == "Stop" {
 			// Stop is also the turn-end boundary. One atomic claim includes
 			// Soon and AfterTurn in their original admission order.
-			items = s.port.Claim(driver.BoundaryTurnEnd)
+			items = s.port.Claim(driver.BoundaryStop)
 		} else {
 			items = s.port.Claim(driver.BoundaryTool)
 		}

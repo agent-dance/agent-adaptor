@@ -104,12 +104,8 @@ func approvalResponse(ctx context.Context, runID string, sink driver.EventSink, 
 	if req.Method == "mcpServer/elicitation/request" && (body.ServerName == "" || (body.Mode != "form" && body.Mode != "url")) {
 		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "invalid MCP elicitation mode or server name"}, nil
 	}
-	state.mu.Lock()
-	foreign := (state.threadID != "" && body.ThreadID != state.threadID) ||
-		(body.TurnID != "" && state.turnID != "" && body.TurnID != state.turnID)
-	state.mu.Unlock()
-	if foreign {
-		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "approval request belongs to another thread or turn"}, nil
+	if live, err := state.awaitApprovalScope(ctx, body.ThreadID, body.TurnID); !live {
+		return nil, &jsonrpc2.Error{Code: jsonrpc2.CodeInvalidParams, Message: "approval request does not belong to the current live turn"}, err
 	}
 	if req.Method == "mcpServer/elicitation/request" && body.Mode == "form" {
 		schema, ok := payload["requestedSchema"].(map[string]any)
@@ -155,6 +151,39 @@ func approvalResponse(ctx context.Context, runID string, sink driver.EventSink, 
 		outcome = "cancel"
 	}
 	return map[string]any{"decision": outcome}, nil, decisionErr
+}
+
+// awaitApprovalScope runs in the request goroutine, leaving the RPC reader free
+// to deliver turn/start's response. Early requests wait for authoritative RPC
+// identities, then revalidate against queued terminals and the live turn.
+func (s *runState) awaitApprovalScope(ctx context.Context, threadID, turnID string) (bool, error) {
+	for {
+		s.notifyMu.Lock()
+		s.mu.Lock()
+		foreign := (s.threadID != "" && s.threadID != threadID) ||
+			(turnID != "" && s.turnID != "" && s.turnID != turnID)
+		closed := s.publicClosed || s.requestErr != nil
+		bound := s.threadID != "" && s.turnID != ""
+		changed, done := s.scopeChanged, s.done
+		s.mu.Unlock()
+		s.notifyMu.Unlock()
+		if foreign || closed {
+			return false, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if bound {
+			return true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-done:
+			return false, nil
+		case <-changed:
+		}
+	}
 }
 
 func requestID(id jsonrpc2.ID) string {

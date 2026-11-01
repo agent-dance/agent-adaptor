@@ -19,9 +19,10 @@ type Timing uint8
 const (
 	// Soon delivers at the earliest available boundary.
 	Soon Timing = iota
-	// Interrupt interrupts the active turn; it requires Driver support.
+	// Interrupt interrupts the active turn and starts a successor within MaxTurns;
+	// it requires Driver support.
 	Interrupt
-	// AfterTurn delivers only at the end of the active turn.
+	// AfterTurn delivers into a successor when the active turn ends or stops.
 	AfterTurn
 )
 
@@ -104,6 +105,9 @@ type MessagePolicy struct {
 	// MaxPending bounds unclaimed messages; zero means 32. Full queues block Send until space or context cancellation.
 	MaxPending int
 	// MaxTurns bounds provider turns in one execution; zero means 20.
+	// Stop continuations and interrupt restarts reserve a successor before
+	// delivery. If none remains, input stays pending and fails with
+	// MessageLimitExceeded and its original text when execution ends.
 	// With at least two turns, a limit.approaching notice is emitted after
 	// min(ceil(0.8*MaxTurns), MaxTurns-1) turns. Its AuthorSystem wrap-up
 	// instruction precedes host messages in a nonempty claim when the combined
@@ -306,7 +310,6 @@ type messageHub struct {
 	turns     []*Result
 	warned    bool
 	wrapUp    *hubItem // Policy input registered once it joins a claim; joins items only after delivery.
-	stopClaim bool     // Stop may claim its successor before reporting completion.
 	promptIDs []string
 	start     messageSettings
 }
@@ -536,21 +539,16 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 	if !allowed {
 		return nil
 	}
-	if b == driver.BoundaryStop {
-		h.stopClaim = true
-	}
-	turn := h.turn
-	if h.stopClaim && (b == driver.BoundaryStop || b == driver.BoundaryTurnEnd) {
-		// Claude's Stop hook claims Stop and TurnEnd, then emits completion
-		// only if the combined claim blocks stopping. These messages belong
-		// to the successor, which must still fit within the turn budget.
-		if turn >= h.policy.MaxTurns {
-			return nil
-		}
-		turn++
-	}
+	// Stop closes the active turn; it is also the turn-end delivery boundary.
+	// First select the exact batch, then reserve its delivery turn atomically.
+	// An immediate batch containing Interrupt restarts the entire batch, while
+	// an immediate batch containing only Soon still steers the active turn.
+	atEnd := b == driver.BoundaryStop || b == driver.BoundaryTurnEnd
+	successor := b == driver.BoundaryStop
+	var selected []*hubItem
 	var out []driver.MessageItem
 	batchUnits := 0
+	batchFull := false
 	for _, i := range h.items {
 		if i.out.State != MessageAccepted || i.claimed {
 			continue
@@ -559,10 +557,10 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 			h.failLocked(i, MessageCancelled)
 			continue
 		}
-		if i.turnEndOnly && b != driver.BoundaryTurnEnd {
+		if i.turnEndOnly && !atEnd {
 			continue
 		}
-		if i.out.Timing == AfterTurn && b != driver.BoundaryTurnEnd {
+		if i.out.Timing == AfterTurn && !atEnd {
 			continue
 		}
 		if i.out.Timing == Interrupt && !i.turnEndOnly && b != driver.BoundaryImmediate {
@@ -579,7 +577,7 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 				// Hooks join items with two newlines. Keep the remaining input
 				// pending, in order, for another claim rather than overfilling
 				// the provider's aggregate context budget.
-				h.signalLocked()
+				batchFull = true
 				break
 			}
 		}
@@ -587,17 +585,31 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 			batchUnits += 2
 		}
 		batchUnits += units
-		i.claimed = true
-		i.boundary = b
-		i.out.Turn = turn
-		if i.stop != nil {
-			i.stop()
+		selected = append(selected, i)
+		if b == driver.BoundaryImmediate && i.out.Timing == Interrupt {
+			successor = true
 		}
 		timing := driver.Timing(i.out.Timing)
 		if i.turnEndOnly {
 			timing = driver.TimingAfterTurn
 		}
 		out = append(out, driver.MessageItem{ID: i.out.ID, Text: i.framed, Timing: timing, MaybeDuplicate: i.duplicate})
+	}
+	turn := h.turn
+	if successor {
+		if turn >= h.policy.MaxTurns {
+			return nil // Leave the whole batch pending for limit_exceeded settlement.
+		}
+		turn++
+	}
+	for _, i := range selected {
+		i.claimed, i.boundary, i.out.Turn = true, b, turn
+		if i.stop != nil {
+			i.stop()
+		}
+	}
+	if batchFull {
+		h.signalLocked()
 	}
 	if len(out) > 0 && !h.policy.Disabled && h.policy.MaxTurns > 1 && (h.warned || turn > h.wrapUpThreshold()) {
 		out = h.prependWrapUpLocked(b, turn, out)
@@ -629,7 +641,7 @@ func (h *messageHub) prependWrapUpLocked(b driver.Boundary, turn int, items []dr
 		}
 		i = &hubItem{out: MessageOutcome{ID: m.ID, Text: m.Text, From: m.From, Timing: m.Timing, State: MessageAccepted}, framed: framed, ctx: h.ctx}
 	}
-	if i.out.State != MessageAccepted || i.claimed || (i.turnEndOnly && b != driver.BoundaryTurnEnd) {
+	if i.out.State != MessageAccepted || i.claimed || (i.turnEndOnly && b != driver.BoundaryTurnEnd && b != driver.BoundaryStop) {
 		return items
 	}
 	if h.cap.MaxUnits > 0 {
@@ -854,7 +866,6 @@ func (h *messageHub) completeTurn(res *Result, err error) {
 	}
 	h.sink.push(TurnEnd{Turn: turn, Result: res, Err: err, MessageIDs: ids})
 	h.turn = turn + 1
-	h.stopClaim = false
 	threshold := h.wrapUpThreshold()
 	if !h.policy.Disabled && !h.warned && turn >= threshold && turn < h.policy.MaxTurns && err == nil && (h.resume || h.cap.Continue == driver.ContinueInRun) {
 		h.warned = true

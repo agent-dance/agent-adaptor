@@ -322,6 +322,8 @@ type runState struct {
 	turnIndex       int
 	interrupted     bool
 	active          bool
+	pendingSteers   int
+	stagedTurn      *driver.TurnCompleted
 	messages        driver.MessagePort
 	wake            chan struct{}
 	turnFailure     *driver.RunFailure
@@ -331,6 +333,7 @@ type runState struct {
 	requestErr      error
 	threadID        string
 	turnID          string
+	scopeChanged    chan struct{}
 	pending         []pendingNotification
 	publicClosed    bool
 	publicStarted   bool
@@ -367,6 +370,7 @@ func (s *runState) setThread(threadID string) {
 	s.mu.Unlock()
 	s.translator.SetThread(threadID)
 	s.flushPendingNotificationsLocked()
+	s.signalScopeChanged()
 }
 
 func (s *runState) setTurn(turnID string) {
@@ -393,14 +397,25 @@ func (s *runState) setTurn(turnID string) {
 	s.mu.Unlock()
 	s.translator.SetTurn(turnID)
 	s.flushPendingNotificationsLocked()
+	s.signalScopeChanged()
+}
+
+// signalScopeChanged wakes approvals only after queued notifications have been
+// revalidated, so an already completed turn cannot become live while binding.
+func (s *runState) signalScopeChanged() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	close(s.scopeChanged)
+	s.scopeChanged = make(chan struct{})
 }
 
 func newRunState(runID string, sink driver.EventSink) *runState {
 	return &runState{
-		translator: NewTranslator(sink, runID),
-		sink:       sink,
-		done:       make(chan struct{}),
-		wake:       make(chan struct{}, 1),
+		translator:   NewTranslator(sink, runID),
+		sink:         sink,
+		done:         make(chan struct{}),
+		wake:         make(chan struct{}, 1),
+		scopeChanged: make(chan struct{}),
 	}
 }
 
@@ -756,11 +771,9 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 	// before run.finished/run.error, because the lifecycle terminal is strict
 	// last across all provider-originated public events.
 	s.appendTranscriptLocked(item)
-	if s.sink != nil {
-		_ = s.sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Timestamp: completedAt,
-			Turn: &driver.TurnCompleted{Index: s.turnIndex, Text: s.finalAgentText,
-				Usage: cloneUsage(s.usage), Interrupted: s.interrupted && body.Turn.Status == TurnStatusInterrupted, CompletedAt: completedAt}})
-	}
+	s.stagedTurn = &driver.TurnCompleted{Index: s.turnIndex, Text: s.finalAgentText,
+		Usage: cloneUsage(s.usage), Interrupted: s.interrupted && body.Turn.Status == TurnStatusInterrupted, CompletedAt: completedAt}
+	s.publishTurnCompletedLocked()
 	s.active = false
 	if s.messages != nil {
 		s.messages.Window(false)
@@ -768,6 +781,29 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 	s.mu.Unlock()
 
 	s.signalDone()
+}
+
+// publishTurnCompletedLocked never waits for RPC responses in the notification
+// reader. The steer caller releases the staged turn after recording acceptance.
+// Callers hold notifyMu and mu, preserving ordered public event publication.
+func (s *runState) publishTurnCompletedLocked() {
+	if s.stagedTurn == nil || s.pendingSteers != 0 {
+		return
+	}
+	if s.sink != nil {
+		_ = s.sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted,
+			Timestamp: s.stagedTurn.CompletedAt, Turn: s.stagedTurn})
+	}
+	s.stagedTurn = nil
+}
+
+func (s *runState) settleSteer() {
+	s.notifyMu.Lock()
+	defer s.notifyMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingSteers--
+	s.publishTurnCompletedLocked()
 }
 
 func (s *runState) finishPublicResult(result driver.Response, runErr error) {

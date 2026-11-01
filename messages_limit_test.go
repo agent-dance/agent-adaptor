@@ -118,8 +118,7 @@ func TestV2TurnLimitIdleDoesNotContinue(t *testing.T) {
 							}
 							var items []driver.MessageItem
 							if mode == "stop_hook" {
-								items = append(items, req.Messages.Claim(driver.BoundaryStop)...)
-								items = append(items, req.Messages.Claim(driver.BoundaryTurnEnd)...)
+								items = req.Messages.Claim(driver.BoundaryStop)
 							}
 							_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Index: index, Text: fmt.Sprint(turns)}})
 							if mode == "in_run" {
@@ -197,9 +196,9 @@ func TestV2TurnLimitStopHookBudget(t *testing.T) {
 				for turn := 1; turn <= limit; turn++ {
 					entered <- struct{}{}
 					<-release
-					// Match Claude: both claims precede turn.completed, and Soon
-					// and AfterTurn are supplied by different halves of the pair.
-					items := append(req.Messages.Claim(driver.BoundaryStop), req.Messages.Claim(driver.BoundaryTurnEnd)...)
+					// Match Claude: one Stop claim reserves the successor and
+					// includes Soon and AfterTurn in admission order.
+					items := req.Messages.Claim(driver.BoundaryStop)
 					if turn == limit && len(items) != 0 {
 						t.Errorf("Stop started a turn beyond the budget: %v", items)
 					} else if turn < limit && len(items) < 2 {
@@ -207,7 +206,7 @@ func TestV2TurnLimitStopHookBudget(t *testing.T) {
 					}
 					if limit > 1 && turn == min(limit-limit/5, limit-1) {
 						if len(items) != 3 || !strings.Contains(items[0].Text, "Host policy notice") || items[1].ID != fmt.Sprintf("turn-%d-timing-%d", turn, adaptor.Soon) || items[2].ID != fmt.Sprintf("turn-%d-timing-%d", turn, adaptor.AfterTurn) {
-							t.Errorf("wrap-up must precede both Stop claims: %v", items)
+							t.Errorf("wrap-up must precede the Stop batch: %v", items)
 						}
 					}
 					_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Index: turn - 1, Text: fmt.Sprint(turn)}})
@@ -323,7 +322,8 @@ func TestV2WrapUpInRunClaims(t *testing.T) {
 					emit := func(index int) {
 						_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Index: index, Text: fmt.Sprint(index)}})
 					}
-					if boundary != driver.BoundaryStop {
+					successor := boundary == driver.BoundaryStop || timing == adaptor.Interrupt
+					if !successor {
 						emit(0)
 					}
 					if items := req.Messages.Claim(boundary); len(items) != 0 {
@@ -332,8 +332,7 @@ func TestV2WrapUpInRunClaims(t *testing.T) {
 					close(entered)
 					<-release
 					items := req.Messages.Claim(boundary)
-					if boundary == driver.BoundaryStop {
-						items = append(items, req.Messages.Claim(driver.BoundaryTurnEnd)...)
+					if successor {
 						emit(0)
 					}
 					if len(items) != 3 || items[1].ID != "one" || items[2].ID != "two" || !strings.Contains(items[0].Text, "Host policy notice") {
@@ -367,9 +366,6 @@ func TestV2WrapUpInRunClaims(t *testing.T) {
 					t.Fatalf("calls=%d result=%+v messages=%v err=%v", calls, res, res.Messages(), err)
 				}
 				wantBoundary := string(boundary)
-				if timing == adaptor.AfterTurn {
-					wantBoundary = "turn_end"
-				}
 				checkWrapUpOutcome(t, res, systemID, wantBoundary, "fake.boundary", 2)
 			})
 		}

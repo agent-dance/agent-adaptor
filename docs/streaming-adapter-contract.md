@@ -105,7 +105,7 @@ admission order. Claim atomically transfers all eligible input to the Driver:
 | Requested timing | Claim eligibility |
 |---|---|
 | TimingSoon | Earliest declared boundary, or turn_end |
-| TimingAfterTurn | turn_end only |
+| TimingAfterTurn | turn_end, including a stop that closes the active turn |
 | TimingInterrupt | immediate only, with Interrupt support |
 
 Every MessageItem contains ID, already-framed Text, Timing, and MaybeDuplicate.
@@ -113,6 +113,23 @@ Deliver Text verbatim. Do not strip author authority, add a user role, reframe
 it, or remove the duplicate warning. A boundary adapter may combine items into
 one provider payload in order, within the provider's total batch limit. An
 immediate RPC adapter may submit them individually in order.
+
+`Claim(BoundaryStop)` is one atomic successor reservation. It returns Soon,
+AfterTurn, and requeued turn-end input together in admission order; do not split
+the Stop callback into separate Stop and TurnEnd claims. These items belong to
+the successor even though the Driver reports the stopped turn's TurnCompleted
+after claiming them. A plain `Claim(BoundaryTurnEnd)` follows TurnCompleted and
+assigns input to the next turn.
+
+An immediate batch containing TimingInterrupt likewise reserves a successor for
+the **whole batch**, including Soon items. Interrupt and restart that batch in
+claim order. An immediate batch without TimingInterrupt steers the current turn
+and consumes no successor. Core selects the size-bounded batch before deciding
+whether it needs a successor. Both reservation paths check MaxTurns and assign
+the delivery turn under the queue lock. When no successor remains, Claim returns
+empty without transferring ownership; the original input remains pending for
+failed/limit_exceeded settlement. The Driver must not interrupt or start a turn
+for that refused batch. These rules use the existing frozen MessagePort SPI.
 
 **Every claimed item must receive exactly one Ack before Run returns**, including
 on parser failure, disconnect, write failure, and cancellation. After Claim,
@@ -191,6 +208,12 @@ replayed history as new usage, emit duplicate completion, or infer missing usage
 Core converts these to one-based execution-wide TurnEnd events. If a Driver
 emits no completion event, core can synthesize one from the returned outcome;
 this fallback does not satisfy a Driver's per-turn contract for an InRun loop.
+Settle successful receipts for the current turn before emitting TurnCompleted so
+TurnEnd.MessageIDs includes all delivered input. Codex app-server stages public
+completion while a steer RPC is outstanding: its reader records the terminal,
+closes the delivery window and approval scope, and keeps reading the RPC reply.
+The steer caller Acks successful acceptance before releasing the staged event.
+Waiting for that reply inside the notification dispatcher would deadlock it.
 Provider completion may precede checkpoint persistence, schema validation, or
 resource cleanup. TurnEnd is therefore not an authoritative execution verdict.
 
@@ -340,6 +363,12 @@ uses the configured timeout fallback and emits an explanatory Notice. Do not add
 a Driver retry loop or a second decision channel to bypass this behavior.
 ApprovalRequest.Forward(Origin) attributes a copy while sharing the same responder.
 
+Codex app-server defers early approval requests until the authoritative RPC
+thread and turn identities bind, then revalidates after queued notifications
+have been processed. Requests for another thread, a previous turn, or a turn
+whose terminal has been observed receive a provider error without reaching the
+host, even if public TurnCompleted is still waiting for a steer receipt.
+
 Critical lifecycle, approval, message, turn, notice, drop and Done events are
 retained without a subscriber; ordinary events may be summarized as Dropped.
 Result-only consumption releases ordinary blocking producers. For normal event
@@ -353,10 +382,12 @@ A subscriber that abandons Events should cancel and drain the final events.
 
 Run the [adaptertest suite](../adaptertest/doc.go) for config, capability,
 structured-output, codec, lifecycle, transcript mirror, raw output and response
-invariants. The current suite and frozen SPI include the message types, but the
-suite does **not** yet have generic MessagePort/MessageCapability/TurnCompleted
-clauses. Driver-specific message tests and core contract tests are existing
-evidence; generic message conformance remains a release gate, not a claimed pass.
+invariants, including MSG-01–MSG-10 with real transport fixtures. MSG-02 timing
+checks and scripted eligibility must treat Stop as the combined stop/turn-end
+boundary, admitting AfterTurn input there in order. MSG-07/08 turn and receipt
+checks must attribute Stop continuations and interrupt batches to the reserved
+successor and reject execution beyond MaxTurns. Core integration tests exercise
+the reservation itself; a scripted Driver-only port cannot prove core's budget.
 
 Every transport must cover success, non-zero exit, malformed/missing terminal,
 missing checkpoint, cancellation, one completion per turn, declared boundaries,

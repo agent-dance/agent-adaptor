@@ -51,7 +51,7 @@ type turnRPC interface {
 
 // runTurns is shared by one-shot and resident transports. Only this goroutine
 // claims messages and issues RPCs; the ordered notification dispatcher owns
-// provider-confirmed window transitions and per-turn completion events.
+// provider-confirmed windows and stages completion until steer receipts settle.
 func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options, threadID string) (runErr error) {
 	port := opts.Messages
 	pending := make(map[string]driver.MessageItem)
@@ -167,9 +167,15 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 				}
 				return errors.New("codex app-server disconnected before turn completion")
 			case <-signal:
-				items := claim(driver.BoundaryImmediate)
-				if err := ctx.Err(); err != nil {
-					return err
+				// Claim and register the possible steer under the notification
+				// lock. Completion cannot snapshot receipts between those steps.
+				state.notifyMu.Lock()
+				state.mu.Lock()
+				active := state.active && !state.publicClosed
+				state.mu.Unlock()
+				var items []driver.MessageItem
+				if active {
+					items = claim(driver.BoundaryImmediate)
 				}
 				// An interrupt restarts the whole claimed batch in claim order.
 				// Otherwise deliver the batch atomically in one steer request.
@@ -178,6 +184,19 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 						restart = items
 						break
 					}
+				}
+				steering := len(items) != 0 && len(restart) == 0
+				if steering {
+					state.mu.Lock()
+					state.pendingSteers++
+					state.mu.Unlock()
+				}
+				state.notifyMu.Unlock()
+				if err := ctx.Err(); err != nil {
+					if steering {
+						state.settleSteer()
+					}
+					return err
 				}
 				if len(items) != 0 && len(restart) == 0 {
 					state.mu.Lock()
@@ -202,9 +221,11 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 						}
 						// Confirmed success owns the receipt; cancel owns the run.
 						if ctx.Err() != nil {
+							state.settleSteer()
 							return ctx.Err()
 						}
 						if err == nil {
+							state.settleSteer()
 							continue
 						}
 					}
@@ -214,6 +235,7 @@ func runTurns(ctx context.Context, client turnRPC, state *runState, opts Options
 						deferredIDs = append(deferredIDs, item.ID)
 						deferredAcks[item.ID] = outcome
 					}
+					state.settleSteer()
 				}
 				if len(restart) != 0 {
 					state.mu.Lock()
