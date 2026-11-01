@@ -101,7 +101,10 @@ func TestOuterCancellationKeepsContextIdentityWithoutProviderFailure(t *testing.
 
 func TestProviderFailureWinsConcurrentCancellationAndPreservesResult(t *testing.T) {
 	fake := newFakeDriver()
-	fake.runFunc = func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+	observed := make(chan struct{})
+	fake.runFunc = func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunError, Error: &driver.RunFailure{Code: driver.FailureAgentError, Message: "official provider terminal failure"}})
+		close(observed)
 		<-ctx.Done()
 		return driver.Response{
 			Output:     "provider partial",
@@ -115,7 +118,10 @@ func TestProviderFailureWinsConcurrentCancellationAndPreservesResult(t *testing.
 		}, ctx.Err()
 	}
 
-	_, err := adaptor.New(fake).Send(context.Background(), "go", adaptor.WithTimeout(20*time.Millisecond)).Result()
+	stream := adaptor.New(fake).Send(context.Background(), "go")
+	<-observed
+	stream.Cancel()
+	_, err := stream.Result()
 	var runErr *adaptor.RunError
 	if !errors.As(err, &runErr) || !errors.Is(err, adaptor.ErrAgentFailed) {
 		t.Fatalf("error = %T %v, want provider *RunError", err, err)

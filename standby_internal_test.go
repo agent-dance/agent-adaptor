@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +13,79 @@ import (
 	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
+
+func TestStandbyInternalSubscriptionKeepsApprovalFallbackNotice(t *testing.T) {
+	sink := newEventSink(eventSinkConfig{runID: "standby-approval", policy: ApprovalPolicy{Timeout: time.Hour, OnTimeout: FallbackContinue}})
+	sink.broker.spool = true
+	var hostSubscribed atomic.Bool
+	sink.hostEventsCalled = &hostSubscribed
+	// Model Standby's forwarding subscription, while the host is absent.
+	events := sink.broker.subscribe()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	response, err := sink.RequestDecision(ctx, driver.DecisionRequest{Kind: driver.HumanDecisionPermission, Prompt: "allow?"})
+	if err != nil || response.Result != driver.DecisionTimedOut {
+		t.Fatalf("unobserved approval response=%+v err=%v", response, err)
+	}
+	sink.close()
+	var explained bool
+	for event := range events {
+		if notice, ok := event.(Notice); ok && strings.Contains(notice.Text, "resolved immediately using the timeout fallback") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Fatal("immediate approval fallback omitted its explanatory Notice")
+	}
+}
+
+func TestStandbyForwardingCancellationPreservesReliableEventsAndReportsDrops(t *testing.T) {
+	broker := newEventBroker("run", "standby", 1, true)
+	broker.spool = true
+	events := broker.subscribe()
+	broker.publish(RunStarted{}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	observed := &observedWaitContext{Context: ctx, entered: make(chan struct{})}
+	published := make(chan bool, 1)
+	go func() { published <- broker.publishContext(observed, ToolResult{ID: "reliable"}, nil) }()
+	select {
+	case <-observed.entered:
+	case <-time.After(time.Second):
+		t.Fatal("forwarding did not reach backpressure")
+	}
+	cancel()
+	select {
+	case ok := <-published:
+		if !ok {
+			t.Fatal("cancellation discarded a reliable tool result")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not unblock forwarding without a reader")
+	}
+	if broker.publishContext(ctx, TextDelta{Phase: PhaseContent, Text: "permitted drop"}, nil) {
+		t.Fatal("cancelled delta unexpectedly published")
+	}
+	broker.publish(Done{}, nil)
+	broker.close()
+	var received []Event
+	for event := range events {
+		received = append(received, event)
+	}
+	if len(received) != 4 {
+		t.Fatalf("forwarded events=%+v", received)
+	}
+	if result, ok := received[1].(ToolResult); !ok || result.ID != "reliable" {
+		t.Fatalf("reliable result lost: %+v", received)
+	}
+	drop, ok := received[2].(Dropped)
+	if !ok || drop.Count != 1 || drop.ByKind["text.content"] != 1 || drop.FirstSequence != 3 || drop.LastSequence != 3 {
+		t.Fatalf("cancelled delta accounting=%+v", received[2])
+	}
+	if _, ok := received[3].(Done); !ok {
+		t.Fatalf("Done must follow loss reporting: %+v", received)
+	}
+}
 
 func TestStandbyEventsDiscardUntilSubscription(t *testing.T) {
 	broker := newEventBroker("", "standby", 1, true)

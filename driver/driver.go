@@ -147,8 +147,8 @@ type EventSink interface {
 	Emit(event RunEvent) error
 	// EmitStream publishes a structured StreamPayload on the run-scoped
 	// Event sink. When the resolved provider transport is non-streaming the
-	// sink may discard the payload; this is independent of the public Run versus
-	// Stream method. Drivers MUST leave Sequence, Seq, and Timestamp zero; core
+	// sink may discard the payload; this is independent of whether the consumer
+	// reads Result or Events. Drivers MUST leave Sequence, Seq, and Timestamp zero; core
 	// assigns all three in receiver order.
 	EmitStream(payload StreamPayload) error
 }
@@ -159,7 +159,7 @@ type EventSink interface {
 // not change the Runner execution contract.
 //
 // In particular, StreamSupport MUST NOT be interpreted as an A2A transport
-// capability. Every Runner has Stream; remote A2A streaming availability is
+// capability. Every Runner.Send returns a Stream; remote A2A streaming availability is
 // negotiated from the remote AgentCard, not by querying a local Driver.
 type StreamSupport interface {
 	StreamCapability() StreamCapability
@@ -273,11 +273,11 @@ type RuntimeCapability struct {
 // exact-JSON prompt while core performs local validation. At least one of
 // those mechanisms MUST be true before any WorksWith* field is true, and a
 // declared mechanism MUST set WorksWithRun because the SDK has one execution
-// pipeline shared by consumer Run and Stream.
+// pipeline behind consumer Send.
 //
 // WorksWithStreaming applies only when Request.Streaming selects the
 // provider-native streaming transport; it does not describe the consumer
-// Stream method. WorksWithHITL applies when the effective policy contains an
+// Events channel. WorksWithHITL applies when the effective policy contains an
 // Ask decision. Core always selects native enforcement when that mechanism is
 // eligible, otherwise prompt-validation when it is eligible, and rejects the
 // invocation before launch when neither works. Drivers consume the resolved

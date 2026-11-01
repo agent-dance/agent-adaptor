@@ -131,7 +131,9 @@ func TestT1ReviewSendInsideEventLoop(t *testing.T) {
 				case <-ctx.Done():
 					return driver.Response{}, ctx.Err()
 				}
-				_ = s.EmitStream(driver.StreamPayload{Kind: driver.StreamTextContent, Delta: "trigger"})
+				// The trigger must be reliable in both modes. A TextDelta may
+				// legitimately be dropped while lifecycle events fill the buffer.
+				_ = s.Emit(driver.RunEvent{Type: driver.RunEventLifecycle, Text: "trigger"})
 				select {
 				case <-entered:
 				case <-ctx.Done():
@@ -164,7 +166,7 @@ func TestT1ReviewSendInsideEventLoop(t *testing.T) {
 				switch e := ev.(type) {
 				case RunStarted:
 					close(begin)
-				case TextDelta:
+				case Notice:
 					if e.Text == "trigger" {
 						close(entered)
 						select {

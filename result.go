@@ -376,6 +376,20 @@ func (r *Result) Subagents() []SubagentResult {
 	}
 	return cloneSubagents(r.subagents)
 }
+
+// WithSubagents returns a detached copy with the supplied collected task
+// snapshot. It preserves the other result fields, including observed Usage;
+// replacing summaries does not add their usage again. A nil receiver is treated
+// as an empty result.
+func (r *Result) WithSubagents(subagents []SubagentResult) *Result {
+	var runID string
+	if r != nil {
+		runID = r.RunID
+	}
+	result := ComposeResults(runID, r)
+	result.subagents = cloneSubagents(subagents)
+	return result
+}
 func cloneSubagents(in []SubagentResult) []SubagentResult {
 	if in == nil {
 		return nil

@@ -37,7 +37,7 @@ type TerminalPayload struct {
 //   - Stdout / Stderr hold the full untruncated bytes the child process wrote.
 //   - No redaction, no semantic parsing, no line-wise transformation is applied.
 //   - Terminal is nil when no official terminal event was observed.
-//   - Both consumer Run and Stream.Result must return equivalent values.
+//   - Stream.Result and Done from the same Send expose the same audit data.
 type RawStreams struct {
 	Stdout   string
 	Stderr   string
@@ -149,8 +149,8 @@ type Response struct {
 }
 
 // SessionMode controls how the SDK coordinates an invocation with a Thread
-// store. Without a Thread store, runs are stateless and stateful modes return
-// an error rather than silently pretending to resume.
+// store. Agent.Send uses an anonymous, stateless invocation; named Threads use
+// the Agent's default memory store or a store explicitly supplied by the host.
 type SessionMode string
 
 const (

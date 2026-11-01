@@ -393,25 +393,45 @@ func TestStandbyFailedMessageIDCanWakeAgain(t *testing.T) {
 	}
 }
 
-func TestStandbyPrelaunchFailureRetainsAdmittedMessage(t *testing.T) {
+func TestStandbyPrelaunchFailureReturnsAdmittedMessage(t *testing.T) {
 	fake, calls := controlledStandbyDriver()
-	standby, _ := openTestStandby(t, adaptor.New(fake), "prelaunch")
+	// Resource preparation may fail after admission. Return the original
+	// input, rather than replaying it with the next execution's options.
+	cause := errors.New("workspace temporarily unavailable")
+	manager := &fakeWorkspaceManager{err: cause, log: &callLog{}}
+	standby, _ := openTestStandby(t, adaptor.New(fake, adaptor.WithWorkspaceManager(manager), adaptor.WithWorkspaceSpec(adaptor.SharedWorkspace{})), "prelaunch")
 	events := standby.Events()
-	if err := standby.Send(context.Background(), "admitted before validation", adaptor.MessageID("invalid-options"), adaptor.WithPolicy(adaptor.Policy{Messages: adaptor.MessagePolicy{MaxPending: -1}})); err != nil {
+	if err := standby.Send(context.Background(), "admitted before validation", adaptor.MessageID("resource-failure")); err != nil {
 		t.Fatal(err)
 	}
-	if _, done := standbyDone(t, events); !errors.Is(done.Err, adaptor.ErrInvalidPolicy) {
+	observed, done := standbyDone(t, events)
+	if !errors.Is(done.Err, cause) {
 		t.Fatalf("prelaunch error=%v", done.Err)
 	}
+	returned := false
+	for _, event := range observed {
+		if update, ok := event.(adaptor.MessageUpdate); ok && update.ID == "resource-failure" && update.State == adaptor.MessageFailed {
+			if update.Reason != adaptor.MessageProviderRejected || update.Text != "admitted before validation" {
+				t.Fatalf("prelaunch receipt=%+v", update)
+			}
+			returned = true
+		}
+	}
+	if !returned {
+		t.Fatal("resource preparation failure omitted the admitted input")
+	}
+	manager.mu.Lock()
+	manager.err = nil
+	manager.mu.Unlock()
 	if err := standby.Send(context.Background(), "valid next execution", adaptor.MessageID("valid")); err != nil {
 		t.Fatal(err)
 	}
 	call := standbyReceive(t, calls)
-	if !strings.Contains(call.request.Prompt, "admitted before validation") || !strings.Contains(call.request.Prompt, "valid next execution") {
-		t.Fatalf("prelaunch failure lost input: %q", call.request.Prompt)
+	if call.request.Prompt != "valid next execution" {
+		t.Fatalf("prelaunch input silently replayed: %q", call.request.Prompt)
 	}
 	call.reply <- standbyReply{response: messageCheckpoint("recovered")}
-	if _, done := standbyDone(t, events); done.Err != nil || len(done.Result.Messages()) != 2 {
+	if _, done := standbyDone(t, events); done.Err != nil || len(done.Result.Messages()) != 1 {
 		t.Fatalf("prelaunch recovery=%+v", done)
 	}
 }

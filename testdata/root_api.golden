@@ -642,6 +642,7 @@ methodset Result {
 	pointer Subagents() []SubagentResult
 	pointer Transcript() []TranscriptItem
 	pointer Undelivered() []MessageOutcome
+	pointer WithSubagents(subagents []SubagentResult) *Result
 }
 
 func ResumeOnly() ThreadOption
@@ -1198,6 +1199,8 @@ func (*Result).Subagents() []SubagentResult
 func (*Result).Transcript() []TranscriptItem
 
 func (*Result).Undelivered() []MessageOutcome
+
+func (*Result).WithSubagents(subagents []SubagentResult) *Result
 
 func (*RunError).Error() string
 

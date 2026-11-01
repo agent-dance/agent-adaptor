@@ -156,7 +156,7 @@ func (b *eventBroker) publishLocked(ctx context.Context, ev Event, source *Event
 			if b.closed || b.terminal {
 				return false
 			}
-			if b.discardOrdinary || (b.abortedLocked() && eventMayDrop(ev)) || (!b.blocking && eventMayDrop(ev) && len(b.events)+len(b.queue) >= b.normalCapacity) {
+			if b.discardOrdinary || ((ctx.Err() != nil || b.abortedLocked()) && eventMayDrop(ev)) || (!b.blocking && eventMayDrop(ev) && len(b.events)+len(b.queue) >= b.normalCapacity) {
 				b.recordDropLocked(b.stampNextLocked(ev, source))
 				b.dropped.unobserved = b.dropped.unobserved || b.discardOrdinary
 				return false
@@ -172,7 +172,7 @@ func (b *eventBroker) publishLocked(ctx context.Context, ev Event, source *Event
 		if b.closed || b.terminal {
 			return false
 		}
-		if !critical && (b.discardOrdinary || (b.abortedLocked() && eventMayDrop(ev)) || (!b.blocking && eventMayDrop(ev) && len(b.events)+len(b.queue) >= b.normalCapacity)) {
+		if !critical && (b.discardOrdinary || ((ctx.Err() != nil || b.abortedLocked()) && eventMayDrop(ev)) || (!b.blocking && eventMayDrop(ev) && len(b.events)+len(b.queue) >= b.normalCapacity)) {
 			b.recordDropLocked(b.stampNextLocked(ev, source))
 			b.dropped.unobserved = b.dropped.unobserved || b.discardOrdinary
 			return false
@@ -471,8 +471,10 @@ func (b *eventBroker) spoolDroppedLocked() {
 // waitCapacityLocked returns with mu held. A receive-only channel has no
 // notification hook for receives, so a timer probes capacity only while full.
 // Queue changes, Result-only consumption, cancellation and close wake it early.
+// Cancellation releases backpressure, but publication still retains reliable
+// events and accounts for droppable deltas before the execution's Done.
 func (b *eventBroker) waitCapacityLocked(ctx context.Context) bool {
-	for !b.closed && !b.terminal && !b.discardOrdinary && !b.abortedLocked() && len(b.events)+len(b.queue) >= b.normalCapacity {
+	for !b.closed && !b.terminal && !b.discardOrdinary && !b.abortedLocked() && ctx.Err() == nil && len(b.events)+len(b.queue) >= b.normalCapacity {
 		changed := b.capacityChanged
 		timer := time.NewTimer(time.Millisecond)
 		b.mu.Unlock()
@@ -484,11 +486,8 @@ func (b *eventBroker) waitCapacityLocked(ctx context.Context) bool {
 		}
 		timer.Stop()
 		b.mu.Lock()
-		if ctx.Err() != nil {
-			return false
-		}
 	}
-	return !b.closed && !b.terminal && ctx.Err() == nil
+	return !b.closed && !b.terminal
 }
 func (b *eventBroker) notifyCapacityLocked() {
 	close(b.capacityChanged)

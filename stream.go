@@ -77,14 +77,16 @@ func (s *runStream) Cancel() {
 	if s == nil {
 		return
 	}
+	// Establish cancellation before releasing approval or event waiters: any
+	// transport failures they report while unwinding belong to this cancel.
+	if s.cancel != nil {
+		s.cancel()
+	}
 	if s.hub != nil {
 		s.hub.cancelPending()
 	}
 	if s.sink != nil {
 		s.sink.abort()
-	}
-	if s.cancel != nil {
-		s.cancel()
 	}
 }
 
@@ -109,8 +111,9 @@ func (a *Agent) Send(ctx context.Context, prompt string, opts ...CallOption) Str
 // timeout and identity to the context, mint the run ID, and prime the sink
 // and runStream. When run-ID minting fails the returned stream is already
 // sealed (closed Events channel, Result() error) and ok is false — callers
-// return it as-is.
-func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey string) (st *runStream, eff RunSettings, runCtx context.Context, ok bool) {
+// return it as-is. admit registers inputs on the new hub before any preflight
+// failure can settle the messages and publish Done.
+func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey string, admit func(*runStream, RunSettings)) (st *runStream, eff RunSettings, runCtx context.Context, ok bool) {
 	eff = a.defaults.RunSettings.clone()
 	for _, o := range opts {
 		if o == nil {
@@ -155,10 +158,11 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 	}
 	st.hub = newMessageHub(ctx, sink, effectiveMessagePolicy(eff.policy), desc.Messages, desc.Sessions.SupportsResume)
 	sink.hub = st.hub
+	admit(st, eff)
 	if openErr := a.ensureOpen(); openErr != nil {
 		st.err = openErr
 		cancel()
-		st.hub.finish(MessageRunFailed)
+		st.hub.finish(MessageProviderRejected)
 		sink.broker.publishTerminal(Done{Result: st.res, Err: st.err}, nil)
 		sink.close()
 		close(st.done)
@@ -168,7 +172,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 	if idErr != nil {
 		st.err = fmt.Errorf("adaptor: generate run id: %w", idErr)
 		cancel()
-		st.hub.finish(MessageRunFailed)
+		st.hub.finish(MessageProviderRejected)
 		sink.broker.publishTerminal(Done{Result: st.res, Err: st.err}, nil)
 		sink.close()
 		close(st.done)
@@ -177,7 +181,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 	if a.toolConfigErr != nil {
 		st.err = fmt.Errorf("adaptor: run %s: %w", runID, a.toolConfigErr)
 		cancel()
-		st.hub.finish(MessageRunFailed)
+		st.hub.finish(MessageProviderRejected)
 		sink.broker.publishTerminal(Done{Result: st.res, Err: st.err}, nil)
 		sink.close()
 		close(st.done)
@@ -189,7 +193,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 			Cause:  configErr,
 		})
 		cancel()
-		st.hub.finish(MessageRunFailed)
+		st.hub.finish(MessageProviderRejected)
 		sink.broker.publishTerminal(Done{Result: st.res, Err: st.err}, nil)
 		sink.close()
 		close(st.done)
@@ -198,7 +202,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 	if toolsErr := a.validateHostedToolsPreflight(&eff, desc.MCP); toolsErr != nil {
 		st.err = fmt.Errorf("adaptor: run %s: %w", runID, toolsErr)
 		cancel()
-		st.hub.finish(MessageRunFailed)
+		st.hub.finish(MessageProviderRejected)
 		sink.broker.publishTerminal(Done{Result: st.res, Err: st.err}, nil)
 		sink.close()
 		close(st.done)
@@ -207,7 +211,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 	if policyErr := validatePolicy(desc, eff.policy); policyErr != nil {
 		st.err = fmt.Errorf("adaptor: run %s: %w", runID, policyErr)
 		cancel()
-		st.hub.finish(MessageRunFailed)
+		st.hub.finish(MessageProviderRejected)
 		sink.broker.publishTerminal(Done{Result: st.res, Err: st.err}, nil)
 		sink.close()
 		close(st.done)
@@ -216,7 +220,7 @@ func (a *Agent) openStream(ctx context.Context, opts []CallOption, threadKey str
 	if openErr := a.registerRun(runID, cancel); openErr != nil {
 		st.err = openErr
 		cancel()
-		st.hub.finish(MessageRunFailed)
+		st.hub.finish(MessageProviderRejected)
 		sink.broker.publishTerminal(Done{Result: st.res, Err: st.err}, nil)
 		sink.close()
 		close(st.done)

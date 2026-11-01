@@ -106,9 +106,10 @@ type MessagePolicy struct {
 	// MaxTurns bounds provider turns in one execution; zero means 20.
 	// With at least two turns, a limit.approaching notice is emitted after
 	// min(ceil(0.8*MaxTurns), MaxTurns-1) turns. Its AuthorSystem wrap-up
-	// instruction accompanies the next nonempty message claim, before host
-	// messages; it never starts a turn by itself. Only successfully acknowledged
-	// delivery of this instruction appears in outcomes, transcripts and receipts.
+	// instruction precedes host messages in a nonempty claim when the combined
+	// framed batch fits the Driver's resolved limit; otherwise it stays deferred.
+	// It never starts a turn by itself. Only successfully acknowledged delivery
+	// of this instruction appears in outcomes, transcripts and receipts.
 	MaxTurns int
 }
 
@@ -458,17 +459,22 @@ func (h *messageHub) validateMessageLocked(timing Timing, framed string) (Messag
 	if unit == "" {
 		unit = driver.MessageUnitBytes
 	}
-	units := len(framed)
-	if unit == driver.MessageUnitUTF16 {
-		units = 0
-		for _, r := range framed {
-			units += utf16.RuneLen(r)
-		}
-	}
+	units := framedMessageUnits(framed, unit)
 	if h.cap.MaxUnits > 0 && units > h.cap.MaxUnits {
 		return MessageLimitExceeded, fmt.Errorf("framed message has %d %s; maximum %d", units, unit, h.cap.MaxUnits)
 	}
 	return "", nil
+}
+
+func framedMessageUnits(text string, unit driver.MessageUnit) int {
+	if unit != driver.MessageUnitUTF16 {
+		return len(text)
+	}
+	units := 0
+	for _, r := range text {
+		units += utf16.RuneLen(r)
+	}
+	return units
 }
 
 func (h *messageHub) updateLocked(i *hubItem) {
@@ -544,6 +550,7 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 		turn++
 	}
 	var out []driver.MessageItem
+	batchUnits := 0
 	for _, i := range h.items {
 		if i.out.State != MessageAccepted || i.claimed {
 			continue
@@ -561,6 +568,25 @@ func (h *messageHub) claimLocked(b driver.Boundary) []driver.MessageItem {
 		if i.out.Timing == Interrupt && !i.turnEndOnly && b != driver.BoundaryImmediate {
 			continue
 		}
+		units := framedMessageUnits(i.framed, h.cap.Unit)
+		if h.cap.MaxUnits > 0 {
+			// Requeue may have added a duplicate warning since admission.
+			if units > h.cap.MaxUnits {
+				h.failLocked(i, MessageLimitExceeded)
+				continue
+			}
+			if len(out) > 0 && units+2 > h.cap.MaxUnits-batchUnits {
+				// Hooks join items with two newlines. Keep the remaining input
+				// pending, in order, for another claim rather than overfilling
+				// the provider's aggregate context budget.
+				h.signalLocked()
+				break
+			}
+		}
+		if len(out) > 0 {
+			batchUnits += 2
+		}
+		batchUnits += units
 		i.claimed = true
 		i.boundary = b
 		i.out.Turn = turn
@@ -603,6 +629,21 @@ func (h *messageHub) prependWrapUpLocked(b driver.Boundary, turn int, items []dr
 	}
 	if i.out.State != MessageAccepted || i.claimed || (i.turnEndOnly && b != driver.BoundaryTurnEnd) {
 		return items
+	}
+	if h.cap.MaxUnits > 0 {
+		units := framedMessageUnits(i.framed, h.cap.Unit)
+		if units > h.cap.MaxUnits {
+			return items
+		}
+		for _, item := range items {
+			itemUnits := framedMessageUnits(item.Text, h.cap.Unit)
+			if itemUnits+2 > h.cap.MaxUnits-units {
+				// Deferred policy input is never allowed to crowd out accepted
+				// host work. A later, smaller claim may still carry it.
+				return items
+			}
+			units += itemUnits + 2
+		}
 	}
 	i.claimed, i.boundary, i.out.Turn = true, b, turn
 	timing := driver.Timing(i.out.Timing)

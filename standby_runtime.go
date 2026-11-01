@@ -9,7 +9,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 )
 
 type standbyMessage struct {
@@ -40,6 +43,7 @@ type standbyStream struct {
 	cancelProcessing context.CancelFunc
 	cancelled        bool
 	maxPending       int
+	eventsCalled     atomic.Bool
 }
 
 var _ Standby = (*standbyStream)(nil)
@@ -117,7 +121,7 @@ func (s *standbyStream) notifyLocked() {
 
 func (s *standbyStream) Send(ctx context.Context, text string, opts ...CallOption) error {
 	var messageOptions []MessageOption
-	var settings RunSettings
+	settings := s.thread.agent.defaults.RunSettings.clone()
 	executionOptions := false
 	for _, option := range opts {
 		if option == nil {
@@ -125,10 +129,10 @@ func (s *standbyStream) Send(ctx context.Context, text string, opts ...CallOptio
 		}
 		if message, ok := option.(MessageOption); ok {
 			messageOptions = append(messageOptions, message)
-			message.ApplyRun(&settings)
 		} else {
 			executionOptions = true
 		}
+		option.ApplyRun(&settings)
 	}
 	if settings.message.id == "" {
 		id, err := newRunID()
@@ -142,6 +146,17 @@ func (s *standbyStream) Send(ctx context.Context, text string, opts ...CallOptio
 	reject := func(err error) error { return &MessageError{ID: id, Text: text, Reason: MessageCancelled, Err: err} }
 	if settings.message.timing > AfterTurn || settings.message.from.Kind > AuthorSystem {
 		return &MessageError{ID: id, Text: text, Reason: MessageProviderRejected, Err: errors.New("adaptor: invalid author or timing")}
+	}
+	// Deterministic option errors reject admission, rather than becoming
+	// accepted work that can be carried into a later execution unchanged.
+	if err := validatePolicy(s.thread.agent.driver.Descriptor(), settings.policy); err != nil {
+		return &MessageError{ID: id, Text: text, Reason: MessageProviderRejected, Err: err}
+	}
+	if settings.outputSchemaErr != nil {
+		return &MessageError{ID: id, Text: text, Reason: MessageProviderRejected, Err: settings.outputSchemaErr}
+	}
+	if _, err := engine.NormalizeOutputSchema(settings.outputSchema); err != nil {
+		return &MessageError{ID: id, Text: text, Reason: MessageProviderRejected, Err: err}
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -198,7 +213,17 @@ func (s *standbyStream) Send(ctx context.Context, text string, opts ...CallOptio
 			}
 			return err
 		}
-		if len(s.queue)+len(s.carry) < s.maxPending {
+		if s.current == nil && len(s.queue) == 0 && len(s.carry) > 0 {
+			// A fresh input wakes carried work. Claim the carry and this input
+			// together as the new prompt before applying pending capacity: merely
+			// ignoring carry here would overfill the unclaimed queue.
+			copied := append([]CallOption(nil), opts...)
+			copied = append(copied, MessageID(id))
+			s.startExecutionLocked(&standbyMessage{text: text, opts: copied, id: id})
+			s.mu.Unlock()
+			return nil
+		}
+		if s.pendingLocked() < s.maxPending {
 			copied := append([]CallOption(nil), opts...)
 			copied = append(copied, MessageID(id))
 			s.queue = append(s.queue, &standbyMessage{text: text, opts: copied, id: id})
@@ -218,7 +243,33 @@ func (s *standbyStream) Send(ctx context.Context, text string, opts ...CallOptio
 	}
 }
 
-func (s *standbyStream) Events() <-chan Event { return s.broker.subscribe() }
+func (s *standbyStream) Events() <-chan Event {
+	events := s.broker.subscribe()
+	s.eventsCalled.Store(true)
+	return events
+}
+
+func (s *standbyStream) pendingLocked() int {
+	pending := len(s.carry) + len(s.queue)
+	for _, message := range s.queue {
+		pending += len(message.carried)
+	}
+	return pending
+}
+
+func (s *standbyStream) startExecutionLocked(message *standbyMessage) {
+	for _, pending := range s.carry {
+		attributes := MessageAttributes(pending.opts...)
+		message.carried = append(message.carried, MessageOutcome{ID: pending.id, Text: pending.text, From: attributes.From, Timing: attributes.Timing})
+	}
+	s.carry = nil
+	mode, parent := s.thread.planMode()
+	s.processingCtx, s.cancelProcessing = context.WithCancel(s.ctx)
+	s.current = s.thread.agent.startInvocation(s.processingCtx, message.text, message.opts, &invocationTarget{thread: s.thread, mode: mode, forkFromKey: parent, runtime: s.runtime, standby: true, carried: message.carried, hostEventsCalled: &s.eventsCalled}).(*runStream)
+	s.currentMessage = message
+	s.cancelled = false
+	s.notifyLocked()
+}
 
 func (s *standbyStream) Cancel() {
 	s.mu.Lock()
@@ -291,24 +342,13 @@ func (s *standbyStream) run() {
 			delay = time.Until(message.readyAt)
 			if delay <= 0 {
 				s.queue = s.queue[1:]
-				for _, pending := range s.carry {
-					var settings RunSettings
-					for _, option := range pending.opts {
-						if messageOption, ok := option.(MessageOption); ok {
-							messageOption.ApplyRun(&settings)
-						}
-					}
-					message.carried = append(message.carried, MessageOutcome{ID: pending.id, Text: pending.text, From: settings.message.from, Timing: settings.message.timing})
-				}
-				s.carry = nil
-				mode, parent := s.thread.planMode()
-				s.processingCtx, s.cancelProcessing = context.WithCancel(s.ctx)
-				s.current = s.thread.agent.startInvocation(s.processingCtx, message.text, message.opts, &invocationTarget{thread: s.thread, mode: mode, forkFromKey: parent, runtime: s.runtime, standby: true, carried: message.carried}).(*runStream)
-				s.currentMessage = message
-				s.cancelled = false
-				events = s.current.Events()
-				s.notifyLocked()
+				s.startExecutionLocked(message)
 			}
+		}
+		if events == nil && s.current != nil {
+			// Internal forwarding subscribes for transport/backpressure only.
+			// Approval observation follows the host's Standby.Events call.
+			events = s.current.sink.broker.subscribe()
 		}
 		processingCtx := s.processingCtx
 		lifetimeDone := s.ctx.Done()
@@ -346,39 +386,7 @@ func (s *standbyStream) completeExecution() {
 	_, err := s.current.Result()
 	if err != nil {
 		outcomes := s.current.hub.outcomes()
-		var missing []MessageOutcome
-		present := make(map[string]bool, len(outcomes))
-		for _, outcome := range outcomes {
-			present[outcome.ID] = true
-		}
-		if !present[s.currentMessage.id] {
-			var settings RunSettings
-			for _, option := range s.currentMessage.opts {
-				if message, ok := option.(MessageOption); ok {
-					message.ApplyRun(&settings)
-				}
-			}
-			if settings.message.from.Kind == 0 {
-				settings.message.from.Kind = AuthorHuman
-			}
-			outcome := MessageOutcome{ID: s.currentMessage.id, Text: s.currentMessage.text, From: settings.message.from, Timing: settings.message.timing, State: MessageFailed, Reason: MessageRunFailed}
-			outcomes = append(outcomes, outcome)
-			missing = append(missing, outcome)
-			present[outcome.ID] = true
-		}
-		for _, outcome := range s.currentMessage.carried {
-			if !present[outcome.ID] {
-				outcome.State, outcome.Reason = MessageFailed, MessageRunFailed
-				outcomes = append(outcomes, outcome)
-				missing = append(missing, outcome)
-				present[outcome.ID] = true
-			}
-		}
-		if s.cancelled || s.ctx.Err() != nil {
-			for _, outcome := range missing {
-				s.broker.publish(MessageUpdate{ID: outcome.ID, State: MessageFailed, Reason: MessageCancelled, Text: outcome.Text}, nil)
-			}
-		} else {
+		if !s.cancelled && s.ctx.Err() == nil {
 			var pending []*standbyMessage
 			for _, outcome := range outcomes {
 				if outcome.State == MessageFailed && outcome.Reason == MessageRunFailed {

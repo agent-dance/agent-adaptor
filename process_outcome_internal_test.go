@@ -40,3 +40,17 @@ func TestPendingApprovalFailureWinsConcurrentCancellation(t *testing.T) {
 		t.Fatalf("partial Result = %#v", runErr.Result)
 	}
 }
+
+func TestF2ApprovalFailureFromTeardownDoesNotOverrideCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sink := newEventSink(eventSinkConfig{runID: "cancel-approval"})
+	defer sink.abort()
+	sink.invocationCtx = ctx
+	sink.setPendingFailure(&driver.RunFailure{Code: driver.FailureReject, Message: "late rejection during teardown"})
+	response, err := classifyInvocationOutcome(ctx, driver.Response{}, errors.New("transport teardown"), sink.pendingFailureBeforeCancel(), providerFailureObservation{})
+	_, err = finalizeRun("cancel-approval", sink, response, err)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrApprovalDenied) {
+		t.Fatalf("late failure won: %v", err)
+	}
+}

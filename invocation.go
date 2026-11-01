@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/agent-dance/agent-adaptor/v2/driver"
@@ -20,14 +21,15 @@ const invocationCleanupTimeout = 5 * time.Second
 // snapshotted before the goroutine starts, so a successful first Thread run
 // cannot race a second call's mode selection.
 type invocationTarget struct {
-	thread       *Thread
-	mode         driver.SessionMode
-	forkFromKey  string
-	runtime      *threadRuntime
-	standby      bool
-	admissionErr error
-	carried      []MessageOutcome
-	carriedItems []driver.MessageItem
+	thread           *Thread
+	mode             driver.SessionMode
+	forkFromKey      string
+	runtime          *threadRuntime
+	standby          bool
+	admissionErr     error
+	carried          []MessageOutcome
+	carriedItems     []driver.MessageItem
+	hostEventsCalled *atomic.Bool
 }
 
 // startInvocation is the only asynchronous execution entry. Agent.Send and
@@ -37,22 +39,32 @@ func (a *Agent) startInvocation(ctx context.Context, prompt string, opts []CallO
 	if target != nil && target.thread != nil {
 		threadKey = target.thread.key
 	}
-	st, eff, runCtx, ok := a.openStream(ctx, opts, threadKey)
+	st, eff, runCtx, ok := a.openStream(ctx, opts, threadKey, func(st *runStream, eff RunSettings) {
+		// Register accepted inputs before preflight can seal the Stream. The
+		// same hub then settles them ahead of every early Done.
+		st.sink.enableAuthoritativeLifecycle()
+		if target != nil {
+			st.sink.hostEventsCalled = target.hostEventsCalled
+			if target.standby {
+				// Install forwarding before execution can emit or finish, even
+				// when a fast Driver beats the Standby loop to completion.
+				st.sink.broker.subscribe()
+			}
+			for _, outcome := range target.carried {
+				if item, admitted := st.hub.carryPrompt(outcome); admitted {
+					target.carriedItems = append(target.carriedItems, item)
+				}
+			}
+		}
+		st.hub.startMessage(eff.message, prompt)
+	})
 	if !ok {
 		if target != nil && !target.standby && target.admissionErr == nil {
 			_ = target.runtime.end(true)
 		}
 		return st
 	}
-	st.sink.enableAuthoritativeLifecycle()
-	st.hub.startMessage(eff.message, prompt)
-	if target != nil {
-		for _, outcome := range target.carried {
-			if item, admitted := st.hub.carryPrompt(outcome); admitted {
-				target.carriedItems = append(target.carriedItems, item)
-			}
-		}
-	}
+	st.sink.invocationCtx = runCtx
 	// The descriptor governs prelaunch admission. Resolution atomically trims
 	// capabilities and reconciles queued messages before Driver.Run can claim.
 	go a.executeInvocation(runCtx, st, prompt, &eff, target)
@@ -70,9 +82,11 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 		threadContract threadDriverContract
 		result         *Result
 		resultErr      error
+		driverStarted  bool
 	)
 
 	defer func() {
+		failedBeforeCleanup := resultErr != nil
 		// Stop renewal before releasing leases. ReleaseContext remains bounded
 		// even for a broken store and its error is part of the observable run
 		// outcome instead of disappearing in a defer.
@@ -101,7 +115,17 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 				resultErr = errors.Join(resultErr, teardownErr)
 			}
 		}
+		if !failedBeforeCleanup && ctx.Err() != nil {
+			result = nil
+			resultErr = errors.Join(ctx.Err(), resultErr)
+		}
 		reason := MessageRunFailed
+		// Before any Driver dispatch, failed preparation must return inputs
+		// to the host. Replaying only their text under later execution options
+		// would silently change the invocation that the host admitted.
+		if !driverStarted {
+			reason = MessageProviderRejected
+		}
 		if ctx.Err() != nil {
 			reason = MessageCancelled
 		}
@@ -268,6 +292,8 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 	for {
 		st.hub.setPrompt(continuation)
 		before := st.hub.turnCount()
+		st.sink.beginDriverDispatch()
+		driverStarted = true
 		response, runErr := a.driver.Run(ctx, request, st.sink)
 		if plan != nil && runErr != nil {
 			var rejected *engine.ResumeRejectedError
@@ -286,7 +312,9 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 				runErr = fmt.Errorf("%w: %w", ErrResumeRejected, runErr)
 			}
 		}
-		response, runErr = classifyInvocationOutcome(ctx, response, runErr, st.sink.pendingFailure())
+		// Capture cancellation at the dispatch boundary: a later cancellation
+		// during persistence/cleanup cannot replace an already observed failure.
+		response, runErr = classifyInvocationOutcome(ctx, response, runErr, st.sink.pendingFailureBeforeCancel(), st.sink.observedProviderFailure())
 		if runErr == nil {
 			response.StructuredOutput, response.Failure = engine.FinalizeStructuredOutput(resolved.schema, resolved.source, response.Output, response.StructuredOutput, response.Failure)
 		}
@@ -305,14 +333,25 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			st.hub.completeTurn(actual, turnErr)
 		}
 		aggregate = mergeExecutionResult(aggregate, actual, st.hub, before)
+		if business != nil {
+			finalError := *business
+			finalError.Result = aggregate
+			if joined, ok := turnErr.(interface{ Unwrap() []error }); ok {
+				parts := slices.Clone(joined.Unwrap())
+				parts[0] = &finalError
+				turnErr = errors.Join(parts...)
+			} else {
+				turnErr = &finalError
+			}
+		}
 		if plan != nil {
 			plan.StopLeaseRenewal()
 			if renewErr := plan.RenewalError(); renewErr != nil {
-				resultErr = target.thread.threadError(renewErr)
+				resultErr = errors.Join(turnErr, ctx.Err(), target.thread.threadError(renewErr))
 				return
 			}
 			if ownerErr := target.runtime.verifyOwnership(); ownerErr != nil {
-				resultErr = errors.Join(ctx.Err(), target.thread.threadError(ownerErr))
+				resultErr = errors.Join(turnErr, ctx.Err(), target.thread.threadError(ownerErr))
 				return
 			}
 			var checkpoint *driver.Checkpoint
@@ -323,7 +362,7 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			}
 			if checkpoint != nil {
 				if _, persistErr := plan.Persist(ctx, identity, a.driver, fingerprint, checkpoint); persistErr != nil {
-					resultErr = target.thread.threadError(persistErr)
+					resultErr = errors.Join(turnErr, target.thread.threadError(persistErr))
 					return
 				}
 				target.thread.markEstablished()
@@ -337,11 +376,6 @@ func (a *Agent) executeInvocation(ctx context.Context, st *runStream, prompt str
 			}
 		}
 		if turnErr != nil {
-			if business != nil {
-				finalError := *business
-				finalError.Result = aggregate
-				turnErr = &finalError
-			}
 			resultErr = turnErr
 			return
 		}
@@ -601,15 +635,32 @@ func invocationCanPersist(ctx context.Context, d driver.Driver, resp driver.Resp
 // transcript, usage, and a provider terminal payload. When no more specific
 // provider or approval failure exists, convert that audit data into a
 // structured business failure so resultFromResponse can preserve all of it.
-func classifyInvocationOutcome(ctx context.Context, resp driver.Response, runErr error, pending *driver.RunFailure) (driver.Response, error) {
-	if resp.Failure != nil || pending != nil {
+func classifyInvocationOutcome(ctx context.Context, resp driver.Response, runErr error, pending *driver.RunFailure, observed providerFailureObservation) (driver.Response, error) {
+	// An SDK decision already settled before teardown remains authoritative.
+	if pending != nil {
 		return resp, runErr
 	}
-	if runErr != nil {
+	if observed.failure != nil {
+		// The complete streamed verdict is authoritative even if a Driver
+		// replaces its final Response failure during cancellation teardown.
+		// A transcript-only signal instead lets the Response supply a more
+		// precise classification and metadata when they remain available.
+		if (observed.complete && ctx.Err() != nil) || resp.Failure == nil || resp.Failure.Code == driver.FailureCancelled {
+			resp.Failure = observed.failure
+		}
 		return resp, runErr
 	}
 	if err := ctx.Err(); err != nil {
-		return resp, err
+		// Drivers may report the exit/transport error from the process we just
+		// cancelled. Keep that diagnostic, but classify the outcome as cancel.
+		if resp.Failure != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("driver failure %s: %s", resp.Failure.Code, resp.Failure.Message))
+			resp.Failure = &driver.RunFailure{Code: driver.FailureCancelled, Message: err.Error()}
+		}
+		return resp, errors.Join(err, runErr)
+	}
+	if resp.Failure != nil || runErr != nil {
+		return resp, runErr
 	}
 	if resp.ExitCode == 0 && resp.Signal == "" && !resp.TimedOut {
 		return resp, nil
@@ -641,14 +692,18 @@ func finalizeRun(runID string, sink *eventSink, resp driver.Response, err error)
 	pending := sink.pendingFailure()
 	res := resultFromResponse(runID, resp)
 	failure := resp.Failure
-	if pending != nil {
+	if pending != nil && (!(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) || sink.pendingFailureBeforeCancel() != nil) {
 		failure = pending
 	}
 	// A protocol-classified provider failure or SDK approval failure is more
 	// specific than a concurrent process/context error. Preserve that verdict
 	// and its partial Result instead of replacing it with a generic wrapper.
 	if failure != nil {
-		return nil, runErrorFromFailure(failure, res)
+		business := runErrorFromFailure(failure, res)
+		if failure.Code == driver.FailureCancelled && err != nil {
+			return nil, errors.Join(business, err)
+		}
+		return nil, business
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -692,7 +747,9 @@ func mergeExecutionResult(total, call *Result, h *messageHub, before int) *Resul
 		part.Text = h.turns[len(h.turns)-1].Text
 	}
 	h.mu.Unlock()
-	if usage == nil {
+	// The Driver aggregate also includes usage notifications observed after a
+	// TurnCompleted boundary. TurnEnd remains the snapshot observed then.
+	if call.Usage != nil {
 		usage = call.Usage
 	}
 	part.Usage = usage
