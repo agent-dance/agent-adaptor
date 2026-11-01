@@ -625,8 +625,8 @@ func TestV2TurnLimitWarningInRun(t *testing.T) {
 			_ = s.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Index: n, Text: fmt.Sprint(n)}})
 			items := r.Messages.Claim(driver.BoundaryTurnEnd)
 			if n == 3 {
-				if len(items) != 1 || !strings.Contains(items[0].Text, "Host policy notice") {
-					t.Fatalf("wrap-up=%v", items)
+				if len(items) != 0 {
+					t.Fatalf("wrap-up started a continuation without host input: %v", items)
 				}
 			}
 			if n == 4 && len(items) != 0 {

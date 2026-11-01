@@ -1,8 +1,8 @@
 # v2 提案：运行中消息、任务与待命、团队协作
 
-状态：提案定稿（2026-10-31），待实施。本文件是设计记录，不是使用文档；落地后，合同以 v2 的 `AGENTS.md`、godoc、`api-reference.md` 与 `adaptertest` 为准。本提案取代 `host-readiness-plan.md` 的 P2-1，并替换 `hosttools/a2adelegation` 的团队部分。
+状态：提案定稿（2026-10-31）；core 与四个内置 Driver 已落地，本文于 2026-11-01 按代码同步。团队部分 §7–§9 由团队工作流单独核对。本文件是设计记录，不是使用文档；落地后，合同以 v2 的 `AGENTS.md`、godoc、`api-reference.md` 与 `adaptertest` 为准。本提案取代 `host-readiness-plan.md` 的 P2-1，并替换 `hosttools/a2adelegation` 的团队部分。
 
-标注约定：✅ 已在 multica 或本仓库源码中核实；⚠️ 需要在实施时用 live 测试核实，每一项都在 §6.4 给出了核实失败时的确定行为。
+标注约定：✅ 表示本仓库代码与合同测试证据；“已裁决”表示采用保守能力与确定降级，不表示付费 live 已验证。§6.4 记录最终核实结论。权威顺序为 API golden、godoc/合同测试与 driver/messages.go，其次是本设计记录。下列 text 代码块是合同签名摘要；Go 示例可独立编译。
 
 第 11 节是问题追踪表：讨论过程中提出的每一个问题与场景，都能在表中找到对应的结论和章节。
 
@@ -13,20 +13,45 @@
 宿主只有三种用法，单 Agent 与 Team 写法完全相同（`x` 是 `*adaptor.Agent` 或 `*team.Team`）：
 
 ```go
-// 1. 一次性任务：没有记忆，有终点、有结果
-s := x.Send(ctx, "修复 #123 的失败测试")
-res, err := s.Result()                      // 同步
-for ev := range s.Events() { /* 最后一个事件是 Done{Result, Err} */ } // 或异步
+package main
 
-// 2. 带记忆的任务：接着这段上下文做，有终点、有结果，运行中可以补充
-s := x.Thread("ws/issue-123").Send(ctx, taskPrompt)
-s.Send(ctx, comment, adaptor.MessageID(id), adaptor.From(author)) // 补充进这次执行
+import (
+	"context"
+	"fmt"
 
-// 3. 待命：持续接收消息，没有整体结果，直到 serverCtx 结束
-sb, err := x.Thread("chat-42").Standby(serverCtx)
-sb.Send(r.Context(), msg)                   // 只投递
-for ev := range sb.Events() { /* 每轮回答是一个 TurnEnd */ }
-sb.Cancel()                                 // 停止按钮：中止当前处理，继续待命
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/codex"
+)
+
+func main() {
+	ctx := context.Background()
+	x := adaptor.New(codex.Driver(codex.Config{}))
+	defer x.Close(ctx)
+
+	// 一次性任务，同步取结果；各次 Send 不共享上下文。
+	res, err := x.Send(ctx, "审查改动").Result()
+	fmt.Println(res, err)
+
+	// 带记忆的任务，运行中补充；最后一个事件为 Done。
+	stream := x.Thread("issue-123").Send(ctx, "修复测试")
+	_ = stream.Send(ctx, "保留公共 API", adaptor.MessageID("comment-1"))
+	for range stream.Events() {
+	}
+
+	// 待命的生命周期属于 serverCtx；Cancel 只中止当前处理。
+	serverCtx, stop := context.WithCancel(ctx)
+	sb, err := x.Thread("chat-42").Standby(serverCtx)
+	if err != nil {
+		stop()
+		return
+	}
+	events := sb.Events()
+	_ = sb.Send(ctx, "你好")
+	sb.Cancel()
+	stop()
+	for range events {
+	}
+}
 ```
 
 关键决定：
@@ -34,7 +59,7 @@ sb.Cancel()                                 // 停止按钮：中止当前处理
 - **执行动词只有 `Send`**。v1 的 `Run`/`Stream` 合并进 `Send`，返回的 `Stream` 同时提供同步（`Result()`）与异步（`Events()`，以 `Done` 结尾）两种获取方式。
 - **运行中补充也是 `Send`**，规则只有一条：发给谁，谁负责投递。`When` 选项表达投递时机：`Soon`（默认）、`Interrupt`、`AfterTurn`，对应"下一次模型调用时补充""立即打断""排队到本轮之后"三类场景。
 - **待命是 Thread 的一种使用方式**，由 `th.Standby(serverCtx)` 显式开启。它的类型上没有 `Result()`，长生命周期的 ctx 只传一次，`sb.Send` 的 ctx 只约束投递。
-- **只有 `Cancel`，没有 `Close`**。`Cancel` 永远只中止"正在进行的处理"。
+- **执行句柄只有 `Cancel`，没有 `Close`**。Stream.Cancel 中止本次执行，Standby.Cancel 中止当前处理并结算排队输入；Agent.Close(ctx) 保留为进程与 Tools runtime 的清理入口，结束待命使用创建它的 ctx。
 - **leader 是一个完整的 Agent，遵循委派优先**：统筹（拆分、派发、纠偏、验收、合并、回答用户）归 leader；适合某个成员的工作必须派发，leader 不亲自做；只有没有成员能承接的工作才由 leader 亲自实现。宿主可以收紧为纯派发器（只读 sandbox）。
 - **leader 由事件驱动、永不阻塞**：leader 自己手上没事可做时才结束本轮，而不是为了等 worker 结束本轮。worker 完成、提问或用户发话时，leader 正在干活就把消息并入当前这一轮，空闲就开新的一轮。用户只和 leader 说话，由 leader 代为转达给 worker。
 - **团队工具面固定为 4 个**，与成员数量无关；成员名册作为数据下发。
@@ -109,7 +134,7 @@ sb.Cancel()                                 // 停止按钮：中止当前处理
 - 需要接着之前的上下文做，并且每次都要一个明确的结果（用量、失败原因、最终输出） → 带记忆的任务。
 - 消息随时会来，回答也随时会产生，不存在"这一次的结果" → 待命。
 
-`x.Send(ctx, text)` 等价于 `x.Thread(<新的匿名 key>).Send(ctx, text)`。匿名 Thread 每次都是新的，永远只收到这一条消息（以及通过返回的 Stream 发出的补充），所以默认无状态、可以并发，v1 的语义保持不变。
+对宿主，`Agent.Send(ctx, text)` 等价于在新的匿名 Thread 上发送；实现直接走无状态 invocation target，不创建具名 store record，也不要求第三方无状态 Driver 实现 Thread codec/fingerprint 合同。每次调用只共享自己的补充消息与去重状态，可以并发。具名 Thread 在未注入 WithThreadStore 时使用每个 Agent 独立的 memory.Store；跨 Agent/进程续接需共享 store。
 
 ---
 
@@ -117,7 +142,7 @@ sb.Cancel()                                 // 停止按钮：中止当前处理
 
 ### 4.1 入口
 
-```go
+```text
 // 根包
 type Runner interface {
 	Send(ctx context.Context, text string, opts ...CallOption) Stream
@@ -149,7 +174,7 @@ func (t *Thread) Checkpoint(ctx context.Context) (*Checkpoint, error)
 
 ### 4.2 Stream：一次执行
 
-```go
+```text
 type Stream interface {
 	Events() <-chan Event     // 以 Done 结尾，随后关闭
 	Result() (*Result, error) // 同步获取；与 Done 内容一致；可并发、多次调用
@@ -164,7 +189,7 @@ type Stream interface {
 
 ### 4.3 Standby：待命
 
-```go
+```text
 type Standby interface {
 	Send(ctx context.Context, text string, opts ...CallOption) error // 只投递
 	Events() <-chan Event // 持续输出，Standby 的 ctx 结束时关闭
@@ -176,14 +201,14 @@ type Standby interface {
 - `th.Standby(serverCtx)` 不需要消息就能创建，界面可以先订阅事件，用户再开始输入。
 - 消息路由：正在处理时，按 `When` 并入当前处理；空闲时开始一次新的执行。
 - 带执行级选项（`WithModel`、`WithTimeout` 等）的消息不能并入正在运行的执行，因为它的配置已经固定。这类消息排到当前执行之后，用这些选项开始一次新的执行。
-- ctx 结束时：正在进行的执行被取消，对应的 `TurnEnd` 带取消错误；待处理的消息以 `MessageUpdate(Failed, cancelled)` 交还原文；最后关闭事件流。
-- **有就取、没有就建**：同一进程内，对已经在待命的 Thread 再次调用 `th.Standby(ctx)`，返回已有的 Standby，不报错；生命周期仍由第一次传入的 ctx 决定。HTTP handler 并发打开同一个聊天时不会有一方失败。
-- **一次执行失败不影响待命**：进程崩溃、网络中断等导致某次执行失败时，对应的 `TurnEnd` 带错误，待命继续。没投出去的消息本来就是发给这段对话的，自动带入下一次执行；可重试的失败按 `RetryAfter` 自动重试一次（R7 的失败分类），不需要宿主重发。
-- **没有消费者时不堵塞**：从未调用过 `Events()` 时，Standby 不缓冲事件；调用之后，按 v1 的背压合同处理（增量事件可聚合丢弃，关键事件不丢）。
+- ctx 结束时：取消正在进行的执行，待处理消息以 `MessageUpdate(Failed, cancelled)` 交还原文，交付每次执行的 Done 后关闭事件流。取消与最终失败以 Done.Err 为准；Driver 提前发出的 TurnCompleted 形成的 TurnEnd 不回填收尾错误。
+- **有就取、没有就建**：同一 Agent 内，对已经在待命的 Thread 再次调用 `th.Standby(ctx)`，返回已有的 Standby，不报错；生命周期仍由第一次传入的 ctx 决定。HTTP handler 并发打开同一个聊天时不会有一方失败。
+- **一次执行失败不影响待命**：进程崩溃、网络中断等导致某次执行失败时，对应的 `TurnEnd` 带错误，待命继续。没投出去的消息本来就是发给这段对话的，自动带入下一次执行；仅分类为 rate-limit、network、provider-server 的失败可自动重试一次，读取结构化 `RunError.Details["retry_after"]`（也识别 429/5xx status_code 与 net.Error）；无有效 hint 时等待 250ms。取消/截止与普通错误文本不重试。携带消息先报告 failed/run_failed，再在恢复时报告 delivered；没有可重试执行或一次重试仍失败时，等待下一条宿主消息（或用同 ID 再唤醒），不会无限自动重试。
+- **没有消费者时不堵塞**：从未调用过 `Events()` 时，Standby 不缓冲事件；调用之后，按 v2 的背压合同处理（增量事件可聚合丢弃，关键事件不丢）。
 
 ### 4.4 消息选项
 
-```go
+```text
 // MessageOption 只描述消息本身。它同时实现 CallOption，所以也能用于 x.Send、th.Send、sb.Send；
 // 而 WithModel、WithTimeout 等执行级选项只实现 CallOption，传给 s.Send 会编译失败。
 type MessageOption interface {
@@ -230,7 +255,7 @@ type Author struct {
 
 ### 4.5 事件
 
-```go
+```text
 // Done 是每次执行的最后一个事件，由 core 在全部收尾（checkpoint、结构化输出校验、
 // 进程清理）完成后发出，不可被背压丢弃。内容与 Result() 完全一致。
 type Done struct {
@@ -282,7 +307,7 @@ v1 的 `RunStarted`/`RunFinished` 保留：在待命的事件流中，它们划�
 
 `SubagentUpdate` 改为强类型（解决 T8）：
 
-```go
+```text
 type SubagentUpdate struct {
 	eventMetaCarrier
 	Task    string
@@ -295,11 +320,11 @@ type SubagentUpdate struct {
 }
 ```
 
-`ApprovalRequest` 增加 `Origin() Origin`，其中 `Origin{Member, Task string}` 用于标识来自团队 worker 的审批请求，单 Agent 时为零值。
+`ApprovalRequest` 增加 `Origin() Origin` 与 `Forward(Origin) *ApprovalRequest`。Origin 具有 Member、Task 字段，单 Agent 为零值；Forward 返回归属副本并共享原 exactly-once responder，回答原件或副本都会结算同一个请求。
 
 ### 4.6 Result
 
-```go
+```text
 type Result struct {
 	RunID, Model, Provider, Text, Summary string
 	Usage    *Usage
@@ -314,17 +339,19 @@ func (r *Result) Services() []ServiceReport
 func (r *Result) Decode(v any) error
 func (r *Result) Messages() []MessageOutcome    // 新增：本次执行所有消息的最终结果，按接纳顺序
 func (r *Result) Undelivered() []MessageOutcome // 新增：失败的消息，原文可直接并入下一次 Send
-func (r *Result) Subagents() []SubagentResult   // 新增：团队执行中各任务的摘要；单 Agent 为空
+func (r *Result) Subagents() []SubagentResult   // 新增：已收集的子任务摘要；无子任务时为空
 ```
 
 - 多轮执行：`Text` 是最后一轮的文本；`Usage` 是各轮合计；`Transcript` 包含所有轮。
-- 新增 Transcript 条目类型 `TranscriptMessage{ID, From, Mechanism, Boundary, Text}`。它不伪装成 `Role=user`，因为各 provider 的注入方式本质不同。
+- 新增公共 `TranscriptMessage{ID, From, Mechanism, Boundary, Text}`；公共 TranscriptItem 的 Kind 为 "message" 时 Message 指向此值。core 在 provider 正式解析条目之后追加已观察交付，不能伪装成 provider user 角色。
+- Raw 合并各次派发完整 stdout/stderr，Terminal 保留最后识别的 provider payload；没有截断、落盘或 Retention 选项。重复已交付初始 ID 不调用 provider，Turns=0、Text 为空。
+- 成功返回 Result；业务失败仍为 nil、*RunError，部分 Result 位于 RunError.Result；基础设施失败不保证提供 Result。Messages/Undelivered 返回最终消息快照，不能替代过程 MessageUpdate。
 
 ### 4.7 错误
 
 | 错误 | 何时返回 |
 |---|---|
-| `ErrThreadBusy`（v1 已有） | 任务模式 `th.Send` 时，该 Thread 已有执行在进行或处于待命；`th.Standby` 时，该 Thread 有任务执行在进行；另一个进程持有该 Thread。同一进程内已在待命时再调用 `th.Standby` 不报错，返回已有的 Standby |
+| `ErrThreadBusy`（v1 已有） | 任务模式 `th.Send` 时，该 Thread 已有执行在进行或处于待命；`th.Standby` 时，该 Thread 有任务执行在进行；另一个进程持有该 Thread。同一 Agent 内已在待命时再调用 `th.Standby` 不报错，返回已有的 Standby |
 | `ErrRunFinished` | `s.Send` 时执行已彻底结束 |
 | `ErrMessageUnsupported` | 当前 Driver 不支持请求的投递方式（例如 `Interrupt`），或者根本不支持运行中消息 |
 | `*MessageError{ID, Text, Reason, Err}` | 以上消息相关错误的载体，可以用 `errors.Is` 匹配哨兵错误，原文在 `Text` 中 |
@@ -333,7 +360,7 @@ func (r *Result) Subagents() []SubagentResult   // 新增：团队执行中各�
 
 放进现有的 `WithPolicy`，不新增 `With*`：
 
-```go
+```text
 type Policy struct {
 	Sandbox   SandboxLevel
 	WebSearch FeatureLevel
@@ -355,7 +382,8 @@ type MessagePolicy struct {
 | 调用 | ctx 约束什么 |
 |---|---|
 | `x.Send`、`th.Send` | 这次调用开启的执行：ctx 结束时中止执行 |
-| `s.Send`、`sb.Send` | 只约束投递：被领取前 ctx 结束，消息以 `cancelled` 失败 |
+| `s.Send` | 约束接纳与未 Claim 输入：ctx 在 Claim 前结束则 cancelled；Claim 后由 Ack 决定 |
+| `sb.Send` | 只约束接纳；成功接纳后归 Standby ctx，HTTP 请求结束不撤回消息 |
 | `th.Standby(ctx)` | 整个待命的生命周期，包括待命期间开启的所有执行 |
 | `sb.Events()` | 无参数，随 Standby 的 ctx 一起结束 |
 
@@ -363,10 +391,10 @@ type MessagePolicy struct {
 
 ### 4.10 模式与并发规则
 
-- 同一个 Thread 同一时刻只能处于一种模式：任务执行进行中，或者待命中。违反时返回 `ErrThreadBusy`。同一进程内重复调用 `th.Standby` 不算违反，返回已有的 Standby。
+- 同一个 Thread 同一时刻只能处于一种模式：任务执行进行中，或者待命中。违反时返回 `ErrThreadBusy`。同一 Agent 内重复调用 `th.Standby` 不算违反，返回已有的 Standby。
 - 任务模式下，`th.Send` 不会并入正在进行的执行；补充只能通过 `s.Send`。这保证了 `th.Send` 返回的 Stream 永远对应这条消息开启的执行。
 - 待命期间，Standby 持有该 Thread 的所有权租约，并持续续期。其他进程对该 Thread 的任何调用都返回 `ErrThreadBusy`；进程崩溃后，租约到期自动释放。
-- 任务模式下，租约只在执行期间持有。
+- 任务模式正常结束即释放 ownership；若健康 checkpoint 尚未落盘，保留进程内权威与 ownership 后台重试。Standby 退出即释放 ownership；后台恢复必须重新获取并核对 durable version，不能覆盖后来写者。
 
 ---
 
@@ -376,14 +404,14 @@ type MessagePolicy struct {
 
 > 一次执行在"没有东西在运行，也没有待处理的消息"时结束。
 
-- **单 Agent**：provider 的一轮结束时，如果还有待处理的消息（没赶上边界的 `Soon`、`AfterTurn`），就在同一次执行内续跑一轮。所以 `s.Send` 只要被接纳，就一定会在这次执行里得到处理，除非执行被取消、失败或触及上限。
+- **单 Agent**：provider 的一轮结束时，如果还有待处理的消息（没赶上边界的 `Soon`、`AfterTurn`），就在同一次执行内续跑一轮。被接纳的输入在本执行中交付或明确失败并交还原文；没有 resume 的第三方 InRun Driver 在最终空 Claim 竞态中只能报告失败。
 - **团队**：leader 空闲，没有运行中或排队中的任务，也没有需要唤醒 leader 的消息。
 - 续跑由 Driver 在同一进程内完成（`ContinueInRun`），或者由 core 用刚产生的 checkpoint 再调用一次 Driver（`ContinueResume`），见 §6.1。四个内置 Driver 都有 SessionCodec 并支持 resume（✅ `*/session_codec.go`），所以每个 Driver 至少都能在轮次结束时投递消息。
 
 ### 5.2 消息投递合同
 
 ```text
-  Send 接纳                Driver Claim(boundary)          Driver Ack(nil)
+  Send 接纳                Driver Claim(boundary)          Driver Ack(Delivered=true)
  ──────────▶ pending ──────────────────────────▶ claimed ──────────────────▶ delivered
                │  ctx 结束、执行取消、执行失败、上限       │ Ack(err)、进程退出
                └────────────────▶ failed ◀──────────────┘
@@ -393,13 +421,13 @@ type MessagePolicy struct {
 
 1. **领取后只由 Ack 决定结果**：Driver 一旦领取，调用方取消不能抢先判失败（对应 multica 的 `writing` 标记 ✅ `claude_supplement.go`）。
 2. **未领取的可以撤回**：ctx 结束时，pending 项移出队列，以 `cancelled` 失败，之后任何边界都不会再投递它。
-3. **exactly-once**：重复的 `MessageID` 不会重复投递。去重范围是 Thread：已投递的 ID 记录在 Thread 记录中（有界窗口，默认保留最近 1000 个或 7 天），所以进程重启后，宿主用原 ID 重发未确认的消息也不会重复投递。匿名 Thread 的去重范围是这一次执行。
+3. **有界幂等**：同执行的重复 ID 不重复投递；Thread 回执与 checkpoint 在同一有效 lease 下原子保存，保留最近最多 1000 个且不超过七天的 ID。重复已交付初始 ID 零轮完成；Fork 的 ID 空间独立。provider 接受与回执持久化之间崩溃，恢复后仍可能重投；不得承诺跨该窗口的 exactly-once。匿名执行的去重只覆盖本次执行。
 4. **不丢失**：每个被接纳的消息最终都有一条 `MessageUpdate(Delivered|Failed)`，并出现在 `Result.Messages()` 中；`MessageUpdate` 不可被背压丢弃。
-5. **有序**：按接纳顺序领取；同一边界领取的多条合并为一次注入。
+5. **有序**：按接纳顺序领取；hook Driver 按 provider 总量上限合并，Codex immediate 按序逐条 RPC；不能把部分批次丢弃。
 6. **执行开始前到达的消息会被缓冲**：不需要就绪检查，不存在 `NotReady` 错误。
 7. **Cancel 优先**：`Cancel` 之后，pending 项以 `cancelled` 失败，原文交还。
-8. **大小在接纳时校验**：超过 Driver 上限（Cursor 为 10000 个 UTF-16 单位）时同步拒绝，而不是送到 provider 后被静默丢弃。
-9. **边界投递失败时改为续接投递**：在边界投递失败（RPC 超时、Codex 的 turn 刚好结束导致 `expectedTurnId` 不匹配、Cursor relay 出错或没有收到 `hookAdditionalContexts` 回显）时，消息不判失败，而是退回 pending，在本轮结束后经续接投递，`MessageUpdate` 如实记录实际的边界与机制。只有续接投递也失败，才以失败告终。对于超时这类"可能已经送达"的情况，续接时附上"如已收到请忽略"，避免 agent 重复执行。
+8. **大小在接纳时校验**：超过 Driver 的 framed 上限（Cursor 完整 hook context 为 10000 UTF-16；扣除 64 单位 nonce 标签后的单条 framed 上限为 9936）时同步拒绝，而不是送到 provider 后被静默丢弃。
+9. **边界投递失败时改为续接投递**：MessageAck{Requeue:true, Err:...} 将输入限制为仅 turn_end 可领取，不在原失败边界循环重试。在边界投递失败（RPC 超时、Codex 的 turn 刚好结束导致 `expectedTurnId` 不匹配、Cursor relay 出错或没有收到 `hookAdditionalContexts` 回显）时，消息不判失败，而是退回 pending，在本轮结束后经续接投递，`MessageUpdate` 如实记录实际的边界与机制。可续接且轮次正常结束时继续投递；取消、失败、上限或缺少健康 checkpoint 时仍需报告失败。对于超时这类"可能已经送达"的情况，续接时附上"如已收到请忽略"，避免 agent 重复执行。
 10. **队列满时阻塞**：等待领取的消息达到 `MaxPending` 时，`Send` 阻塞等待空位，受 ctx 约束；ctx 结束时返回 `cancelled`。
 
 ### 5.3 包装模板
@@ -417,7 +445,7 @@ type MessagePolicy struct {
 上限按统一规则处理：
 
 - 达到 80% 时：发出 `Notice{limit.approaching}`，并以 `AuthorSystem` 向 agent 注入一条"即将达到上限，请开始收尾"。
-- 达到 100% 时：不再开始新的轮次，当前轮完成后执行结束。待处理的消息以 `limit_exceeded` 失败并交还原文。如果因此有工作被中止（团队里运行中的任务），结果为 `RunError{Reason: ReasonLimitExceeded}`，并携带部分 Result；否则正常结束，未处理的消息列在 `Undelivered()` 中。
+- 达到 100% 时：不再开始新的轮次，当前轮完成后执行结束。待处理的消息以 `limit_exceeded` 失败并交还原文。单 Agent 正常结束并将未处理输入列在 Undelivered。根 API 的 `ReasonLimitExceeded` 用于团队上限中止未完成工作（§7.9），单 Agent 达到 MaxTurns 不以错误结束。
 
 单 Agent 适用 `MessagePolicy.MaxTurns`；团队适用 §7.9 的上限。
 
@@ -430,8 +458,8 @@ type MessagePolicy struct {
 - `Done.Result` 和 `Result()` 返回的是同一个对象，不复制。
 - 大的部分（Raw、Transcript、结构化输出、服务报告）是非导出字段，只能通过方法访问（✅ `result.go:58-61`），默认 JSON 序列化只包含小字段。
 - `Raw()` 与 `Transcript()` 每次调用都返回深拷贝（✅ `result.go:98`），文档要求调用方调用一次后自行持有。
-- Raw 的总量由 R2 的保留策略约束（默认截断或落盘）。
-- 待命没有整体 Result，每个 `TurnEnd` 只携带这一轮的结果，交付后 SDK 立即释放，不会随运行时长累积。
+- Raw 保留完整内容；当前代码没有 R2 Retention 或落盘 API，体积随本次执行输出增长，不能声称默认截断。
+- 待命没有整体 Result；当前执行汇总在结束后由 Standby 放手，不积累全会话结果。订阅后尚未读走的关键事件仍会保留 Result 引用，不能承诺一经 publish 立即释放。
 - 团队 Result 只包含 leader 的结果和各任务摘要（`Subagents()`）。worker 的 Raw 和 Transcript 通过任务句柄按需获取，不随成员数量放大。
 - bridges 与会话录制器把 `Done` 映射为协议里的最终消息时，只带安全字段；Raw 等额外内容由 `ExposurePolicy` 显式开启（沿用 A2A bridge 现有做法）。
 
@@ -448,10 +476,10 @@ type MessagePolicy struct {
 | 在边界投递失败 | 改为在本轮结束后续接投递（§5.2 第 9 条） |
 | 待领取队列满 | `Send` 阻塞等待空位（§5.2 第 10 条） |
 | 待命中某次执行失败 | 待命继续；没投出去的消息带入下一次执行；可重试的失败自动重试一次（§4.3） |
-| resume 被 provider 拒绝，或会话过期（长时间待命很常见） | 开新会话时发出连续性事件（P2-8 的 `NoticeThreadContinuity`），并把 Thread 记录中保存的已投递补充与最近 3 轮回答（总计不超过 8 KiB）作为前缀注入，尽量保住上下文。宿主通过 P2-8 的 `OnRestart` 提供了连续性文案时，以宿主的为准 |
-| 待命中切换模型，或其他配置变化导致与现有会话不兼容 | Driver 声明支持换模型续接（P2-11 的 `ResumeTolerant`）时直接续接；否则按上一行处理 |
+| resume 被明确拒绝，或会话过期 | continue-or-start 最多安全回退一次，发布 Notice{Kind:"thread.continuity"}，注入 EarlierGuidance 与最近三轮（合计不超过 8 KiB）；ResumeOnly 保持 ErrResumeRejected。没有 OnRestart API |
+| 待命中切换模型，或其他配置变化导致与现有会话不兼容 | 当前 fingerprint 包含模型和构造配置，不存在 ResumeTolerant API；continue-or-start 新建会话并注入连续性前缀，ResumeOnly 返回 ErrThreadIncompatible |
 | checkpoint 持久化失败（store 故障） | 进程内保留最新 checkpoint 作为权威，后台有界退避重试写入，并发出 `Notice`；下一次执行开始前先补写，仍失败时用进程内的 checkpoint 续接，并继续重试 |
-| 进程崩溃时还有已接纳、未投递的消息 | `MessageID` 在 Thread 级别去重（§5.2 第 3 条）：宿主重启后，用原 ID 重发没收到 `Delivered` 的消息即可，已投递的不会重复 |
+| 进程崩溃时还有已接纳、未投递的消息 | 宿主用原 MessageID 重发未确认输入；已落盘回执可去重，provider 接受但回执未落盘的崩溃窗口可能重投（§5.2 第 3 条） |
 | 团队中 leader 某一轮失败 | 运行中的任务不受影响，leader 通过 resume 重新唤醒（见 §7.9） |
 
 有意保留为错误的情况：
@@ -474,9 +502,9 @@ type MessagePolicy struct {
 
 ### 6.1 SPI
 
-core 统一持有队列、幂等、排序、取消竞态与记账；Driver 只负责在自己的边界领取消息并上报结果。
+core 统一持有队列、幂等、排序、取消竞态与记账；Driver 只负责在自己的边界领取消息并上报结果。冻结合同位于 driver/messages.go；以下为其字段摘要。
 
-```go
+```text
 package driver
 
 type Boundary string
@@ -499,31 +527,48 @@ type MessageCapability struct {
 	Boundaries        []Boundary
 	Interrupt         bool
 	Continue          ContinueMode
-	MaxUnits          int    // 0 表示无已知上限
-	Unit              string // "bytes" | "utf16"
-	ConfirmedDelivery bool   // 是否以 provider 回显为准（Cursor），而不是写入成功
-	PersistsDelivered bool   // 已投递的内容在 resume 后是否仍在 provider 历史中
+	MaxUnits          int         // 0 表示无已知上限
+	Unit              MessageUnit // MessageUnitBytes | MessageUnitUTF16
+	ConfirmedDelivery bool        // 是否以 provider 回显为准（Cursor），而不是写入成功
+	PersistsDelivered bool        // 已投递的内容在 resume 后是否仍在 provider 历史中
 	MinVersion        string
 }
 
-// Descriptor 增加 Messages MessageCapability。Inspect().Environment 返回按本机版本裁剪后的实际能力。
+// Descriptor.Messages 是静态声明；当前 Environment 不探测最低 CLI 版本。
+// 可选 MessageCapabilityResolver.ResolveMessageCapability(Request) MessageCapability
+// 在最终 Request 解析后调用一次；结果不得超出 Descriptor，且必须与实际 transport 一致。
 
-type Request struct {
-	// ...v1 字段
-	Messages MessagePort // nil 表示本次执行未启用
-}
+// Request 新增字段：
+Messages MessagePort // nil 表示本次执行未启用
 
 type MessagePort interface {
 	Window(open bool)                // provider 确认的窗口状态变化
 	Signal() <-chan struct{}         // 有新消息待领取时就绪
 	Claim(b Boundary) []MessageItem  // 领取在边界 b 可以投递的全部消息（已包装）
-	Ack(id string, err error)        // 每个领取项恰好调用一次
+	Ack(id string, ack MessageAck)   // 每个领取项在 Run 返回前恰好一次
 }
 
 type MessageItem struct {
-	ID     string
-	Text   string
-	Timing Timing
+	ID             string
+	Text           string // core 已包装，必须逐字交付
+	Timing         Timing
+	MaybeDuplicate bool
+}
+
+type MessageAck struct {
+	Delivered      bool
+	Mechanism      string
+	Err            error // 未交付时必填
+	Requeue        bool  // 只在 turn_end 重试
+	MaybeDelivered bool  // 可能已经交付，重试时提示忽略重复
+}
+
+type TurnCompleted struct {
+	Index       int // 本次 Driver.Run 内从 0 开始
+	Text        string
+	Usage       *Usage
+	Interrupted bool
+	CompletedAt time.Time
 }
 ```
 
@@ -533,21 +578,25 @@ type MessageItem struct {
 - `AfterTurn` 只在 `BoundaryTurnEnd` 领取。
 - `Interrupt` 只在 `BoundaryImmediate` 领取；Driver 不支持时，在接纳阶段就以 `ErrMessageUnsupported` 拒绝。
 - `ContinueInRun` 的 Driver 在每轮结束时调用 `Claim(BoundaryTurnEnd)`，有内容就续跑，否则结束。`ContinueResume` 的 Driver 由 core 检查剩余消息，再决定是否续接。
-- Driver 每结束一轮，都要发出 `turn.completed` 驱动事件，core 据此生成 `TurnEnd`。
+- Driver 每结束一轮（含最后一轮）恰好发出 RunEventTurnCompleted，并携带 TurnCompleted；core 转换为执行内从 1 开始的 TurnEnd。
+- Window(true) 只来自 provider 确认的窗口，结束/取消时关闭；Signal 供 push Driver 监听。Claim 后只由 Ack 结算，Run 返回前必须清空全部 claim 与 per-run goroutine。
+- ContinueInRun 最后空 Claim 不是原子封闭；返回后晚到消息由 core 以健康 checkpoint resume；没有 resume 则明确 failed/provider_rejected。
+- core 追加实际交付 TranscriptMessage，保存回执并聚合 Usage；Driver 不发消费者 Done，不得吞掉 provider terminal payload。
 
 ### 6.2 实现矩阵
 
-| Driver | 边界 | Interrupt | 续跑 | 窗口开启条件 | 备注 |
-|---|---|---|---|---|---|
-| Codex app-server | ✅ `immediate`：`turn/steer {threadId, expectedTurnId, input}`，需要 ≥0.100.0 | ✅ `turn/interrupt` 后在同一 thread 发 `turn/start` | InRun：在同一进程发 `turn/start` | 已有 threadId 且有 activeTurnId | `expectedTurnId` 保证不会误投到下一轮。✅ 流式执行与常驻 Thread 已经走 app-server（`codex/driver.go`、`codex/persistent.go`） |
-| Codex exec | 无 | 无 | Resume | — | 只在轮次结束时投递 |
-| Claude Code | ✅ `tool`：SDK hook 回调（在 `initialize` 中注册 `UserPromptSubmit`/`PreToolUse`/`PostToolUse`/`PostToolUseFailure`）返回 `additionalContext`，需要 ≥2.1.110；✅ `stop`：Stop hook 返回 `decision:block` 加 `reason` | ⚠️ `interrupt` control_request 后写入一个 user frame | InRun（Stop hook 与常驻进程） | 第一次收到自己注册的 hook 回调 | ✅ 必须过滤 `agent_id` 与 `parent_tool_use_id`，只投给主循环。本仓库 Claude Driver 已经在 stdio 上跑 control 协议处理 `can_use_tool` |
-| CodeBuddy | ⚠️ 预期同 Claude（本仓库已有 `control.go`、`control_parser.go`） | ⚠️ | InRun 或 Resume | ⚠️ | — |
-| Cursor | ✅ `tool`：项目级 hooks，`postToolUse(Failure)` 返回 `additional_context`，需要 ≥2026.10.14 | 无 | Resume（✅ `--resume`，`cursor/driver.go:388`） | 第一次收到 hook 请求 | 以 `hookAdditionalContexts` 回显为准；`--print` 模式下 stop hook 不触发，最后一段输出期间到达的消息走 Resume 续跑 |
-| ACP：Kiro | ✅ `immediate`：`_session/steer`，需要 ≥2.33.0 | `session/cancel` 后再 prompt | InRun：同一 session 再发 `session/prompt` | `session/prompt` 进行中 | — |
-| ACP：Grok | ✅ `immediate`：`_x.ai/interject`，需要 ≥1.0.14 | 同上 | 同上 | 同上 | 结果帧内可能带错误，需要解析 |
+| Driver | 中途边界 | Interrupt | 续跑 | 确认与最终声明 |
+|---|---|---|---|---|
+| Codex app-server（≥0.100.0） | immediate：turn/steer 带 threadId/expectedTurnId，响应 turnId 必须匹配 | true：interrupt 完成后 turn/start | InRun | provider active turn 开窗；RPC 接受后 Ack，ConfirmedDelivery=false，PersistsDelivered=true；单次与 resident 路径共用循环 |
+| Codex exec | 无 | false | Resume | resolver 与 Streaming/fork transport 选择一致，PersistsDelivered=true |
+| Claude stream-json input（≥2.1.110） | tool、stop | false | InRun | SDK initialize 注册五种 hooks，仅主循环回调开窗；成功写入后 Ack；ConfirmedDelivery/PersistsDelivered=false |
+| Claude batch native schema JSON | 无 | false | Resume | 不强制改变原生 schema 的 JSON output transport |
+| Cursor（≥2026.10.14） | 合资格 relay 的 tool | false | Resume | official hookAdditionalContexts 完整 echo；ConfirmedDelivery=true、PersistsDelivered=false，10000 UTF-16 总量 |
+| CodeBuddy | 无已验证边界 | false | Resume | 无窗口、无 Claim；headless/control/resident 均恰好一条 TurnCompleted |
 
-ACP 标准里没有 steer。通用 ACP Driver 提供按预设挂载的扩展点：`acp.Preset.Message func(sessionID, text string) (method string, params any)`。
+上述 MinVersion 是要求，不是已实现的版本探测。Claude 消息端口会为普通请求协商 stream-json input，不改变审批与 partial-message 选择。ACP/Kiro/Grok 不在当前实现树内；Pi/OpenCode 继续挂起，不能标为 v2 已支持。
+
+Claude initialize 必须收到 control_response；注册拒绝或写入后等待十秒未答复，进程永久禁用 hooks，发出 code=claude_hooks_unavailable 的 lifecycle Notice，普通 prompt 与 HITL 继续，消息转 core resume。晚成功不能重新开启；resident 每进程只注册一次。pipe/进程失败与取消仍为执行失败，不能当成可选 hook 降级。
 
 ### 6.3 Cursor 的 hook relay
 
@@ -555,19 +604,28 @@ Cursor 在 headless 模式下没有输入通道。它在每次工具调用后，
 
 - **默认方式：宿主二进制重新执行自身。** 宿主在 `main()` 第一行调用 `cursor.RunHookRelayIfRequested()`。检测到隐藏参数时，它只执行 relay 逻辑然后退出；否则立即返回。SDK 用 `os.Executable()` 生成 hook 命令，宿主无需单独发布任何东西。这和 multica 的做法相同（✅ `cmd/multica/main.go:113`）。
 - **覆盖方式：** `cursor.Config.HookRelay []string` 显式指定命令。
-- **启动前自检：** SDK 用探测参数执行一次 relay 命令。失败时，Cursor 的 `tool` 边界在本次执行中被如实裁掉，消息改为在轮次结束时经 Resume 投递。功能可用，只是时机更晚，并发出 `Notice` 说明原因。
-- **只在受管理的工作目录里写 hooks.json：** 已存在非 SDK 管理的 `.cursor/hooks.json`，或者工作目录是用户自己的仓库目录时，同样降级为轮次结束时投递（沿用 multica 的规则 ✅ `internal/daemon/daemon.go:285`）。
-- **文档要求：** relay 检测之前不能有重型 `init()`，因为每次工具调用都会启动一次宿主二进制。
+- **启动前自检：** SDK 用探测参数执行一次 relay 命令。resolver 只裁掉平台/workspace 等可预知不可用边界；relay probe/listener/install 的动态失败在 Run 内发布 code=cursor_hook_unavailable 的 Notice，不再 Claim，消息改为轮次结束经 core resume。不能声称 Inspect 已探测 relay。
+- **只在受管理的工作目录里写 hooks.json：** 任何已存在的 `.cursor/hooks.json`（包括 SDK 标记文件）或用户自己的 primary workspace 均不能安装。只接受明确 GitWorktree/CloudSandbox/DriverManaged 策略；O_EXCL 防安装竞态，清理只删除身份与内容未变的自有文件。Windows 一律不可用；均降级为轮次结束时投递（沿用 multica 的规则 ✅ `internal/daemon/daemon.go:285`）。
+- **文档要求：** relay 检测之前不能有重型 init，因为每次工具调用都会启动一次宿主二进制。
+- 每次运行使用随机 128-bit nonce，loopback bearer token，conversation/tool/parent 归属校验；relay 仅发送归属字段，不转发工具输入/输出，禁 proxy/redirect。
+- complete tool event 的 hookAdditionalContexts 必须回显完整 tagged batch；只匹配 nonce 或工具输出内文本不算成功。无 echo 重排队，结束时仍待确认则 MaybeDelivered=true。
+- 总 hook context 上限 10000 UTF-16，nonce 标签占 64，Descriptor.MaxUnits=9936；批次超过剩余容量的输入退回 turn_end，不能截断。Windows/裁掉边界的 invocation 仍保留这个 admission 上限。
 
-### 6.4 需要核实的项目与确定的降级行为
+### 6.4 核实项的最终裁决与证据
 
-| 项目 | 核实方式 | 核实失败时的确定行为 |
+已落地的保守声明是结论，不把未执行的付费 live 伪称通过。
+
+| 项目 | 状态与证据 | 最终行为 |
 |---|---|---|
-| Claude 的 Interrupt | live 测试 `interrupt` control_request 后能否在同一 session 继续 | Claude 声明 `Interrupt=false`；`When(Interrupt)` 同步返回 `ErrMessageUnsupported` |
-| Claude 的 hook 内容在 resume 后是否保留 | live：投递后结束，resume 后询问内容 | 声明 `PersistsDelivered=false`；core 在 Thread 记录中保存已投递消息，下次执行开始时作为"之前的补充"前缀重放，Thread 的语义不受影响 |
-| CodeBuddy 的原生边界 | live 测试 | 不声明对应边界；消息在轮次结束时经 Resume 投递 |
-| Cursor relay 在 Windows 上（Cursor 用 PowerShell 执行 hook） | live 测试引号与路径 | Windows 上不启用 relay；消息在轮次结束时经 Resume 投递 |
-| 匿名 Thread 的 checkpoint（Driver 的无状态模式是否产出可续接的会话） | 各 Driver 的无状态模式测试 | 该 Driver 在匿名执行中启用会话持久化，执行结束后清理；仍然做不到则声明不支持运行中消息，`s.Send` 同步返回 `ErrMessageUnsupported` |
+| Claude Interrupt | 已裁决：messages/transport fixture 未验证原生打断 | Interrupt=false；请求 Interrupt 返回 ErrMessageUnsupported |
+| Claude hook 跨 resume 保留 | 已裁决：不宣称持久化 | PersistsDelivered=false；core 保存/重放有界 EarlierGuidance |
+| Claude hooks 注册失败/无响应 | 已实现：message_handshake_test 覆盖拒绝、超时、晚回调、resident 与 core resume | 十秒等待降级并 Notice；prompt/HITL 不被可选 hooks 阻断 |
+| CodeBuddy 原生边界 | 已裁决：messages_test 验证 port 不被使用、三种 transport 的 TurnCompleted | 无中途边界/Interrupt；core Resume |
+| Cursor Windows relay | 已裁决：platform eligibility 与测试拒绝未经验证路径 | Windows 不启用 relay；core Resume |
+| Cursor relay/nonce/echo/UTF-16 | 已实现：messages_test、hook_relay_test | 仅 managed workspace、精确 echo，动态不可用显式 Notice；批次不截断 |
+| 匿名执行 checkpoint | 已实现：四 Driver 正式 parser/session 测试、根 messages_contract_test 的 stateless ContinueResume | 无跨 Send 记录；本次执行内用健康 checkpoint 续接，必要时新进程；缺少 checkpoint 则明确失败，不伪造状态 |
+| Codex immediate/Interrupt/InRun | 已实现：messages_test、appserver/messages_test；messages_live_test 有双门控，本文未运行 live | turn ID guard、ambiguous requeue、每轮完成、Usage 与最终 checkpoint；live 需 codex_live + AGENT_ADAPTOR_LIVE_CONFORMANCE=1 |
+| CLI 最低版本 | 偏差已记录：MinVersion 仅声明，当前 Environment 无版本裁剪 | 宿主需满足最低版本，不宣称自动协商老版本 |
 | Remote A2A 成员是否接受对 working 状态 task 的消息 | 对接测试 | `team_send` 给 leader 返回明确错误；leader 可以取消任务后重新派发 |
 
 ---
@@ -885,10 +943,10 @@ for ev := range s.Events() {
 |---|---|---|
 | 运行中补充的入口 | `Stream.Send` | 包级函数：被包装的 Stream 会静默失效；单独的 `Steer` 动词：和"开始执行"是同一件事，多一个动词 |
 | 执行动词 | 只有 `Send`，返回 `Stream` | 保留 `Run`/`Stream`：`Stream` 本来就同时提供同步与异步，`Run` 只是语法糖 |
-| 一次性任务的语义 | `Send` 每次新建匿名 Thread | 所有调用共用一个默认 Thread：会合并并发任务、串上下文、上下文无限增长、store key 冲突 |
+| 一次性任务的语义 | 对宿主等价于新匿名 Thread；实现使用无状态 target，不落具名 record | 所有调用共用一个默认 Thread：会合并并发任务、串上下文、上下文无限增长、store key 冲突 |
 | 常驻的表达方式 | `th.Standby(serverCtx)` | Agent 级选项：模式属于交互而不属于 Agent，常驻需要身份，组合时冲突；`Send` 上的选项：失去编译期"没有同步结果"的保证，ctx 作用不固定，没有消息就无法订阅；永不结束的 Stream（`KeepOpen`/`UntilCanceled`）：没有停止按钮，Result 无边界，checkpoint 和 lease 问题；`Session`/`Open`/`Live`：命名不贴切 |
 | 命名 | `Standby` | `NoExit`/`Nonstop`/`Endless`：否定式，或与行为不符；`Resident`/`Daemon`/`KeepAlive`/`Persistent`：与现有术语撞车；`Open`/`Connect`/`Attach`/`Serve`/`Ready`：含义不符；`OnCall`：语义偏告警值班 |
-| 结束操作 | 只有 `Cancel`，只中止正在进行的处理 | 同时有 `Close` 和 `Cancel`：让人困惑；`Cancel` 的结果随调用时的状态而变：隐藏的模式 |
+| 结束操作 | Stream/Standby 只有 Cancel；Agent.Close 保留资源回收，Standby ctx 结束生命周期 | 同时有 `Close` 和 `Cancel`：让人困惑；`Cancel` 的结果随调用时的状态而变：隐藏的模式 |
 | 结果获取 | `Result()` 与以 `Done` 结尾的 `Events()`，内容一致 | 沿用 v1 的 `RunFinished` 加事后再调 `Result()`：多一步，且 `RunFinished` 在收尾之前发出 |
 | 待命的同步获取 | 不提供 | "每条消息一个回复 Stream"：引入合并与共享结果的复杂度 |
 | 任务模式中忙碌时的 `th.Send` | 返回 `ErrThreadBusy` | 自动并入：返回的 Stream 可能不处理这条消息（问题 A） |
@@ -909,22 +967,22 @@ for ev := range s.Events() {
 
 | # | 问题或场景 | 结论 | 章节 |
 |---|---|---|---|
-| 1 | 三类投递场景（立即、下一次调用、排队合并） | `When`：`Interrupt` / `Soon` / `AfterTurn` | §4.4 |
-| 2 | 为什么需要 `SteerReady` | 不需要：执行开始前的消息会被缓冲 | §5.2-6 |
-| 3 | 各 Agent 原生 API 差异 | Driver 能力矩阵加统一 SPI | §6 |
+| 1 | 三类投递场景（立即、下一次调用、排队合并） | 已实现：`When`：`Interrupt` / `Soon` / `AfterTurn` | §4.4 |
+| 2 | 为什么需要 `SteerReady` | 已实现：不需要：执行开始前的消息会被缓冲 | §5.2-6 |
+| 3 | 各 Agent 原生 API 差异 | 已实现：Driver 能力矩阵加统一 SPI | §6 |
 | 4 | multica 的持久化 claim/ack | 留在宿主；`MessageUpdate` 与 `Result.Messages()` 提供结果；TaskStore 语义一致 | §4.5、§7.7、§9 |
-| 5 | 区分人与 agent 的权威 | `From` 加内置模板 | §4.4、§5.3 |
-| 6 | Claude hook 被子 agent 继承 | 过滤 `agent_id` 与 `parent_tool_use_id` | §6.2 |
-| 7 | 取消与投递的竞态 | 领取后只由 Ack 决定 | §5.2-1、2 |
-| 8 | 版本门控 | `MessageCapability.MinVersion` 加 Inspect | §6.1、§9 M6 |
-| 9 | 冻结的 Stream 接口与被包装的 Stream | v2 直接扩展接口，编译器强制包装器转发 | §4.2 |
-| 10 | 幂等 ID | 宿主提供 `MessageID` | §4.4、§5.2-3 |
-| 11 | Transcript 角色 | 独立的 `TranscriptMessage` 条目 | §4.6 |
-| 12 | 一次执行跨多轮的影响（Result、Usage、checkpoint） | `TurnEnd` 加汇总 Result；执行结束后保存 checkpoint | §4.5、§4.6、§5.1 |
-| 13 | Cursor 的支持情况与 relay 成本 | 宿主二进制重新执行自身，失败时降级为轮次结束时投递 | §6.3 |
-| 14 | CodeBuddy 未核实；Pi、OpenCode | CodeBuddy 核实失败时走 Resume；Pi 与 OpenCode 的实现已挂起，不在本提案范围内 | §1、§6.4 |
-| 15 | 补充内容在 resume 后是否保留 | `PersistsDelivered`，未保留时由 core 重放 | §6.4 |
-| 16 | Codex 收尾续跑的影响 | core 统一续跑 | §5.1、§6.2 |
+| 5 | 区分人与 agent 的权威 | 已实现：`From` 加内置模板 | §4.4、§5.3 |
+| 6 | Claude hook 被子 agent 继承 | 已实现：过滤 `agent_id` 与 `parent_tool_use_id` | §6.2 |
+| 7 | 取消与投递的竞态 | 已实现：领取后只由 Ack 决定 | §5.2-1、2 |
+| 8 | 版本门控 | 已裁决：MinVersion 是声明；当前 Environment 没有本机版本裁剪（偏差） | §6.1、§9 M6 |
+| 9 | 冻结的 Stream 接口与被包装的 Stream | 已实现：v2 直接扩展接口，编译器强制包装器转发 | §4.2 |
+| 10 | 幂等 ID | 已实现：宿主提供 `MessageID` | §4.4、§5.2-3 |
+| 11 | Transcript 角色 | 已实现：独立的 `TranscriptMessage` 条目 | §4.6 |
+| 12 | 一次执行跨多轮的影响（Result、Usage、checkpoint） | 已实现：TurnEnd 与汇总 Result；每个健康 Driver 返回点原子保存 checkpoint/回执 | §4.5、§4.6、§5.1 |
+| 13 | Cursor 的支持情况与 relay 成本 | 已实现：宿主二进制重新执行自身，失败时降级为轮次结束时投递 | §6.3 |
+| 14 | CodeBuddy 未核实；Pi、OpenCode | 已裁决：CodeBuddy 无中途边界，走 Resume；Pi/OpenCode 挂起，ACP 未实现 | §1、§6.4 |
+| 15 | 补充内容在 resume 后是否保留 | 已实现：`PersistsDelivered`，未保留时由 core 重放 | §6.4 |
+| 16 | Codex 收尾续跑的影响 | 已实现：core 统一续跑 | §5.1、§6.2 |
 | 17 | T1 leader 阻塞 | 事件驱动的 leader | §7.2、§7.3 |
 | 18 | T2 工具面随成员数增长 | leader 4 个、worker 2 个，名册作为数据 | §7.4 |
 | 19 | T3 结果被覆盖 | 任务句柄 | §7.5 |
@@ -935,9 +993,9 @@ for ev := range s.Events() {
 | 24 | T8 弱类型的 SubagentUpdate | 强类型 | §4.5 |
 | 25 | 用户直接找 worker | 不提供，由 leader 代传 | §7.3 |
 | 26 | worker 之间的通信 | 不提供，由 leader 转达 | §7.3 |
-| 27 | 一次性进程什么时候退出 | 执行在静止时结束，`Result()` 或 `Done` 返回 | §5.1、§8 |
-| 28 | 常驻与一次性如何统一 | 三种用法，同一组动词 | §3 |
-| 29 | 由宿主决定是否常驻 | 宿主选择用法；待命由宿主的 ctx 决定何时结束 | §3、§4.9 |
+| 27 | 一次性进程什么时候退出 | 已实现：执行在静止时结束，`Result()` 或 `Done` 返回 | §5.1、§8 |
+| 28 | 常驻与一次性如何统一 | 已实现：三种用法，同一组动词 | §3 |
+| 29 | 由宿主决定是否常驻 | 已实现：宿主选择用法；待命由宿主的 ctx 决定何时结束 | §3、§4.9 |
 | 30 | leader 说"我等着"却没有派发 | 模型行为风险，不是接口缺口：执行正常结束，回答可见；briefing 要求"需要等待时必须先派发"；宿主可以用带记忆的任务跟进 | §7.2、§8 |
 | 31 | 不唤醒 leader 的旁注怎么算 | 旁注的不变式 | §7.3 |
 | 32 | worker 卡死 | `Member.Timeout`（不允许无限）加 R5 | §7.9 |
@@ -946,54 +1004,54 @@ for ev := range s.Events() {
 | 35 | 任务登记时机 | `team_delegate` 返回前必须已登记 | §7.5 |
 | 36 | Remote 断线 | 2 分钟后判失败 | §7.9 |
 | 37 | 唤醒风暴 | 2 秒合并窗口 | §7.3 |
-| 38 | 一次性任务用内存存储时崩溃 | 由一次性任务的定义决定；需要恢复就用具名 Thread 加持久化存储 | §7.7 |
-| 39 | `Post`/`WaitIdle`/`CloseIfIdle`/`Idle` 让人困惑 | 全部删除 | §10 |
-| 40 | `Open`/`Session` 命名 | 删除 | §10 |
+| 38 | 一次性任务用内存存储时崩溃 | 已裁决：内存 store 不保证崩溃恢复；具名 Thread 配宿主持久 store | §7.7 |
+| 39 | `Post`/`WaitIdle`/`CloseIfIdle`/`Idle` 让人困惑 | 已实现：全部删除 | §10 |
+| 40 | `Open`/`Session` 命名 | 已实现：删除 | §10 |
 | 41 | 团队作为 Runner 但不贴切 | 三种用法加 `Standby` | §3、§7.1 |
-| 42 | `Close` 与 `Cancel` 让人困惑 | 只保留 `Cancel` | §4.2、§4.3 |
-| 43 | `KeepOpen`/`UntilCanceled` 命名 | 改为 `Standby` | §10 |
-| 44 | 停止按钮 | `sb.Cancel()` 中止当前处理，继续待命 | §4.3 |
-| 45 | 常驻 Stream 无边界（Result、checkpoint、lease） | 待命由多次有边界的执行组成；`TurnEnd` 交付后释放 | §4.3、§5.6 |
-| 46 | 常驻被迫带初始 prompt | `Standby` 不需要消息 | §4.3 |
-| 47 | `Run`/`Stream` 合并 | 统一为 `Send` | §4.1 |
-| 48 | ctx 的语义与易错点 | Go 惯例，待命用独立入口 | §4.9 |
-| 49 | 执行级选项碰上运行中的执行 | `s.Send` 编译期拒绝（只接受 `MessageOption`）；`sb.Send` 排到当前执行之后 | §4.4 |
-| 50 | 并入的消息共享 Stream | 任务模式不并入；待命不返回每条消息的 Stream | §4.10 |
-| 51 | 只用同步获取时的审批 | 立即兜底并发出 Notice | §5.5 |
-| 52 | 消息的写法 | `text` 加选项 | §4.4 |
-| 53 | 迁移成本 | 迁移表 | §12 |
-| 54 | `Agent.Send` 的语义 | 匿名 Thread | §3 |
-| 55 | 问题 A（返回的 Stream 不处理这条消息） | 任务模式不并入、待命不返回 Stream、执行结束的统一定义 | §4.10、§5.1 |
+| 42 | `Close` 与 `Cancel` 让人困惑 | 已实现：执行句柄只有 Cancel，Agent.Close 继续保留；待命退出由 ctx 决定 | §4.2、§4.3 |
+| 43 | `KeepOpen`/`UntilCanceled` 命名 | 已实现：改为 `Standby` | §10 |
+| 44 | 停止按钮 | 已实现：`sb.Cancel()` 中止当前处理，继续待命 | §4.3 |
+| 45 | 常驻 Stream 无边界（Result、checkpoint、lease） | 已实现：有界执行组成待命；未读关键事件仍可持有 Result 引用 | §4.3、§5.6 |
+| 46 | 常驻被迫带初始 prompt | 已实现：`Standby` 不需要消息 | §4.3 |
+| 47 | `Run`/`Stream` 合并 | 已实现：统一为 `Send` | §4.1 |
+| 48 | ctx 的语义与易错点 | 已实现：Stream.Send ctx 覆盖未 Claim 消息；Standby.Send 只约束接纳 | §4.9 |
+| 49 | 执行级选项碰上运行中的执行 | 已实现：`s.Send` 编译期拒绝（只接受 `MessageOption`）；`sb.Send` 排到当前执行之后 | §4.4 |
+| 50 | 并入的消息共享 Stream | 已实现：任务模式不并入；待命不返回每条消息的 Stream | §4.10 |
+| 51 | 只用同步获取时的审批 | 已实现：立即兜底并发出 Notice | §5.5 |
+| 52 | 消息的写法 | 已实现：`text` 加选项 | §4.4 |
+| 53 | 迁移成本 | 已实现：迁移表 | §12 |
+| 54 | `Agent.Send` 的语义 | 已实现：宿主语义为匿名 Thread，内部无状态 target，不创建具名 store record | §3 |
+| 55 | 问题 A（返回的 Stream 不处理这条消息） | 已实现：任务模式不并入、待命不返回 Stream、执行结束的统一定义 | §4.10、§5.1 |
 | 56 | 问题 B（worker 审批） | O3 | §7.6 |
 | 57 | 团队的持久化、恢复与 Fork | TaskStore，标记 `interrupted`，有条件的 Fork | §7.7 |
 | 58 | 团队用量 | 合计加 `Subagents()` | §7.8 |
-| 59 | 包装模板何时使用 | 只在并入时 | §5.3 |
-| 60 | 匿名 Thread 的 checkpoint | 核实项与降级行为 | §6.4 |
-| 61 | 跨进程使用同一个 Thread | 租约规则，返回 `ErrThreadBusy` | §4.10 |
-| 62 | `Done` 之后还要调 `Result()` 的冗余 | `Done` 携带权威结果 | §4.5 |
-| 63 | 待命不应有同步获取 | `Standby` 上没有 `Result()` | §4.3 |
-| 64 | `Done` 的体积 | 共享对象、非导出字段、R2、按轮释放、团队只放摘要 | §5.6 |
-| 65 | 多个页面同时查看 | 由宿主的 hub 广播（属于宿主职责边界） | §1、§8 |
-| 66 | Cursor 的 hooks.json 与用户仓库 | 只在受管理的工作目录里写，否则降级 | §6.3 |
-| 67 | 看门狗提醒、预算收尾、外部事件、HITL 补充、完成前验证 | 统一用 `Send` 加 `From(system)`；验证用带记忆的任务跟进 | §8 |
+| 59 | 包装模板何时使用 | 已实现：只在并入时 | §5.3 |
+| 60 | 匿名 Thread 的 checkpoint | 已实现：本次执行内健康 checkpoint 续接，缺失时明确失败；无跨调用历史 | §6.4 |
+| 61 | 跨进程使用同一个 Thread | 已实现：租约规则，返回 `ErrThreadBusy` | §4.10 |
+| 62 | `Done` 之后还要调 `Result()` 的冗余 | 已实现：`Done` 携带权威结果 | §4.5 |
+| 63 | 待命不应有同步获取 | 已实现：`Standby` 上没有 `Result()` | §4.3 |
+| 64 | `Done` 的体积 | 已裁决：Done 共享 Result；Raw 完整无截断/Retention API，未读关键事件可增长 | §5.6 |
+| 65 | 多个页面同时查看 | 边界已确认：由宿主 hub 广播，SDK 只提供单消费 channel | §1、§8 |
+| 66 | Cursor 的 hooks.json 与用户仓库 | 已实现：只在受管理的工作目录里写，否则降级 | §6.3 |
+| 67 | 看门狗提醒、预算收尾、外部事件、HITL 补充、完成前验证 | 已实现：统一用 `Send` 加 `From(system)`；验证用带记忆的任务跟进 | §8 |
 | 68 | 嵌套团队 | Team 实现 Runner，工具名前缀可配置 | §7.1、§7.11 |
 | 69 | bridges 的映射 | A2A、AG-UI、会话录制器 | §8 |
 | 70 | multica M1–M8 | 逐项走查 | §9 |
 | 71 | leader 是全能的还是只派发 | 完整的 Agent，遵循委派优先：统筹归 leader，适合成员的工作必须派发，没有成员能承接的才亲自做；宿主可以收紧为纯派发器（只读 sandbox） | §0、§7.2 |
 | 72 | leader 正在亲自干活时 worker 的通知 | 以 `Soon` 在工具边界并入，不打断；延迟上界是 leader 当前这次工具调用 | §7.3 |
 | 73 | leader 与 worker 同时写同一个工作目录 | 任务由 leader 拆分和派发，冲突由 leader 在拆分时避免；SDK 不提供额外机制 | §7.2 |
-| 74 | 边界投递失败 | 改为在本轮结束后续接投递 | §5.2-9 |
-| 75 | 待领取队列满 | `Send` 阻塞等待空位 | §5.2-10 |
-| 76 | 重复调用 `th.Standby` | 有就取、没有就建 | §4.3 |
-| 77 | 待命中某次执行失败 | 待命继续，消息带入下一次执行，可重试的失败自动重试一次 | §4.3、§5.7 |
-| 78 | resume 被拒或会话过期 | 连续性事件加上下文前缀注入 | §5.7 |
-| 79 | 待命中切换模型 | 支持换模型续接则直接续接，否则同第 78 条 | §5.7 |
-| 80 | checkpoint 持久化失败 | 进程内权威加后台重试 | §5.7 |
-| 81 | 进程崩溃时未投递的消息 | Thread 级别去重，宿主用原 ID 重发 | §5.2-3、§5.7 |
+| 74 | 边界投递失败 | 已实现：改为在本轮结束后续接投递 | §5.2-9 |
+| 75 | 待领取队列满 | 已实现：`Send` 阻塞等待空位 | §5.2-10 |
+| 76 | 重复调用 `th.Standby` | 已实现：同 Agent 对同 key 复用 live Standby；其他 Agent 由 store lease 排他 | §4.3 |
+| 77 | 待命中某次执行失败 | 已实现：run_failed 输入携带；同 ID 先 failed 后 delivered；仅分类失败重试一次，否则等待新宿主消息 | §4.3、§5.7 |
+| 78 | resume 被拒或会话过期 | 已实现：thread.continuity Notice 与 ≤8 KiB 前缀；无 OnRestart API | §5.7 |
+| 79 | 待命中切换模型 | 已实现：模型变化进入 fingerprint；新会话前缀或 ResumeOnly 不兼容错误，无 ResumeTolerant | §5.7 |
+| 80 | checkpoint 持久化失败 | 已实现：进程内权威加后台重试 | §5.7 |
+| 81 | 进程崩溃时未投递的消息 | 已裁决：持久回执有界去重；provider 接受至回执落盘的崩溃窗口仍可重投 | §5.2-3、§5.7 |
 | 82 | 团队 leader 某一轮失败 | 任务继续，leader 有界重试唤醒 | §7.9 |
 | 83 | 成员任务达到 `MaxActive` | 任务排队 | §7.5 |
-| 84 | 开了待命却没有人读事件 | 未调用 `Events()` 时不缓冲 | §4.3 |
-| 85 | 哪些情况保留为错误 | 忙碌、模式冲突、跨进程持有、执行结束后补充、打断不支持、消息过大、不支持续接、上限硬停、ctx 取消，各自有理由 | §5.7 |
+| 84 | 开了待命却没有人读事件 | 已实现：未调用 `Events()` 时不缓冲 | §4.3 |
+| 85 | 哪些情况保留为错误 | 已实现：忙碌、模式冲突、跨进程持有、执行结束后补充、打断不支持、消息过大、不支持续接、上限硬停、ctx 取消，各自有理由 | §5.7 |
 
 ---
 
@@ -1006,8 +1064,12 @@ for ev := range s.Events() {
 | `agent.Stream(ctx, p)` | `agent.Send(ctx, p)` |
 | `th.Run` / `th.Stream` | `th.Send` |
 | 没有运行中补充 | `s.Send` / `sb.Send` |
-| `RunFinished` 加事后 `Result()` | `Done` 携带权威结果；`RunFinished` 保留，只供参考 |
-| Thread 必须注入 store | 未注入时默认使用内存存储 |
+| `RunFinished` 加事后 `Result()` | `Done` 携带权威 Result 指针与 Err，位于所有收尾之后；RunFinished/TurnEnd 仅供参考 |
+| 只用 Result 的事件/审批等待 | 关键事件保留、普通事件聚合 Dropped；没有 Events/OnApproval 时立即审批兜底 |
+| 只转发旧 Stream 方法的包装器 | 必须转发新增 Stream.Send；执行级选项不能用于该方法 |
+| Store 只保存 resume state | 同 lease 原子保存 DeliveredMessages、EarlierGuidance、RecentTurns；实现复制与 version 防旧写者覆盖 |
+| 执行句柄的关闭 | Stream/Standby 仅 Cancel；Agent.Close 继续回收资源 |
+| Thread 必须注入 store | 未注入时默认使用每个 Agent 独立内存 store；共享/持久化需显式注入 |
 | `SubagentUpdate.Agent` 加 `Data` | 强类型字段 |
 | `a2adelegation.NewService` / `Local` / `Remote` | `team.New` / `Member{Runner}` / `Member{Remote}` |
 | `delegate_to_agent`（同步） | `team_delegate` 加事件驱动的唤醒 |
@@ -1015,7 +1077,7 @@ for ev := range s.Events() {
 | 每次运行一个 sidecar | 每个 Team 一个 listener |
 | `host-readiness-plan.md` P2-1 | 本提案 |
 
-`AGENTS.md` 需要同步修订：
+`AGENTS.md` 的 core/Driver 修订已同步；§11 与 §3 团队行保留原文，等待团队文档任务合入：
 
 - §2：执行动词只有 `Send`；`Standby` 归入 Thread。
 - §5：执行管线增加"同一次执行内续跑"阶段；`Send` 等于 `Events` 加 `Done`。
@@ -1026,19 +1088,49 @@ for ev := range s.Events() {
 - §11：`a2adelegation` 改为 `team`。
 - §15：发布门禁增加消息投递的 race 测试与各 Driver 的 Message 一致性条款。
 
-`root_api.golden` 与 `driver_api.golden` 重新冻结。根包 `With*` 数量不变。
+最终公共面已经由 testdata/root_api.golden 与 adaptertest/testdata/driver_api.golden 冻结。根包 With* 数量不变；MessageID/From/When 为 MessageOption。此次文档同步不改 golden。
 
 ---
 
 ## 13. 里程碑与验收
 
+以下“已实现”指代码与测试条目存在，不宣称发布 gate 已执行。core/Driver
+没有新增依赖；JSON/hook relay 使用标准库，Codex 复用已有 JSON-RPC 依赖。
+最终仍需全量 build/vet/test、Linux race、约定时长 fuzz、examples/snippet
+编译、API golden、四 Driver 一致性与授权 live。Codex 消息 live 必须同时
+启用 codex_live tag 与 AGENT_ADAPTOR_LIVE_CONFORMANCE=1，普通 CI 不付费。
+
 | 里程碑 | 内容 | 退出条件 |
 |---|---|---|
-| V2-M0 | `Send`/`Stream`/`Done`/`TurnEnd`/`MessageUpdate`、消息队列与状态机、SPI、ContinueResume、fake driver、`adaptertest` 消息条款 | §5.2 的 10 条合同全部有 race 测试，取消与投递竞态测试重复 1000 次稳定；`Result()` 与 `Done` 逐字段一致；`s.Send` 传入执行级选项无法编译（编译失败用例） |
-| V2-M1 | Codex app-server（immediate、Interrupt、InRun）、Claude（tool、stop、InRun）、Cursor（relay 与 Resume 降级）、`Standby`、§5.4 上限、§5.5 审批兜底 | 每个 Driver 都有"运行中投递并出现在 transcript""轮次结束时续跑""版本过低时如实报告"的 fixture 与 live 测试；§6.4 中与这些 Driver 相关的核实项全部有结论；§5.7 的故障注入测试通过：边界投递失败改为续接、待命中执行失败后消息带入下一次执行、resume 被拒后注入上下文前缀、store 故障时进程内 checkpoint 生效 |
+| V2-M0（core 已实现；通用消息一致性未覆盖） | Send/Stream/Done/TurnEnd/MessageUpdate、hub、冻结 SPI、ContinueResume、fake driver 与专项测试 | 现有测试覆盖 §5.2、Done/Result 与选项作用域；发布仍须补通用 adaptertest 消息条款并记录 Linux race/关键竞态 1000 次结果 |
+| V2-M1（功能已落地；版本探测/live 有偏差） | Codex immediate/Interrupt/InRun、Claude tool/stop、Cursor relay/Resume、Standby、上限与审批兜底 | §6.4 保守裁决已有专项测试；故障注入覆盖 requeue、携带、连续性与 store 恢复。尚未自动探测 CLI 版本；授权 live/race/fuzz 需单独记录，不能标全绿 |
 | V2-M2 | `hosttools/team`：事件驱动 leader、4 个工具、单 listener、worker 审批、Preamble 名册、强类型事件、showcase 改写 | 并行委派、纠偏、worker 提问唤醒 leader、worker 审批、待命中途用户发话五条路径全部通过；任意成员数下 leader 的 `tools/list` 恒为 4 |
 | V2-M3 | TaskStore、`teamstoretest`、恢复与 Fork、issue-daemon 示例 | 模拟 multica 的 M1–M8 全部通过；kill 进程后消息无丢失、无重复（宿主用原 `MessageID` 重发），任务被标记为 `interrupted`；leader 某一轮失败后任务不受影响并成功重新唤醒 |
-| V2-M4 | CodeBuddy、ACP（Kiro、Grok）；bridges（A2A、AG-UI、会话录制器） | §6.4 的全部核实项有结论，并按结论落地；A2A 对 working task 的消息转为 `s.Send` |
+| V2-M4（Driver 部分有结论） | CodeBuddy 已实现保守 Resume；ACP（Kiro/Grok）不在当前树内；bridges 状态由团队文档任务核对 | CodeBuddy 三种 transport 每轮完成与 Resume 通过专项合同；不能声称 ACP 或全部 live 已验证 |
 | V2-M5 | multica 影子接入 | 投递成功率与失败原因分布不低于 multica 原实现；`claude_supplement.go`、`cursor_supplement.go` 可以删除 |
 
 每个里程碑合入前满足 v2 `AGENTS.md` 的全部发布门禁，并同步更新 godoc、专题文档、五种语言 README 与 CHANGELOG。
+
+### 13.1 实施偏差与未关闭门禁（core / Driver）
+
+- SPI 最终为 MessageAck 结构体、typed MessageUnit、MessageItem.MaybeDuplicate、
+  MessageCapabilityResolver 与 TurnCompleted；早期的 Ack(id, error) 不是可用合同。
+- Agent.Send 内部不创建匿名 key/record；保留无状态兼容 Driver 的运行路径。
+  Agent.Close 保留，不受执行句柄“只有 Cancel”决策影响。
+- Standby.Send 的请求 ctx 在接纳后不再撤回输入；Stream.Send ctx 则约束未 Claim 输入。
+  重复待命只在同 Agent 复用；共享 store 的其他 Agent 必须竞争 ownership。
+- TurnEnd 反映 provider 轮次；Driver TurnCompleted 没有 Err，sink 不回填后续失败。
+  最终失败、取消、校验和清理结果统一由 Done.Err 裁决。
+- Claude/CodeBuddy 的未验证能力、Cursor Windows 均已保守裁决，不是悬而未决的
+  成功承诺。Claude 注册拒绝/超时明确降级；Cursor dynamic relay 失败在 Run 内
+  Notice，不伪称 resolver/Inspect 完成了 probe。
+- MinVersion 没有自动版本裁剪；Retention、OnRestart、ResumeTolerant
+  均不在根 API golden（ReasonLimitExceeded 已随团队上限导出）。单 Agent 达 MaxTurns 正常结束并在
+  Undelivered 返回剩余消息；不能把其他规划文档的 API 写成已落地。
+- Raw 完整保留，不默认截断；未读关键事件会持有结果。持久回执不保证关闭
+  provider 接受与 receipt 落盘之间的崩溃窗口，§5.2 的去重承诺据此收窄。
+- adaptertest 已冻结 SPI 并验证原有 DRV/CAP/EVT/RUN/TRN/RSP/SES 条款，尚无
+  MessagePort/MessageCapability/TurnCompleted 的通用消息 conformance 条款。
+  当前证据来自 core 与四 Driver 专项测试，不能据此宣称该退出条件已关闭。
+- 取消/Claim 竞态重复 1000 次、Linux race、约定时长 fuzz、全部 provider live
+  仍需在发布环境逐项记录；本文件不以 hermetic fixture 替代 live 证据。

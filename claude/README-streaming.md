@@ -26,9 +26,9 @@ portable combination.
 ## In-run messages
 
 `Descriptor.Messages` declares the `tool` and `stop` boundaries, continuation
-inside `Driver.Run`, and a minimum Claude Code version of **2.1.110**. Interrupt
-and persistence of delivered hook context across resume are unverified and are
-both reported as false. The driver does not currently probe the installed CLI
+inside `Driver.Run`, and a minimum Claude Code version of **2.1.110**. Interrupt,
+echo-confirmed delivery, and persistence of delivered hook context across resume
+are unverified and are all reported as false. The driver does not currently probe the installed CLI
 version; `MinVersion` is a requirement, not evidence of a successful probe.
 
 `ResolveMessageCapability` reports these capabilities only for stream-json
@@ -43,14 +43,17 @@ When messages are enabled, an acknowledged SDK `initialize` request registers
 `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and `Stop`.
 Only the registered main-agent callbacks open the delivery window; callbacks
 with an `agent_id` or `parent_tool_use_id` receive an empty success response.
-Tool callbacks inject claimed text as `additionalContext`. Stop claims both
-`stop` and `turn_end` messages and returns `decision: block` with the combined
+UserPromptSubmit and tool callbacks claim at the `tool` boundary and inject
+claimed text as `additionalContext`. Stop claims both `stop` and `turn_end`
+messages and returns `decision: block` with the combined
 reason when input remains. An empty Stop closes the window.
 
-Claims occur synchronously while parsing; a separate writer serializes actual
-pipe writes and acknowledges each item afterwards. Failed writes requeue items;
-cancellation fails them without requeueing. A write already in progress decides
-its own outcome. Both per-run and resident processes use this same mechanism.
+Core buffers input before hook registration or a delivery window opens; a
+closed window is not an admission error. Claims occur synchronously while
+parsing; a separate writer serializes pipe writes and acknowledges each item
+afterwards. This is write acceptance, not provider echo confirmation. Failed
+writes requeue items for turn-end continuation; cancellation fails them without
+requeueing. A write already in progress decides its own outcome. Both per-run and resident processes use this same mechanism.
 Residents initialize hooks once per process and bind a fresh MessagePort for
 each call; changing whether messages are enabled replaces the resident process.
 
@@ -68,7 +71,12 @@ Every continued Stop segment and the final provider result emits one
 `RunEventTurnCompleted` with an increasing index. The final response retains
 the whole call's Raw and Transcript, the final segment's result text, and the
 provider result's Usage. Interim Stop events have no Usage because that hook
-does not report per-segment token accounting.
+does not report per-segment token accounting. Core publishes `TurnEnd` for these
+turns and the authoritative `Done` only after execution finalization. A message
+that arrives after the last empty Stop claim is resumed by core from the healthy
+checkpoint. With `PersistsDelivered=false`, core retains bounded earlier
+guidance for later Thread resumes; a crash before receipt persistence can still
+replay input after recovery.
 
 ## Event and result contract
 
