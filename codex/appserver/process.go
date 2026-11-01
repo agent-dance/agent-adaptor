@@ -199,7 +199,7 @@ func (p *Process) IsClosed() bool {
 	}
 }
 
-// RunTurn sends exactly one prompt on the loaded thread. promptSent becomes
+// RunTurn sends a prompt and any in-run continuations on the loaded thread. promptSent becomes
 // true immediately before turn/start because an RPC error cannot prove the
 // peer did not receive the request; callers must not replay in that case.
 func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSink) (result driver.Response, promptSent bool, err error) {
@@ -218,51 +218,13 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	stdoutStart := p.stdout.Len()
 	stderrStart := p.stderr.Len()
 	state := newRunState(opts.RunID, sink)
+	state.messages = opts.Messages
 	state.setThread(p.threadID)
 	p.client.SetNotificationHandler(state.onNotification)
 	defer p.client.SetNotificationHandler(nil)
 
-	turnParams := TurnStartParams{
-		ThreadID:    p.threadID,
-		Input:       []UserInput{TextInput(opts.Prompt)},
-		CWD:         opts.CWD,
-		Model:       opts.Model,
-		Effort:      opts.Effort,
-		ServiceTier: opts.ServiceTier,
-	}
-	if opts.OutputSchema != nil {
-		turnParams.OutputSchema = append([]byte(nil), opts.OutputSchema.SchemaJSON...)
-	}
-	if opts.Approval != "" {
-		turnParams.ApprovalPolicy = opts.Approval
-	}
-	if opts.Sandbox != "" {
-		turnParams.SandboxPolicy = sandboxPolicyFor(opts.Sandbox)
-	}
-
 	promptSent = true
-	turn, startErr := p.client.TurnStart(ctx, turnParams)
-	if startErr != nil {
-		err = fmt.Errorf("codex app-server turn/start: %w", startErr)
-	} else {
-		state.setTurn(turn.Turn.ID)
-	}
-	if err == nil {
-		select {
-		case <-state.done:
-		case <-ctx.Done():
-			interruptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 500*time.Millisecond)
-			_ = p.client.TurnInterrupt(interruptCtx, TurnInterruptParams{ThreadID: p.threadID, TurnID: turn.Turn.ID})
-			cancel()
-			err = ctx.Err()
-		case <-p.waitCh:
-			if p.waitErr != nil {
-				err = fmt.Errorf("codex app-server exited before turn completion: %w", p.waitErr)
-			} else {
-				err = errors.New("codex app-server exited before turn completion")
-			}
-		}
-	}
+	err = runTurns(ctx, p.client, state, opts, p.threadID)
 	if err == nil {
 		if protocolErr := state.protocolError(); protocolErr != nil {
 			err = protocolErr

@@ -477,6 +477,16 @@ func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind st
 		Usage:   p.usage,
 		Data:    map[string]any{"payload": payload},
 	})
+	if p.sink != nil {
+		completedAt := time.Now().UTC()
+		var usage *driver.Usage
+		if p.usage != nil {
+			copyUsage := *p.usage
+			usage = &copyUsage
+		}
+		_ = p.sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Timestamp: completedAt,
+			Turn: &driver.TurnCompleted{Index: 0, Text: p.buildOutput(), Usage: usage, CompletedAt: completedAt}})
+	}
 }
 
 func (p *codexParser) emit(item driver.TranscriptItem) {

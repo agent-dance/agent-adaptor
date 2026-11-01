@@ -88,6 +88,7 @@ func buildAppServerOptions(
 		Effort:      effort,
 		ServiceTier: serviceTier,
 		RunID:       req.RunID,
+		Messages:    req.Messages,
 	}
 	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		opts.OutputSchema = req.OutputSchema
