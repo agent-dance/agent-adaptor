@@ -2,6 +2,8 @@ module github.com/agent-dance/agent-adaptor/v2
 
 go 1.26.5
 
+toolchain go1.26.10
+
 require (
 	github.com/a2aproject/a2a-go/v2 v2.3.1
 	github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20260420210844-ad3c22477b34

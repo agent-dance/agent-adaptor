@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { HttpAgent } from "@ag-ui/client";
+import { HttpAgent, contentToText } from "@ag-ui/client";
 
 // A Row models one on-screen card. Text content is NOT stored here — it lives
 // in refs (see below) so streaming tokens accumulate in event-arrival order
@@ -177,7 +177,7 @@ export default function App() {
         );
       },
       onToolCallResultEvent({ event }) {
-        toolResult.current.set(event.toolCallId, event.content);
+        toolResult.current.set(event.toolCallId, contentToText(event.content));
         setRows((prev) =>
           prev.map((r) =>
             r.id === event.toolCallId && r.kind === "tool"
