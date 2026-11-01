@@ -6,20 +6,39 @@ This live showcase runs one leader with three delegated local roles:
 leader -> plan (read-only) -> impl (workspace-write) -> review (read-only)
 ```
 
-The leader receives four scoped `team_*` tools from `hosttools/team`.
-Delegation returns a task immediately; each task completion wakes the leader. Role progress rejoins the leader's single typed
-event stream as `SubagentUpdate`, and the AG-UI bridge exposes that same stream
-to a browser as live `activityType="subagent"` messages. The CopilotKit page
-keeps the leader chat on the left and renders plan, implementation, and review
-cards in the right sidebar. Each card identifies its real provider base
-(`Claude Code`, `Codex`, `Cursor`, or `CodeBuddy`) rather than displaying the
-shared A2A transport label.
+The read-only leader uses `hosttools/team`'s four scoped tools:
+`team_delegate`, `team_send`, `team_status` and `team_cancel`. It delegates each
+stage, ends its turn, and wakes on completion to dispatch the next stage.
+`team_delegate` returns a queued task handle immediately. The roles are local
+Runners; this showcase does not start separate A2A servers.
+
+One `team.Thread("workflow").Send` execution contains the CLI workflow. Worker
+state and text progress appear as typed `SubagentUpdate` in the leader's Event
+stream. The AG-UI bridge projects worker lifecycles to
+`activityType="subagent"` messages; the CopilotKit page groups them in the right
+sidebar. Leader turns produce `TurnEnd`; the team's final `Done` and
+`Stream.Result()` agree. The web handler publishes the Team as a Runner in
+request-scoped task mode; it does not create a Standby or an input relay.
 
 The read-only plan role has a per-call `WithSchema[planFileArtifact]` contract.
-It returns a structured `PLAN.md` value (`filename`, `media_type`, `summary`,
-and Markdown `content`) without writing into the workspace. The AG-UI terminal
-activity preserves that value, and the plan card renders it as a previewable,
-downloadable file attachment.
+It returns structured `PLAN.md` data (`filename`, `media_type`, `summary`,
+Markdown `content`) without writing files. The completion notification carries
+its text to the leader, which includes it in the implementation objective.
+Full member results remain in the Team TaskStore.
+
+The frontend has renderers for provider badges and downloadable plan artifacts,
+but the current Team event projection does not populate the old Activity detail
+fields for provider display names, full text or structured results. Lifecycle
+cards are available; this showcase does not currently guarantee those rich
+badges, live worker text or a downloadable plan attachment end to end. The CLI
+audit reads the review result from TaskStore instead of assuming it is in a
+terminal worker Activity.
+
+Team owns one authenticated loopback MCP listener with execution-scoped tokens;
+workers get only messaging/status tools. The host closes the Team and then its
+Agents. Task history uses memory here, so the example provides no crash recovery.
+See the [team guide](../../../docs/team.md) for continuity, Standby, approvals,
+limits, durable recovery, Fork and Remote members.
 
 ## One-command CopilotKit verification
 
@@ -42,8 +61,9 @@ The script:
 
 Open <http://127.0.0.1:3000>. The request is already filled in, so click Send
 to begin. Loading the page and probing `/health` are free. Every submitted
-message makes one real leader call plus three real role calls and can incur
-provider charges.
+message can start real leader and worker CLI calls and incur provider charges.
+The intended workflow has three delegated role tasks; leader executions/turns
+vary as it coordinates and integrates their results.
 
 Additional role flags are passed to the Go command:
 
@@ -70,7 +90,7 @@ a wildcard CORS policy.
 
 ## CLI-only verification
 
-To run the deterministic workflow once and print its JSON audit verdict:
+To run the prescribed workflow once and print its JSON audit verdict:
 
 ```bash
 go run ./examples/showcases/team-agent-workflow -leader=claude -keep-workspace

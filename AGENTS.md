@@ -57,7 +57,7 @@ github.com/agent-dance/agent-adaptor          package adaptor
 ├── profile/                                   profile 与资源声明
 ├── threadstore/ memory/                       Thread 持久化合同与内存实现
 ├── bridges/{sse,agui,a2a,subagentstream}/     协议桥
-├── hosttools/{a2adelegation,sessionrecorder}/ 宿主可选组件
+├── hosttools/{team,sessionrecorder}/          宿主可选组件
 ├── clients/a2a/                               A2A 客户端
 └── adaptertest/                               Driver 一致性套件
 ```
@@ -292,19 +292,29 @@ Driver SPI 的所有 MUST/SHOULD、事件生命周期、Sequence/Seq 权威性�
 
 Bridges：
 
-- `bridges/sse`、`agui`、`a2a`、`subagentstream` 只做 Runner/Event/Result 与外部协议之间的翻译。
-- 不得直接调用 Driver、复制 Thread 协调或实现第二套错误/HITL 策略。
-- 外部 ThreadID/contextID 到 Thread key 的映射必须稳定且无碰撞。
-- A2A 必须保持 ExposurePolicy 的最小暴露、敏感字段过滤与错误状态映射。
-- 协议保真缺口必须通过字段补齐、明确降级事件或文档化决策解决，不得静默丢失。
+- `bridges/sse`、`agui`、`a2a` 只翻译公开 `Runner.Send` / `Stream` / `Event` / `Result` 合同；不得直接调用 Driver、复制 Thread 协调或实现第二套错误/HITL 策略。
+- `bridges/subagentstream.Project` 把现有流中的 typed `SubagentUpdate` 投影为 wire envelope；`Merge` 仅供宿主并入外部 typed worker source，必须保持父 `Done` 最后交付，不推断任务失败。Team 已组合 worker 事件，不需要再次 Merge 或独立 EventBus。
+- 外部 ThreadID/contextID 到 Thread key 的映射必须稳定且无碰撞；忙碌的任务模式不得静默并入，必须观察 `ErrThreadBusy`。
+- A2A 必须保持 ExposurePolicy 的最小暴露、敏感字段过滤与错误状态映射。当前 wire schema 未投影 `TurnEnd`、`MessageUpdate`、`SubagentUpdate`、`Done`；不得宣称完整转发团队事件。
+- 当前 A2A bridge 每次执行请求调用 `Runner.Send`，未把 working task 的补充路由到 active `Stream.Send`；不得把提案中的目标行为写成已实现合同。
+- A2A 不提供可移植的审批应答扩展、会话 Fork、输出 schema 或补充 timing 协商；生命周期字段不得伪造成可应答的远端 ApprovalRequest。协议保真缺口必须明确文档化，不得静默丢失或伪造支持。
 
 Hosttools：
 
-- `a2adelegation` 与 `sessionrecorder` 是可选宿主组件，不进入 core 词汇。
-- delegation 可以消费任意 Runner，并支持 Local/Remote 目标。
-- `delegation.Service` 负责 Registry、EventBus、Delegator、per-run MCP sidecar、结果记录与生命周期。
-- `team.Option()` 由 delegation 包发行；根包不得新增 `WithTeam`。
-- SDK 只内建协议与生命周期，不内建角色配置表、团队业务形状或自动路由。
+- `hosttools/team` 与 `sessionrecorder` 是可选宿主组件，不进入 core 六名词，也不引入根包 `WithTeam`。旧 `hosttools/a2adelegation` 已删除，不保留兼容 shim、Service 或 EventBus。
+- `team.New(team.Config{Leader, Members, Store, Limits, Surface})` 构造 composite Runner；成员必须恰好指定 Local `Runner` 或 A2A `Remote`。角色、名册、workspace、业务流程和路由由宿主选择，core 不自动选择 Agent。
+- leader 是普通 Agent，注入的 Preamble 要求委派优先：统筹、拆分、派发、纠偏、验收、集成与回答归 leader；成员能承接的工作必须派发，没有成员能承接时才亲自实现。这是模型指令；宿主可用只读 sandbox 强制纯统筹。
+- leader 通过四个固定工具 `team_delegate`、`team_send`、`team_status`、`team_cancel` 协调；Local worker 只得到 send/status 两个团队工具。工具数不随成员数增加，名册作为数据注入，不进入 Thread fingerprint。可配置前缀支持嵌套。
+- 用户只向 leader 发消息；leader 用 task handle 转达给 worker；worker 只向 leader 发消息，不能直接寻址其他成员或冒充用户。委派先登记任务再返回，不阻塞等待 worker；leader 可结束本轮，运行中的通知按 `Soon` 能力边界投递，空闲通知默认两秒合并唤醒。
+- 任务终态和 worker 显式消息唤醒 leader；进度旁注不单独唤醒，随下一次通知投递。leader 主动取消的任务不再次唤醒，未读旁注通过 `Subagents().Unread` 保留。团队只在 leader 完成收尾、所有任务静止且无待处理唤醒/投递时结束。
+- worker 的 bound `ApprovalRequest` 必须携带 `Origin{Member, Task}` 转发到同一 Event 流，共享原 exactly-once responder；宿主使用原 `Approve` / `Deny` / `Answer`。成员自己的 `Policy.Approvals` 与回调负责审批；leader 不替用户审批，team 不增加第二套策略。
+- 每个 Team 只有一个 loopback-only MCP listener。每次执行使用绑定 scope、actor、task、run、工具与可达目标的 capability token，通过 SecretEnv 注入并在 detach 时撤销；工具入参不得覆盖作者、scope、鉴权或 Remote 目标。`Team.Close(ctx)` 幂等回收 listener 与执行，不关闭宿主拥有的 Agents。
+- 具名 Team Thread 使用 `TaskStore` 保存 task、leader inbox、artifact 与 Fork lineage；匿名 Send 始终私有内存。Store 必须以 owner/token fencing、CAS revision、claim token 和原子 task/wake 提交支持恢复，并通过 `teamstoretest`。TaskStore 不替代 leader/member 的 Agent Thread stores。
+- 恢复时非终态任务先标记 `interrupted`，leader 决定重派；宿主以原 MessageID、内容、作者、timing 重交未确认消息。带 execution options 的消息在 owner 丢失后保持 Deferred，直到宿主恢复原选项并重交，禁止用新默认值执行。provider 接收与回执持久化之间崩溃仍可能重放，不能宣称 provider exactly-once。
+- `Team.Thread(key).Send` 在已有执行、live Standby 或跨进程 lease 时通过失败 Stream 返回 `ErrThreadBusy`，不能并入；补充使用原 `Stream.Send`，待命使用 `Team.Thread(key).Standby(ctx)`。Standby 无整体 Result，Cancel 只停止当前处理与队列，生命周期由首次 ctx 结束。
+- Fork 要求父/目标 scope 都空闲、无 live Standby、父 leader checkpoint 健康且目标未使用；复制终态记录与 artifact，不复制 inbox，保存 lineage 后在首次执行时 lazy Fork leader/受支持的 Local PerScope 对话。PerTask 链接清空，父 checkpoint 在子执行时解析，不能承诺调用时快照。
+- Remote 通过 `clients/a2a` 保持 discovery、origin-pinned auth 与 policy；PerScope/continue 依赖已观察到的 context。补充仅支持 Soon；拒绝必须报错。无可应答扩展的 input-required 按 RemotePolicy 等待远端策略或失败；PerScope Remote 禁止 Fork；Remote Member.Output 在构造时拒绝。连续两分钟无法观察状态报告 failed/unknown_state，初始请求不得自动重放。
+- Team 使用 `ComposeResults` 顺序保留 leader 的审计层，Usage 合计实际观察到的 leader/worker 用量，`Subagents()` 保存任务摘要，完整 worker Result 与 RemoteSnapshot 保存在 TaskStore；不得把 Remote payload 混入 leader Raw。
 - session recorder 必须记录稳定 typed Event 信封；需要持久化时不得静默退回内存。
 
 ## 12. 依赖选型原则

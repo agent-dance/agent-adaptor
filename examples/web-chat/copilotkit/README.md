@@ -5,7 +5,7 @@
 1. **Streaming**：文本、thinking、tool_call 通过一条 `stream.Events()` 通道流式传递，终局由一次 `stream.Result()` 收口。若 Driver 没有发布 assistant delta 但终局 `Result.Text` 非空，后端会在 terminal 前投影一次完整 assistant message；已有流式文本时绝不重复。
 2. **HITL**：没有安装 `OnApproval` 回调时，approval 以自带 responder 的 `*adaptor.ApprovalRequest` 事件出现在同一条流上。宿主停放请求后直接调用 `req.Approve(ctx)` / `req.Deny(ctx, reason)` / `req.Answer(ctx, option)`；`ErrApprovalResolved` 映射 HTTP 410，`ErrApprovalKindMismatch` 映射 400。`NoticeApprovalResolved` 会自动清掉 pending。
 3. **Recovery**：每个浏览器有稳定 `thread_id`，右侧面板通过 `/session/events` + `/decision/pending` 恢复历史与未决决策。`EventMeta.Sequence` 只在单次 run 内排序；跨 run 重放使用 `hosttools/sessionrecorder` 分配的 `HostSeq`。
-4. **User-prompt persistence**：user prompt 不会自动进入 SDK 持久层（thread store 只存 resume 元数据；driver 只 emit assistant 侧）。`handleAgent` 用 `userTurnEvents(lastUserMessageID(input), prompt)` 构造三段 `adaptor.TextDelta{Role: RoleUser, Phase: Start/Content/End}`，让它经过和 driver 事件相同的 fan-out。刷新页面拉 `/session/events` 即可恢复含 user 气泡的完整 transcript。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。
+4. **User-prompt persistence**：SDK 的消息回执不等于 UI transcript；示例仍需显式记录 user prompt 气泡。`handleAgent` 用 `userTurnEvents(lastUserMessageID(input), prompt)` 构造三段 `adaptor.TextDelta{Role: RoleUser, Phase: Start/Content/End}`，让它经过和 driver 事件相同的 fan-out。刷新页面拉 `/session/events` 即可恢复含 user 气泡的完整 transcript。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。
 
 后端只调用真实本机 CLI：
 
@@ -51,7 +51,7 @@ Browser
   │     │  POST /agent  (AG-UI RunAgentInput)
   │     ▼
   │  Go backend
-  │     ├─ ai.Thread(key).Stream(ctx, prompt)   →  adaptor.Stream
+  │     ├─ ai.Thread(key).Send(ctx, prompt)   →  adaptor.Stream
   │     └─ for ev := range stream.Events()      →  一条通道，两个去处
   │            ├─ recorder.Record(...)                    (历史，HostSeq 游标)
   │            ├─ translator.Translate(ev)  →  SSE        (实时)
@@ -112,35 +112,56 @@ lint、build 与 `npm audit --omit=dev --audit-level=high`。冻结时 productio
 
 如需从其他机器访问，必须显式设置监听地址与准确 Origin，例如 `ADDR=0.0.0.0:8080 CORS_ORIGIN=https://chat.example.com`；不要在不受信网络中使用 `CORS_ORIGIN=*`，因为每个请求都可能触发真实模型调用。
 
-## Visual subagent delegation hook
+## Visual team updates
 
-The backend can render remote A2A delegation progress in the same CopilotKit
-AG-UI stream. Construct a `hosttools/team.Team` with local `Member.Runner` or
-remote `Member.Remote` values and pass the Team as the bridge's Runner. The
-Team owns one authenticated MCP listener and emits worker progress on its
-single event stream as `adaptor.SubagentUpdate`. The AG-UI bridge projects those
-updates into one incrementally patched AG-UI Activity message per delegation
-(`activityType="subagent"`, `messageId=delegationId`); Claude/Codex/Cursor
-receives only the final structured MCP result. In team-workflow mode the
-CopilotKit frontend renders these Activity messages as live cards in the right
-sidebar. A role's human-facing name carries its provider base, so the card tag
-shows `Claude Code`, `Codex`, `Cursor`, or `CodeBuddy` instead of the common
-A2A transport. Structured plan output shaped as a file value is rendered as a
-previewable and downloadable `PLAN.md` attachment.
+The team showcase uses this frontend with a `hosttools/team.Team` as the
+bridge's Runner. Team contains a host-selected leader and local `Member.Runner`
+or Remote A2A `Member.Remote` entries. The default backend in this directory
+still starts one local Agent; the showcase has its own backend and launch script:
 
-This example's default main path starts one local parent CLI. Hosts that enable
-delegation should run an A2A bridge for each remote agent (see
-`examples/a2a-server` and `docs/a2a.md`), construct the service once, keep it
-alive for the equipped Agent, and close it during host shutdown. No stringly
-runtime metadata or bridge-specific run handle is involved.
+```bash
+./examples/showcases/team-agent-workflow/start-all.sh claude
+```
 
-The important boundary for UI authors: render `activityType="subagent"` as a
-nested visual group, but do not turn it into a parent assistant message. The
-Activity content may include `parentToolCallId` when the host can correlate the
-delegation sidecar with a parent provider tool-use ID, but UI code should not
-require it. `subagentId` is the stable nested group key and `runId` is its run
-scope. The parent transcript should contain the normal tool call plus the
-concise final delegation result only.
+Team owns one capability-token-protected loopback MCP listener. Its leader has
+four tools (delegate/send/status/cancel); local workers have send/status. The
+leader relays messages, while bound local worker approvals carry
+`Origin{Member, Task}` to the host. Remote input-required follows remote policy,
+with no portable local approval responder. The showcase uses noninteractive
+member policies and does not provide this backend's HITL/recovery endpoints.
+
+The single Team Event stream includes typed `SubagentUpdate` values. AG-UI
+projects their lifecycles into Activity messages with
+`activityType="subagent"`; team-workflow mode renders them as sidebar cards.
+Use the task handle for task identity and `Member` for roster identity. There
+is no separate delegation bus or extra subagent merge to attach.
+
+The frontend can render provider names, worker text and structured `PLAN.md`
+attachments when those fields are supplied. Current Team updates carry typed
+state/delta/summary but do not populate the older Activity detail fields used
+by those rich renderers. Do not assume provider badges, live text or plan
+attachments are available from this showcase. Full local worker results and
+Remote protocol artifacts are available through the host's Team TaskStore;
+this backend does not expose a TaskStore download endpoint.
+
+The maintained backend here uses task-mode `Thread.Send`. The showcase publishes
+a Team Runner through request-scoped SSE. Neither example is a Standby UI or
+an endpoint for supplementing an active execution. A host adding ongoing chat
+should create `Team.Thread(key).Standby(serverCtx)`, subscribe once and broadcast
+its events; route user input through `Standby.Send` and a stop button through
+`Standby.Cancel`. Task-mode sends to a busy named scope report `ErrThreadBusy`.
+
+For Remote members, the host provides Agent Card URL, trusted-origin auth and
+policy in `RemoteSpec`; no per-member A2A server is needed for local members.
+Close the Team during shutdown, then close the host-owned Agents. See the
+[team guide](../../../docs/team.md) and [A2A guide](../../../docs/a2a.md) for
+recovery, Fork and Remote timing/schema/approval limits.
+
+UI authors should keep worker Activities in their own visual groups, without
+turning them into parent assistant messages. `parentToolCallId` is optional;
+`subagentId` identifies an Activity within its `runId`. A delegated tool result
+is a task handle/admission result; worker completion reaches the leader later
+as a notification. It is not a synchronous final MCP result.
 
 ## 相关文档
 
