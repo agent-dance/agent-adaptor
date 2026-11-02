@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	agentadaptor "github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 type recordingSink struct {

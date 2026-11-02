@@ -6,17 +6,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
-	"github.com/agent-dance/agent-adaptor/threadstore"
-	"github.com/agent-dance/agent-adaptor/tool"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 )
 
 // One option vocabulary, two scopes: the same WithX used in New(...) is the
-// agent-level default, used in Run/Stream(...) it is a per-call override.
+// agent-level default, used in Send(...) it is a per-call override.
 // The merge rule is a single sentence: the nearer scope wins; skills append,
 // everything else replaces. Scope-illegal combinations are compile errors in
 // both directions.
@@ -24,7 +24,7 @@ import (
 // Option is the full set New accepts. It writes agent-level defaults.
 //
 // Passing an Option-only value (WithThreadStore, WithEventBuffer, ...) to
-// Run/Stream does not compile: "adaptor.Option does not implement
+// Send does not compile: "adaptor.Option does not implement
 // adaptor.CallOption (missing method ApplyRun)" means the option is
 // construction-scope only.
 type Option interface {
@@ -32,7 +32,7 @@ type Option interface {
 	ApplyNew(*AgentSettings)
 }
 
-// CallOption is the set Run/Stream accept. It writes the effective settings
+// CallOption is the set Send accept. It writes the effective settings
 // of one invocation (a clone of the agent defaults).
 //
 // CallOption intentionally does NOT embed Option: call-scope-only options
@@ -44,7 +44,7 @@ type CallOption interface {
 }
 
 // SharedOption is the return type of dual-scope options: used in New it is
-// the Agent's default, used in Run/Stream it overrides this call only. Most
+// the Agent's default, used in Send it overrides this call only. Most
 // options that configure execution values return it.
 type SharedOption interface {
 	Option
@@ -59,6 +59,7 @@ type SharedOption interface {
 // Add* appends). The root package's own options go through the same methods
 // so the extension surface stays self-validating.
 type RunSettings struct {
+	message   messageSettings
 	model     string
 	timeout   time.Duration
 	workspace string
@@ -122,7 +123,7 @@ type RunSettings struct {
 	// appends rather than replaces — an ecosystem option must compose with
 	// the agent's other providers, not silently displace them — and
 	// de-duplicates by provider identity so passing the same option in both
-	// New and Run attaches it once.
+	// New and Send attaches it once.
 	runServices []RunServiceProvider
 }
 
@@ -233,7 +234,7 @@ func (s *RunSettings) SetServices(specs []ServiceSpec) {
 // extension surface behind ecosystem options such as
 // delegation.Service.Option(). Providers append rather than replace, and a
 // provider already present is not added twice: the same option value used in
-// both New and Run attaches exactly once, which is what keeps its MCP server
+// both New and Send attaches exactly once, which is what keeps its MCP server
 // key unique (a duplicate would fail the run before launch).
 func (s *RunSettings) AddRunServiceProvider(p RunServiceProvider) {
 	if p == nil {
@@ -324,9 +325,8 @@ type AgentSettings struct {
 	RunSettings
 
 	// threadStore backs Agent.Thread (stateful conversations).
-	// Nil is valid: Threads then fail their runs with
-	// ErrThreadStoreRequired while the stateless Agent paths stay
-	// unaffected.
+	// New replaces nil with a private in-memory store. Agent.Send remains
+	// stateless regardless of the configured store.
 	threadStore threadstore.Store
 
 	// eventBuffer sizes the per-run event channel (0 = default 1024).
@@ -371,11 +371,12 @@ type AgentSettings struct {
 // SetThreadStore injects the thread storage backend (stateful conversations).
 func (s *AgentSettings) SetThreadStore(store threadstore.Store) { s.threadStore = store }
 
-// SetEventBuffer sets the per-run ordinary-event buffer size. Terminal
-// delivery uses separate internal reserve capacity.
+// SetEventBuffer sets the per-run ordinary-event capacity. Critical events
+// enqueue immediately even when ordinary capacity is exhausted.
 func (s *AgentSettings) SetEventBuffer(n int) { s.eventBuffer = n }
 
-// SetBlockingEvents switches event delivery to blocking (no-drop) mode.
+// SetBlockingEvents enables ordinary-event backpressure; see WithBlockingEvents
+// for critical-event and Result-only consumption semantics.
 func (s *AgentSettings) SetBlockingEvents() { s.blockingEvents = true }
 
 // SetProfile replaces the driver-native profile selection.
@@ -414,14 +415,14 @@ type callOptionFunc func(*RunSettings)
 func (f callOptionFunc) ApplyRun(s *RunSettings) { f(s) }
 
 // WithModel selects the model. In New it is the Agent's default model; in
-// Run/Stream it overrides this invocation only (delivered to the driver as
+// Send it overrides this invocation only (delivered to the driver as
 // the per-run model override).
 func WithModel(m string) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) { s.SetModel(m) })
 }
 
 // WithTimeout bounds one run's wall-clock time. In New it is the default
-// budget for every run; in Run/Stream it overrides this invocation only.
+// budget for every run; in Send it overrides this invocation only.
 // The SDK enforces it via context deadline; a run that exceeds it fails with
 // context.DeadlineExceeded.
 func WithTimeout(d time.Duration) SharedOption {
@@ -430,7 +431,7 @@ func WithTimeout(d time.Duration) SharedOption {
 
 // WithSpawn forces a fresh provider process instead of reusing the driver's
 // default persistent process. In New it applies to every invocation; in
-// Run/Stream it overrides this invocation only. Stateless Agent runs and
+// Send it overrides this invocation only. Stateless Agent runs and
 // drivers without persistent-process support already spawn regardless.
 func WithSpawn() SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) { s.SetSpawn() })
@@ -475,7 +476,7 @@ func WithPolicy(p Policy) SharedOption {
 // *ApprovalRequest event on the Stream instead (form B); either way an
 // unconsumed request times out into the Policy.Approvals fallback.
 //
-// In New the handler is the agent default; in Run/Stream it overrides this
+// In New the handler is the agent default; in Send it overrides this
 // invocation only ("nearer scope wins").
 func OnApproval(h ApprovalHandler) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) { s.SetApprovalHandler(h) })
@@ -485,28 +486,29 @@ func OnApproval(h ApprovalHandler) SharedOption {
 // conversations: with it, Agent.Thread persists and resumes
 // driver checkpoints across runs and processes (memory.NewStore() for
 // single-process hosts, a durable implementation for services). Without it
-// Threads fail their runs with ErrThreadStoreRequired. Construction scope
-// only; passing it to Run/Stream is a compile error (missing method
+// Threads use a private in-memory store. Construction scope
+// only; passing it to Send is a compile error (missing method
 // ApplyRun).
 func WithThreadStore(store threadstore.Store) Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetThreadStore(store) })
 }
 
-// WithEventBuffer sets the per-run ordinary-event buffer size used by the
-// streaming pipeline (default 1024). The SDK keeps separate internal capacity
-// for the terminal event, so RunFinished remains deliverable when cancellation
-// occurs while the ordinary buffer is full. When the consumer falls behind and
-// the ordinary buffer fills, droppable events are surfaced as one aggregated
-// Dropped{Count} marker. Construction scope only.
+// WithEventBuffer sets the per-run ordinary-event capacity (default 1024).
+// Capacity counts buffered and queued events. Critical lifecycle, message,
+// turn, approval, notice and drop events always enqueue immediately, even at
+// capacity. Default drop mode aggregates discarded deltas into Dropped.
+// Construction scope only.
 func WithEventBuffer(n int) Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetEventBuffer(n) })
 }
 
-// WithBlockingEvents switches ordinary event delivery from the default
-// drop-with-marker strategy to blocking: during normal execution EmitStream
-// and Emit wait for the consumer and do not drop events. Cancel still releases
-// blocked producers and may abandon pending ordinary events; the terminal
-// event remains reserved. Construction scope only.
+// WithBlockingEvents makes ordinary Emit/EmitStream producers wait while the
+// combined channel and queue are at capacity. Waiting releases internal locks;
+// Cancel and context cancellation release blocked producers. Critical lifecycle,
+// message, turn, approval, notice and drop events always enqueue immediately.
+// A Result-only caller discards ordinary events and retains a critical-only
+// log with a Dropped summary; call Events first to consume ordinary events.
+// Construction scope only.
 func WithBlockingEvents() Option {
 	return newOptionFunc(func(s *AgentSettings) { s.SetBlockingEvents() })
 }
@@ -529,7 +531,7 @@ type SkillMaterializer = skill.Materializer
 
 // WithSkills appends skill references. This is the single append-merged
 // option family: in New the refs are the agent's default skills, in
-// Run/Stream they extend (never displace) the defaults for this invocation
+// Send they extend (never displace) the defaults for this invocation
 // only. Bare keys (skill.Key) are resolved through the SkillProvider;
 // inline values (skill.Dir / skill.FS / skill.Inline) are taken at face
 // value. Duplicate keys must be structurally equal — conflicting
@@ -553,7 +555,7 @@ func WithSkillMaterializer(m SkillMaterializer) Option {
 }
 
 // WithMCP replaces the MCP server set as a whole value ("everything else
-// replaces"): in New it is the agent default, in Run/Stream it substitutes
+// replaces"): in New it is the agent default, in Send it substitutes
 // the default for this invocation only. Calling WithMCP() with no servers
 // is an explicit clear — the run sees no MCP servers even when the agent
 // default has some. Server specs are validated against the driver's
@@ -582,7 +584,7 @@ func WithProfile(sel profile.Selection) Option {
 //     non-nil — an explicitly empty slice declares "none";
 //   - Instructions replace and declare when non-nil.
 //
-// In New the resources are agent defaults; in Run/Stream they override
+// In New the resources are agent defaults; in Send they override
 // this invocation only. Every declared resource lands in the run's
 // ProfilePayload, and ProfileState reports truthfully whether the Driver
 // actually materialized it.
@@ -614,7 +616,7 @@ func WithProfileResources(res profile.Resources) SharedOption {
 // adaptor.SharedWorkspace{} to reuse the project directory,
 // adaptor.GitWorktreeWorkspace{...} for an isolated worktree,
 // adaptor.DriverManagedWorkspace{} to let the Driver choose. It replaces as a
-// whole value: in New it is the agent default, in Run/Stream it overrides this
+// whole value: in New it is the agent default, in Send it overrides this
 // invocation only.
 //
 // WithWorkspace(dir) and WithWorkspaceSpec compose: the directory is the base
@@ -657,7 +659,7 @@ func WithServiceManager(m ServiceManager) Option {
 
 // WithTools installs the immutable host-defined Tool set owned by this Agent.
 // It is construction-scope only: Tools are a stable capability and
-// authorization surface, so passing WithTools to Run or Stream is a compile
+// authorization surface, so passing WithTools to Send is a compile
 // error. Repeated WithTools options replace the whole set; WithTools() clears
 // an earlier declaration.
 //
@@ -680,11 +682,29 @@ func WithTools(definitions ...tool.Definition) Option {
 // event channel, and is detached once the run's events are done.
 //
 // Providers append rather than replace, and the same provider is never attached
-// twice — passing one option value in both New and Run is safe.
+// twice — passing one option value in both New and Send is safe.
 func WithRunServices(providers ...RunServiceProvider) SharedOption {
 	return sharedOptionFunc(func(s *RunSettings) {
 		for _, p := range providers {
 			s.AddRunServiceProvider(p)
 		}
 	})
+}
+
+// CapMessageTurns lowers the resolved turn budget without replacing other
+// policy fields. Composite runners apply this after caller options to enforce
+// their remaining budget. Nonpositive values panic as a programming error.
+func (s *RunSettings) CapMessageTurns(remaining int) {
+	if remaining <= 0 {
+		panic("adaptor: turn budget must be positive")
+	}
+	p := Policy{}
+	if s.policy != nil {
+		p = *s.policy
+	}
+	if p.Messages.MaxTurns == 0 {
+		p.Messages.MaxTurns = defaultMaxTurns
+	}
+	p.Messages.MaxTurns = min(p.Messages.MaxTurns, remaining)
+	s.policy = &p
 }

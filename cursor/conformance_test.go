@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	adaptertest "github.com/agent-dance/agent-adaptor/adaptertest"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptertest "github.com/agent-dance/agent-adaptor/v2/adaptertest"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // cursorLiveGate decides whether the live conformance probes (EVT-*,
@@ -73,6 +73,8 @@ func TestCursorDriverConformance(t *testing.T) {
 		adaptertest.WithExpectedDetectedModel("gpt-5"),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
+		adaptertest.WithMessageFixture("relay", cursorMessageFixture(true)),
+		adaptertest.WithMessageFixture("unmanaged", cursorMessageFixture(false)),
 		liveOpt,
 	}
 	if live {

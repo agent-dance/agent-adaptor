@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
 // shortLeases shrinks the engine lease knobs for the duration of one test.
@@ -139,7 +139,7 @@ func TestThreadAcquireLeaseClassifiesOnlyGenuineConflictAsBusy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newSessionFake("acquire-error")
 			store := &acquireErrorStore{Store: memory.NewStore(), err: tc.storeErr}
-			_, err := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store)).Thread("thread-key").Run(context.Background(), "go")
+			_, err := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store)).Thread("thread-key").Send(context.Background(), "go").Result()
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("error = %v, want errors.Is(_, %v)", err, tc.want)
 			}
@@ -157,7 +157,7 @@ func TestThreadPrelaunchCleanupErrorSurvivesPublicClassification(t *testing.T) {
 	ctx := context.Background()
 	base := memory.NewStore()
 	seedFake := newSessionFake("prelaunch-cleanup-seed")
-	if _, err := adaptor.New(seedFake.fakeDriver, adaptor.WithThreadStore(base)).Thread("prelaunch-cleanup").Run(ctx, "seed"); err != nil {
+	if _, err := adaptor.New(seedFake.fakeDriver, adaptor.WithThreadStore(base)).Thread("prelaunch-cleanup").Send(ctx, "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	record := *activeRecord(t, base, "prelaunch-cleanup")
@@ -166,7 +166,7 @@ func TestThreadPrelaunchCleanupErrorSurvivesPublicClassification(t *testing.T) {
 
 	fake := newSessionFake("prelaunch-cleanup")
 	store := &failReleaseStore{Store: base}
-	_, err := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store)).Thread("prelaunch-cleanup").Run(ctx, "must not launch")
+	_, err := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store)).Thread("prelaunch-cleanup").Send(ctx, "must not launch").Result()
 	if !errors.Is(err, adaptor.ErrThreadCheckpointMissing) {
 		t.Fatalf("error = %v, want ErrThreadCheckpointMissing", err)
 	}
@@ -179,7 +179,7 @@ func TestThreadPrelaunchCleanupErrorSurvivesPublicClassification(t *testing.T) {
 
 	leaseLost := &threadstore.LeaseLostError{Target: "cleanup"}
 	classifiedStore := &releaseErrorStore{Store: base, err: leaseLost}
-	_, err = adaptor.New(newSessionFake("prelaunch-cleanup-classification").fakeDriver, adaptor.WithThreadStore(classifiedStore)).Thread("prelaunch-cleanup").Run(ctx, "must not launch")
+	_, err = adaptor.New(newSessionFake("prelaunch-cleanup-classification").fakeDriver, adaptor.WithThreadStore(classifiedStore)).Thread("prelaunch-cleanup").Send(ctx, "must not launch").Result()
 	if !errors.Is(err, adaptor.ErrThreadCheckpointMissing) {
 		t.Fatalf("error = %v, cleanup classification replaced ErrThreadCheckpointMissing", err)
 	}
@@ -218,12 +218,18 @@ func TestThreadLeaseRenewalKeepsLongRunExclusive(t *testing.T) {
 	}
 
 	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
-	stream := agent.Thread("jobs/long-1").Stream(context.Background(), "long job")
+	stream := agent.Thread("jobs/long-1").Send(context.Background(), "long job")
 	<-started
-	<-renewed
+	runEnded := make(chan error, 1)
+	go func() { _, err := stream.Result(); runEnded <- err }()
+	select {
+	case <-renewed:
+	case err := <-runEnded:
+		t.Fatalf("run ended before renewal threshold: %v", err)
+	}
 
 	// Well past the original TTL, the thread is still exclusively held.
-	if _, err := agent.Thread("jobs/long-1").Run(context.Background(), "concurrent"); !errors.Is(err, adaptor.ErrThreadBusy) {
+	if _, err := agent.Thread("jobs/long-1").Send(context.Background(), "concurrent").Result(); !errors.Is(err, adaptor.ErrThreadBusy) {
 		t.Fatalf("concurrent run after TTL: err = %v, want ErrThreadBusy", err)
 	}
 
@@ -250,7 +256,7 @@ func TestThreadLeaseRenewalFailureAbortsRunAndSkipsPersist(t *testing.T) {
 	fake.blockUntilCancelled()
 
 	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
-	_, err := agent.Thread("jobs/flaky-1").Run(context.Background(), "long job")
+	_, err := agent.Thread("jobs/flaky-1").Send(context.Background(), "long job").Result()
 	if !errors.Is(err, adaptor.ErrThreadLeaseLost) {
 		t.Fatalf("run with failing renewal: err = %v, want ErrThreadLeaseLost", err)
 	}
@@ -275,7 +281,7 @@ func TestThreadCancelCompletesWhenRenewHookIgnoresContext(t *testing.T) {
 	fake := newFakeDriver()
 	fake.blockUntilCancelled()
 
-	stream := adaptor.New(fake, adaptor.WithThreadStore(store)).Thread("renew-hang-cancel").Stream(context.Background(), "go")
+	stream := adaptor.New(fake, adaptor.WithThreadStore(store)).Thread("renew-hang-cancel").Send(context.Background(), "go")
 	<-store.started
 	stream.Cancel()
 
@@ -319,7 +325,7 @@ func TestThreadRenewWatchdogAbortsContextIgnoringHook(t *testing.T) {
 	fake := newFakeDriver()
 	fake.blockUntilCancelled()
 
-	stream := adaptor.New(fake, adaptor.WithThreadStore(store)).Thread("renew-hang-watchdog").Stream(context.Background(), "go")
+	stream := adaptor.New(fake, adaptor.WithThreadStore(store)).Thread("renew-hang-watchdog").Send(context.Background(), "go")
 	<-store.started
 
 	type outcome struct {
@@ -369,7 +375,7 @@ func TestThreadDriverReturnReportsAbandonedRenewHook(t *testing.T) {
 		}, nil
 	}
 
-	stream := adaptor.New(fake, adaptor.WithThreadStore(store)).Thread("renew-hang-return").Stream(context.Background(), "go")
+	stream := adaptor.New(fake, adaptor.WithThreadStore(store)).Thread("renew-hang-return").Send(context.Background(), "go")
 	<-store.started
 	close(driverReturn)
 
@@ -415,7 +421,7 @@ func TestThreadLeaseReleaseFailureIsObservable(t *testing.T) {
 	}
 
 	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
-	res, err := agent.Thread("release-error").Run(context.Background(), "go")
+	res, err := agent.Thread("release-error").Send(context.Background(), "go").Result()
 	if res != nil {
 		t.Fatalf("cleanup infrastructure failure returned success Result: %+v", res)
 	}

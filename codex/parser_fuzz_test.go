@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // FuzzCodexBatchParser keeps the official Codex JSONL parser total over
@@ -23,9 +23,6 @@ func FuzzCodexBatchParser(f *testing.F) {
 		assertCodexFuzzCheckpointShape(t, parsed.checkpointForOutcome(0, "", false, nil))
 		if checkpoint := parsed.checkpointForOutcome(exitCode, "", false, nil); checkpoint != nil {
 			t.Fatalf("non-zero exit %d produced checkpoint %#v", exitCode, checkpoint)
-		}
-		if structured := parsed.nativeStructuredOutputForOutcome(exitCode, "", false, nil); structured != nil {
-			t.Fatalf("non-zero exit %d produced native structured output %#v", exitCode, structured)
 		}
 		poisoned := snapshotCodexStdout("{broken\n" + string(stdout))
 		if checkpoint := poisoned.checkpointForOutcome(0, "", false, nil); checkpoint != nil {

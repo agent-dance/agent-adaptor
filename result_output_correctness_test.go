@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func TestRunAndStreamResultAllLayersAreEquivalent(t *testing.T) {
@@ -33,11 +33,11 @@ func TestRunAndStreamResultAllLayersAreEquivalent(t *testing.T) {
 	}
 	agent := adaptor.New(fake)
 
-	runResult, err := agent.Run(context.Background(), "prompt")
+	runResult, err := agent.Send(context.Background(), "prompt", adaptor.MessageID("initial")).Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	stream := agent.Stream(context.Background(), "prompt")
+	stream := agent.Send(context.Background(), "prompt", adaptor.MessageID("initial"))
 	for range stream.Events() {
 	}
 	streamResult, err := stream.Result()
@@ -69,7 +69,7 @@ func TestRunErrorCarriesCompletePartialResult(t *testing.T) {
 		Transcript: []driver.TranscriptItem{{Kind: driver.TranscriptResult, IsError: true, Subtype: "failed"}},
 		Failure:    &driver.RunFailure{Code: driver.FailureAgentError, Message: "provider failed"},
 	}
-	result, err := adaptor.New(fake).Run(context.Background(), "prompt")
+	result, err := adaptor.New(fake).Send(context.Background(), "prompt").Result()
 	if result != nil {
 		t.Fatalf("success Result = %#v", result)
 	}
@@ -107,11 +107,11 @@ func TestUsageObservationIsEquivalentAcrossRunStreamAndRunError(t *testing.T) {
 			success := newFakeDriver()
 			success.response = driver.Response{Usage: tc.usage}
 			agent := adaptor.New(success)
-			runResult, err := agent.Run(context.Background(), "prompt")
+			runResult, err := agent.Send(context.Background(), "prompt", adaptor.MessageID("initial")).Result()
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
-			stream := agent.Stream(context.Background(), "prompt")
+			stream := agent.Send(context.Background(), "prompt", adaptor.MessageID("initial"))
 			for range stream.Events() {
 			}
 			streamResult, err := stream.Result()
@@ -126,11 +126,11 @@ func TestUsageObservationIsEquivalentAcrossRunStreamAndRunError(t *testing.T) {
 				run  func(*adaptor.Agent) error
 			}{
 				{name: "RunError from Run", run: func(agent *adaptor.Agent) error {
-					_, err := agent.Run(context.Background(), "prompt")
+					_, err := agent.Send(context.Background(), "prompt", adaptor.MessageID("initial")).Result()
 					return err
 				}},
 				{name: "RunError from Stream", run: func(agent *adaptor.Agent) error {
-					stream := agent.Stream(context.Background(), "prompt")
+					stream := agent.Send(context.Background(), "prompt", adaptor.MessageID("initial"))
 					for range stream.Events() {
 					}
 					_, err := stream.Result()

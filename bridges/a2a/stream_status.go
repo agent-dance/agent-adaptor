@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 const (
@@ -56,7 +56,8 @@ type AdapterStreamEventV1 struct {
 	Delta string `json:"delta,omitempty"`
 	// Args contains a complete structured tool argument snapshot when available.
 	Args map[string]any `json:"args,omitempty"`
-	// Result contains a structured tool result snapshot when available.
+	// Result contains a structured tool result or message.update, turn.end,
+	// or done lifecycle payload. Lifecycle Result fields use safe projections.
 	Result map[string]any `json:"result,omitempty"`
 	// Role identifies the text message role.
 	Role string `json:"role,omitempty"`
@@ -120,14 +121,14 @@ func decodeAdapterStreamEventWire(data any) (event AdapterStreamEventV1, matched
 	if err := json.Unmarshal(raw, &header); err != nil || header.Schema != AdapterStreamSchemaV1 {
 		return event, false, nil
 	}
-	if len(raw) > adapterStreamMaxBytes {
-		return event, true, fmt.Errorf("adapter stream status exceeds %d bytes", adapterStreamMaxBytes)
-	}
 	var envelope AdapterStreamEnvelopeV1
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return event, true, fmt.Errorf("decode adapter stream status: %w", err)
 	}
 	event = envelope.Event
+	if len(raw) > adapterStreamMaxBytes && !requiredLifecycleKind(event.Kind) {
+		return event, true, fmt.Errorf("adapter stream status exceeds %d bytes", adapterStreamMaxBytes)
+	}
 	if strings.TrimSpace(event.Kind) == "" {
 		return event, true, errors.New("adapter stream status kind is empty")
 	}
@@ -159,6 +160,8 @@ func decodeAdapterStreamEventWire(data any) (event AdapterStreamEventV1, matched
 // request fields, and detailed Dropped markers. A false matched result means
 // the value belongs to another DataPart schema. Its V1 suffix is intentional
 // because it selects the versioned wire schema.
+// Required message.update, turn.end and done payloads have no bridge size cap;
+// other envelopes are limited to 64 KiB.
 func DecodeAdapterEventV1(data any) (decoded adaptor.Event, matched bool, err error) {
 	event, matched, err := decodeAdapterStreamEventWire(data)
 	if err != nil || !matched {
@@ -186,6 +189,8 @@ func DecodeAdapterEventV1(data any) (decoded adaptor.Event, matched bool, err er
 		decoded = decodeApprovalResolved(event)
 	case "stream.dropped":
 		decoded = decodeDropped(event.Raw)
+	case "message.update", "turn.end", "done":
+		decoded, err = decodeLifecycle(event)
 	default:
 		return nil, true, fmt.Errorf("unsupported adapter event kind %q", event.Kind)
 	}
@@ -341,7 +346,7 @@ func supportedAdapterStreamKind(kind string) bool {
 	case "text.start", "text.content", "text.end",
 		"tool_call.start", "tool_call.args", "tool_call.end", "tool_call.result",
 		"reasoning.start", "reasoning.content", "reasoning.end",
-		"hitl.requested", "hitl.resolved", "stream.dropped":
+		"hitl.requested", "hitl.resolved", "stream.dropped", "message.update", "turn.end", "done":
 		return true
 	default:
 		return false

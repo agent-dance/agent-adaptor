@@ -7,16 +7,16 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/clihelper"
-	"github.com/agent-dance/agent-adaptor/internal/driverutil"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
-	"github.com/agent-dance/agent-adaptor/internal/profileagents"
-	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
-	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
-	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
-	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/clihelper"
+	"github.com/agent-dance/agent-adaptor/v2/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileagents"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileconfig"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilehooks"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilesnapshot"
 )
 
 // DriverType is the stable descriptor type for the built-in CodeBuddy driver.
@@ -82,6 +82,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},
+		Messages:     driver.MessageCapability{Continue: driver.ContinueResume},
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			// CodeBuddy CLI has no controllable flag for web search or
 			// browser tooling (browser lives in the agent-browser plugin),
@@ -125,7 +126,7 @@ func (adapter) ValidateConfig(cfg any) error {
 	return nil
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -135,10 +136,10 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	bindings, err := effectiveBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "codebuddy_profile_error", Level: "fail", Message: "CodeBuddy profile resolution failed.", Detail: err.Error()})
-		return driverutil.SummarizeEnvironment(DriverType, checks), nil
+		return codebuddyVersion(ctx, config).Environment(DriverType, (adapter{}).Descriptor().Messages, checks), nil
 	}
 	checks = append(checks, authChecks(bindings)...)
-	return driverutil.SummarizeEnvironment(DriverType, checks), nil
+	return codebuddyVersion(ctx, config).Environment(DriverType, (adapter{}).Descriptor().Messages, checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
@@ -315,10 +316,11 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			raw, persistentErr := writer.run(ctx, spec, sink, p)
 			if persistentErr == nil {
 				raw.Terminal = p.terminal
-				return buildPersistentCodeBuddyResponse(req, p, raw, prep), nil
+				return buildPersistentCodeBuddyResponse(req, p, raw, prep)
 			}
 			if !errors.Is(persistentErr, errPersistentFallback) {
-				return driver.Response{}, persistentErr
+				emitErr := p.completeStream(p.failureForOutcome(-1), -1, "", false)
+				return driver.Response{}, errors.Join(persistentErr, emitErr)
 			}
 		} else if controlRequested {
 			return driver.Response{}, errControlSinkRequired
@@ -436,9 +438,11 @@ func (a adapter) prepareRun(ctx context.Context, cfg Config, req driver.Request)
 	}, nil
 }
 
-func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.RawStreams, prep runPrep) driver.Response {
+func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.RawStreams, prep runPrep) (driver.Response, error) {
 	failure := p.failureForOutcome(0)
-	p.completeStream(failure, 0, "", false)
+	if err := p.completeStream(failure, 0, "", false); err != nil {
+		return driver.Response{}, err
+	}
 	checkpoint := p.checkpointForOutcome(0, "", false, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
@@ -454,7 +458,7 @@ func buildPersistentCodeBuddyResponse(req driver.Request, p *parser, raw driver.
 		Summary:         p.finalSummary(),
 		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:         failure,
-	}
+	}, nil
 }
 
 func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req driver.Request, sink driver.EventSink, prep runPrep) (driver.Response, error) {
@@ -487,8 +491,8 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 		if reason == "" {
 			reason = fmt.Sprintf("codebuddy resume session %q is unavailable", req.Session.State.ResumeID)
 		}
-		p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
-		return driver.Response{}, &engine.ResumeRejectedError{Reason: reason}
+		emitErr := p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, errors.Join(&engine.ResumeRejectedError{Reason: reason}, emitErr)
 	}
 	failure := p.failureForOutcome(result.ExitCode)
 
@@ -503,7 +507,9 @@ func (adapter) runHeadless(ctx context.Context, cfg Config, command string, req 
 			failure,
 		)
 	}
-	p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
+	if err := p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut); err != nil {
+		return driver.Response{}, err
+	}
 
 	checkpoint := p.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {

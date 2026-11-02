@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 // ResolveAGUIAgent returns the driver name for AG-UI streaming examples.
@@ -47,7 +47,7 @@ func NewAGUIStreamingAgent(cwd string) (*adaptor.Agent, string) {
 //     demo can run end-to-end on the local CLI.
 //
 // It is a SharedOption, so it can seed adaptor.New (as here) or override a
-// single Run/Stream call.
+// single Send call.
 func AGUIExamplePolicy() adaptor.SharedOption {
 	switch ResolveAGUIAgent() {
 	case AgentClaude:

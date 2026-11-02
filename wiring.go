@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 )
 
 // The request-resolution pipeline turns the merged effective settings of one
@@ -24,7 +24,7 @@ type resolvedRun struct {
 
 // resolveRun resolves one invocation. Every failure here is a pre-launch
 // failure: the driver is never started, and the error surfaces through the
-// stream's Result() (or Run's error return) with the engine sentinel chain
+// returned Stream's Result() and Done event with the engine sentinel chain
 // intact (ErrInvalidOutputSchema, ErrMCPTransportUnsupported,
 // ErrSkillNotFound, ...).
 func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSettings, res *runResources) (resolvedRun, error) {
@@ -51,8 +51,8 @@ func (a *Agent) resolveRun(ctx context.Context, runID, prompt string, eff *RunSe
 		return resolvedRun{}, err
 	}
 
-	// 3. Structured output and provider transport: consumer Run and Stream
-	// both use the SDK's unified Event pipeline, so neither public method
+	// 3. Structured output and provider transport: reading Result or Events
+	// uses the same SDK Event pipeline, so neither consumption form
 	// chooses the provider protocol. Prefer the driver's richer native
 	// transport only when StreamSupport advertises one; if a requested
 	// schema cannot be honored there, negotiate the batch transport instead.

@@ -1,0 +1,195 @@
+{
+  "agent": "codex",
+  "candidates": [
+    {
+      "accepted": false,
+      "directory": "C:\\Users\\buthim\\AppData\\Local\\Temp\\agent-adaptor-pr30-sdlc-run02\\candidates\\01",
+      "engineer_task": "8336c57cb692b0f15b3ab2dceeb347be7a3c2a348b14d72cfad1c9ab4f94d423",
+      "hash": "9801d8a05ad933ce774eeaf08c183118c4992a6fe9883fd950ee1b8e6fbe88dc",
+      "joins": {
+        "reviewer": {
+          "at": "2026-11-01T16:18:57.4542742Z",
+          "task": "aaab0ca0f1c447f6d51f9d0d207afb3bf2250231793bf1d9a830682f6a986100"
+        },
+        "verifier": {
+          "at": "2026-11-01T16:18:59.9157118Z",
+          "task": "b3222d8b215a37d60b6c1b7f9500e5b4b2d36c6764d52b4ee856451875c956f9"
+        }
+      },
+      "manifest": [
+        {
+          "path": "acceptance_test.go",
+          "sha256": "3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1"
+        },
+        {
+          "path": "go.mod",
+          "sha256": "8e7cb46679d52fc477d4f99d40c8bb88706ab0a2ce9cff5ed5eccd46dd29671d"
+        },
+        {
+          "path": "router.go",
+          "sha256": "fdae605839cd51e9dff3aefaad6abce87473263c8839a7913fa9a46da0846462"
+        }
+      ],
+      "reviewer_read": {
+        "at": "2026-11-01T16:19:04.3339704Z",
+        "candidate_hash": "9801d8a05ad933ce774eeaf08c183118c4992a6fe9883fd950ee1b8e6fbe88dc",
+        "id": "read-round-01-aaab0ca0f1c447f6d51f9d0d207afb3bf2250231793bf1d9a830682f6a986100",
+        "task": "aaab0ca0f1c447f6d51f9d0d207afb3bf2250231793bf1d9a830682f6a986100"
+      },
+      "round": 1
+    }
+  ],
+  "checks": [
+    {
+      "argv": [
+        "C:\\Users\\buthim\\go\\pkg\\mod\\golang.org\\toolchain@v0.0.1-go1.26.10.windows-amd64\\bin\\go.exe",
+        "test",
+        "-json",
+        "-timeout=60s",
+        "-count=1",
+        "./..."
+      ],
+      "candidate_hash": "9801d8a05ad933ce774eeaf08c183118c4992a6fe9883fd950ee1b8e6fbe88dc",
+      "check": "test",
+      "exit_code": 1,
+      "finished": "2026-11-01T16:19:22.3750574Z",
+      "id": "check-001",
+      "log": "checks/check-001.log",
+      "log_sha256": "f9ebea2c44cafc62fff7702973f74f28621ad4957e98373cb37754bb1a0fb7dd",
+      "started": "2026-11-01T16:19:22.2013893Z",
+      "task": "b3222d8b215a37d60b6c1b7f9500e5b4b2d36c6764d52b4ee856451875c956f9"
+    },
+    {
+      "argv": [
+        "C:\\Users\\buthim\\go\\pkg\\mod\\golang.org\\toolchain@v0.0.1-go1.26.10.windows-amd64\\bin\\go.exe",
+        "vet",
+        "./..."
+      ],
+      "candidate_hash": "9801d8a05ad933ce774eeaf08c183118c4992a6fe9883fd950ee1b8e6fbe88dc",
+      "check": "vet",
+      "exit_code": 1,
+      "finished": "2026-11-01T16:19:28.8672059Z",
+      "id": "check-002",
+      "log": "checks/check-002.log",
+      "log_sha256": "f9ebea2c44cafc62fff7702973f74f28621ad4957e98373cb37754bb1a0fb7dd",
+      "started": "2026-11-01T16:19:28.6331781Z",
+      "task": "b3222d8b215a37d60b6c1b7f9500e5b4b2d36c6764d52b4ee856451875c956f9"
+    }
+  ],
+  "cleanup_error": "",
+  "effort": "xhigh",
+  "error": "workflow ended in stage \"review\"\nhost recorded 3 protocol violations\ntask 8fb5958974c1d4474ece15d54d0213dd6c494d36d28f4879940efec6b66fd402/verifier ended interrupted\ntask 66530e6b2e90611e2f4bce838c80401ca326ee0e8df0e97e08896647ff9b5586/reviewer ended interrupted",
+  "finished": "2026-11-01T16:25:24.4482573Z",
+  "history": [
+    {
+      "at": "2026-11-01T16:04:00.8057627Z",
+      "detail": "plan",
+      "stage": "launch",
+      "task": "planner"
+    },
+    {
+      "at": "2026-11-01T16:04:07.2778954Z",
+      "detail": "planner",
+      "stage": "member_begin",
+      "task": "c96d96019710f181fcbcdd8f7fa4b9cd0c2e387779b48771e69d142863937d01"
+    },
+    {
+      "at": "2026-11-01T16:07:57.4021638Z",
+      "detail": "Plan uses the complete fixed specification supplied in task instructions. workflow_begin confirms plan round 1, the expected specification hash, no candidate and no violations. Coverage includes router.go scope, parsing precedence, Unicode matching, ordering and routing authority. No files changed or acceptance checks run. Host verification and independent candidate review remain required.",
+      "stage": "plan_accepted",
+      "task": "c96d96019710f181fcbcdd8f7fa4b9cd0c2e387779b48771e69d142863937d01"
+    },
+    {
+      "at": "2026-11-01T16:08:10.6892642Z",
+      "detail": "implement",
+      "stage": "launch",
+      "task": "engineer"
+    },
+    {
+      "at": "2026-11-01T16:08:17.7205113Z",
+      "detail": "engineer",
+      "stage": "member_begin",
+      "task": "8336c57cb692b0f15b3ab2dceeb347be7a3c2a348b14d72cfad1c9ab4f94d423"
+    },
+    {
+      "at": "2026-11-01T16:18:23.6870109Z",
+      "detail": "9801d8a05ad933ce774eeaf08c183118c4992a6fe9883fd950ee1b8e6fbe88dc",
+      "stage": "candidate_frozen",
+      "task": "8336c57cb692b0f15b3ab2dceeb347be7a3c2a348b14d72cfad1c9ab4f94d423"
+    },
+    {
+      "at": "2026-11-01T16:18:48.8309031Z",
+      "detail": "review",
+      "stage": "launch",
+      "task": "reviewer"
+    },
+    {
+      "at": "2026-11-01T16:18:48.8420037Z",
+      "detail": "review",
+      "stage": "launch",
+      "task": "verifier"
+    },
+    {
+      "at": "2026-11-01T16:18:57.4542742Z",
+      "detail": "reviewer",
+      "stage": "review_join",
+      "task": "aaab0ca0f1c447f6d51f9d0d207afb3bf2250231793bf1d9a830682f6a986100"
+    },
+    {
+      "at": "2026-11-01T16:18:59.9157118Z",
+      "detail": "verifier",
+      "stage": "review_join",
+      "task": "b3222d8b215a37d60b6c1b7f9500e5b4b2d36c6764d52b4ee856451875c956f9"
+    },
+    {
+      "at": "2026-11-01T16:18:59.9157118Z",
+      "detail": "9801d8a05ad933ce774eeaf08c183118c4992a6fe9883fd950ee1b8e6fbe88dc",
+      "stage": "review_barrier_released"
+    },
+    {
+      "at": "2026-11-01T16:19:04.3339704Z",
+      "detail": "read-round-01-aaab0ca0f1c447f6d51f9d0d207afb3bf2250231793bf1d9a830682f6a986100",
+      "stage": "candidate_read",
+      "task": "aaab0ca0f1c447f6d51f9d0d207afb3bf2250231793bf1d9a830682f6a986100"
+    },
+    {
+      "at": "2026-11-01T16:19:22.3755632Z",
+      "detail": "check-001",
+      "stage": "check_finished",
+      "task": "b3222d8b215a37d60b6c1b7f9500e5b4b2d36c6764d52b4ee856451875c956f9"
+    },
+    {
+      "at": "2026-11-01T16:19:28.8682105Z",
+      "detail": "check-002",
+      "stage": "check_finished",
+      "task": "b3222d8b215a37d60b6c1b7f9500e5b4b2d36c6764d52b4ee856451875c956f9"
+    },
+    {
+      "at": "2026-11-01T16:23:10.441122Z",
+      "detail": "invalid finding",
+      "stage": "violation"
+    },
+    {
+      "at": "2026-11-01T16:24:17.2186936Z",
+      "detail": "out-of-order or duplicate launch: verifier in review",
+      "stage": "violation"
+    },
+    {
+      "at": "2026-11-01T16:24:17.2434911Z",
+      "detail": "out-of-order or duplicate launch: reviewer in review",
+      "stage": "violation"
+    }
+  ],
+  "model": "gpt-6.1-sol",
+  "spec_hash": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+  "stage": "review",
+  "started": "2026-11-01T16:03:38.9728985Z",
+  "success": false,
+  "task_count": 6,
+  "version": 1,
+  "violations": [
+    "invalid finding",
+    "out-of-order or duplicate launch: verifier in review",
+    "out-of-order or duplicate launch: reviewer in review"
+  ]
+}

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/testutil"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/testutil"
 )
 
 func TestCodexBatchRunPreservesUnclassifiedProcessOutcome(t *testing.T) {

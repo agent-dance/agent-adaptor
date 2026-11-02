@@ -1,0 +1,36 @@
+◇ injected env (1) from .env.worktree // tip: ◈ encrypted .env [www.dotenvx.com]
+
+Running 4 tests using 1 worker
+
+[1A[2K◇ injected env (0) from .env.worktree // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+
+[1A[2K[1/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:296:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › same development task: real server to daemon to provider to UI
+[1A[2K[2/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:313:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › current comment receipt, retry identity, ordinary reply queued after Done
+[1A[2K[3/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:381:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › UI stop and start over uses a cancelled task and a fresh task
+[1A[2K  1) [chromium] › e2e/agent-adaptor-shadow.spec.ts:381:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › UI stop and start over uses a cancelled task and a fresh task 
+
+    Error: Actual task omitted its artifact workspace
+
+      220 |     const result = task.result as Json | null;
+      221 |     const dir = task.durable_work_dir || task.work_dir || result?.work_dir;
+    > 222 |     if (typeof dir !== "string" || !dir) throw new Error("Actual task omitted its artifact workspace");
+          |                                                ^
+      223 |     return dir;
+      224 |   }
+      225 |   async artifacts(task: ShadowTask, names: string[]) {
+        at Harness.artifactDirectory (/mnt/c/Users/buthim/.codex/worktrees/multica-pr30-shadow/multica/e2e/agent-adaptor-shadow.spec.ts:222:48)
+        at Harness.artifacts (/mnt/c/Users/buthim/.codex/worktrees/multica-pr30-shadow/multica/e2e/agent-adaptor-shadow.spec.ts:226:22)
+        at /mnt/c/Users/buthim/.codex/worktrees/multica-pr30-shadow/multica/e2e/agent-adaptor-shadow.spec.ts:399:25
+        at run (/mnt/c/Users/buthim/.codex/worktrees/multica-pr30-shadow/multica/e2e/agent-adaptor-shadow.spec.ts:276:25)
+        at /mnt/c/Users/buthim/.codex/worktrees/multica-pr30-shadow/multica/e2e/agent-adaptor-shadow.spec.ts:383:5
+
+    Error Context: output/playwright/agent-adaptor-shadow/multica-sdk-20261101T183255Z/test-results/agent-adaptor-shadow-actua-f49bf-elled-task-and-a-fresh-task-chromium/error-context.md
+
+
+[1A[2K◇ injected env (0) from .env.worktree // tip: ⌘ enable debugging { debug: true }
+
+[1A[2K[4/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:407:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › real Chat Steer, withdrawal and independent session isolation
+[1A[2K  1 failed
+    [chromium] › e2e/agent-adaptor-shadow.spec.ts:381:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › UI stop and start over uses a cancelled task and a fresh task 
+  3 passed (8.3m)
+make: *** [Makefile:176: env-exec] Error 1

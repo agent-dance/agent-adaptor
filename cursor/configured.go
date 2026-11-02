@@ -3,8 +3,8 @@ package cursor
 import (
 	"context"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 )
 
 // CommonConfig carries the provider-independent CLI and process defaults embedded
@@ -25,6 +25,10 @@ type Config struct {
 	Model string
 	// Mode selects the Cursor Agent CLI mode. Empty uses the CLI default.
 	Mode Mode
+	// HookRelay overrides the hook relay argv. Empty uses this executable with
+	// the SDK's hidden relay argument. The host must call RunHookRelayIfRequested
+	// first in main, before application initialization or argument parsing.
+	HookRelay []string
 }
 
 // engineConfig converts the package-owned Config into the engine config the
@@ -89,6 +93,13 @@ type configuredDriver struct {
 
 var _ driver.Driver = configuredDriver{}
 var _ driver.SessionConfigFingerprinter = configuredDriver{}
+var _ driver.MessageCapabilityResolver = configuredDriver{}
+
+// ResolveMessageCapability resolves workspace support using the captured config
+// unless a direct SPI caller supplies an explicit request config.
+func (d configuredDriver) ResolveMessageCapability(req driver.Request) driver.MessageCapability {
+	return d.adapter.ResolveMessageCapability(d.requestWithConfig(req))
+}
 
 const sessionConfigFingerprintDomain = DriverType + "/configured-driver/v1;session-codec/v1"
 
@@ -173,5 +184,6 @@ func (d configuredDriver) requestWithConfig(req driver.Request) driver.Request {
 
 func cloneConfig(cfg Config) Config {
 	cfg.CommonConfig = cfg.CommonConfig.Clone()
+	cfg.HookRelay = append([]string(nil), cfg.HookRelay...)
 	return cfg
 }

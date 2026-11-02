@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/tool"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 )
 
 const hostedToolServerKey = "agent-adaptor-tools"
@@ -53,7 +53,7 @@ func TestWithToolsUsesStableExistingRuntimeMCPPipeline(t *testing.T) {
 	})
 
 	for run := 0; run < 2; run++ {
-		if _, err := agent.Run(context.Background(), "use echo"); err != nil {
+		if _, err := agent.Send(context.Background(), "use echo").Result(); err != nil {
 			t.Fatalf("run %d: %v", run+1, err)
 		}
 	}
@@ -102,7 +102,7 @@ func TestWithToolsInvalidAndDuplicateDefinitionsFailBeforeDriver(t *testing.T) {
 			fake := toolCapableFake()
 			agent := adaptor.New(fake, adaptor.WithTools(test.definitions...))
 			t.Cleanup(func() { _ = agent.Close(context.Background()) })
-			if _, err := agent.Run(context.Background(), "must not launch"); !errors.Is(err, tool.ErrInvalidDefinition) {
+			if _, err := agent.Send(context.Background(), "must not launch").Result(); !errors.Is(err, tool.ErrInvalidDefinition) {
 				t.Fatalf("Run error = %v, want tool.ErrInvalidDefinition", err)
 			}
 			if fake.runCount() != 0 {
@@ -118,7 +118,7 @@ func TestWithToolsInvalidAndDuplicateDefinitionsFailBeforeDriver(t *testing.T) {
 			adaptor.WithTools(),
 		)
 		t.Cleanup(func() { _ = agent.Close(context.Background()) })
-		if _, err := agent.Run(context.Background(), "launch without hosted tools"); err != nil {
+		if _, err := agent.Send(context.Background(), "launch without hosted tools").Result(); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
 		if got := fake.request(t, 0).MCP.Servers; len(got) != 0 {
@@ -134,16 +134,16 @@ func TestWithToolsIsIndependentOfPerCallWithMCPClearAndDetectsCollision(t *testi
 	))
 	t.Cleanup(func() { _ = agent.Close(context.Background()) })
 
-	if _, err := agent.Run(context.Background(), "still has tools", adaptor.WithMCP()); err != nil {
+	if _, err := agent.Send(context.Background(), "still has tools", adaptor.WithMCP()).Result(); err != nil {
 		t.Fatalf("WithMCP clear run: %v", err)
 	}
 	if got := fake.request(t, 0).MCP.Servers; len(got) != 1 || got[0].Key != hostedToolServerKey {
 		t.Fatalf("MCP servers after per-call clear = %+v, want hosted Tools server", got)
 	}
 
-	_, err := agent.Run(context.Background(), "collision",
+	_, err := agent.Send(context.Background(), "collision",
 		adaptor.WithMCP(mcp.HTTP(hostedToolServerKey, "https://example.com/mcp")),
-	)
+	).Result()
 	if !errors.Is(err, adaptor.ErrInvalidMCPConfig) {
 		t.Fatalf("collision error = %v, want ErrInvalidMCPConfig", err)
 	}
@@ -159,7 +159,7 @@ func TestWithToolsRejectsBearerEnvAliasingFromMCPAndRunServices(t *testing.T) {
 	))
 	t.Cleanup(func() { _ = agent.Close(context.Background()) })
 
-	if _, err := agent.Run(context.Background(), "learn resolved transport"); err != nil {
+	if _, err := agent.Send(context.Background(), "learn resolved transport").Result(); err != nil {
 		t.Fatalf("initial Run: %v", err)
 	}
 	ownedEnv := fake.request(t, 0).MCP.Servers[0].BearerTokenEnvVar
@@ -167,9 +167,9 @@ func TestWithToolsRejectsBearerEnvAliasingFromMCPAndRunServices(t *testing.T) {
 		t.Fatal("hosted Tool request has no bearer environment variable")
 	}
 
-	_, err := agent.Run(context.Background(), "must reject explicit alias",
+	_, err := agent.Send(context.Background(), "must reject explicit alias",
 		adaptor.WithMCP(mcp.HTTP("external", "https://example.com/mcp", mcp.WithBearerTokenEnv(ownedEnv))),
-	)
+	).Result()
 	if !errors.Is(err, adaptor.ErrInvalidMCPConfig) {
 		t.Fatalf("explicit MCP alias error = %v, want ErrInvalidMCPConfig", err)
 	}
@@ -189,7 +189,7 @@ func TestWithToolsRejectsBearerEnvAliasingFromMCPAndRunServices(t *testing.T) {
 			},
 		}}},
 	}
-	_, err = agent.Run(context.Background(), "must reject runtime alias", adaptor.WithRunServices(provider))
+	_, err = agent.Send(context.Background(), "must reject runtime alias", adaptor.WithRunServices(provider)).Result()
 	if !errors.Is(err, adaptor.ErrInvalidMCPConfig) {
 		t.Fatalf("runtime MCP alias error = %v, want ErrInvalidMCPConfig", err)
 	}
@@ -207,7 +207,7 @@ func TestWithToolsRequiresDriverHTTPMCPSupportBeforeLaunch(t *testing.T) {
 		hostedToolDefinition("echo", tool.Revision("echo/v1")),
 	))
 	t.Cleanup(func() { _ = agent.Close(context.Background()) })
-	if _, err := agent.Run(context.Background(), "must not launch"); !errors.Is(err, adaptor.ErrMCPTransportUnsupported) {
+	if _, err := agent.Send(context.Background(), "must not launch").Result(); !errors.Is(err, adaptor.ErrMCPTransportUnsupported) {
 		t.Fatalf("Run error = %v, want ErrMCPTransportUnsupported", err)
 	}
 	if fake.runCount() != 0 {
@@ -223,7 +223,7 @@ func TestThreadWithToolsRequiresRevisionAndReusesStableRuntime(t *testing.T) {
 			adaptor.WithTools(hostedToolDefinition("echo")),
 		)
 		t.Cleanup(func() { _ = agent.Close(context.Background()) })
-		if _, err := agent.Thread("thread").Run(context.Background(), "must not launch"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+		if _, err := agent.Thread("thread").Send(context.Background(), "must not launch").Result(); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 			t.Fatalf("Thread.Run error = %v, want ErrThreadIncompatible", err)
 		}
 		if fake.runCount() != 0 {
@@ -242,10 +242,10 @@ func TestThreadWithToolsRequiresRevisionAndReusesStableRuntime(t *testing.T) {
 		)
 		t.Cleanup(func() { _ = agent.Close(context.Background()) })
 		thread := agent.Thread("thread")
-		if _, err := thread.Run(context.Background(), "first"); err != nil {
+		if _, err := thread.Send(context.Background(), "first").Result(); err != nil {
 			t.Fatalf("first: %v", err)
 		}
-		if _, err := thread.Run(context.Background(), "second"); err != nil {
+		if _, err := thread.Send(context.Background(), "second").Result(); err != nil {
 			t.Fatalf("second: %v", err)
 		}
 		first := fake.request(t, 0)
@@ -272,7 +272,7 @@ func TestToolCatalogRevisionChangesThreadFingerprintAtStableEndpoint(t *testing.
 		adaptor.WithTools(hostedToolDefinition("echo", tool.Revision("echo/v1"))),
 	)
 	defer func() { _ = firstAgent.Close(context.Background()) }()
-	if _, err := firstAgent.Thread("thread").Run(context.Background(), "first"); err != nil {
+	if _, err := firstAgent.Thread("thread").Send(context.Background(), "first").Result(); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 	first := fake.request(t, 0)
@@ -282,7 +282,7 @@ func TestToolCatalogRevisionChangesThreadFingerprintAtStableEndpoint(t *testing.
 		adaptor.WithTools(hostedToolDefinition("echo", tool.Revision("echo/v2"))),
 	)
 	defer func() { _ = secondAgent.Close(context.Background()) }()
-	if _, err := secondAgent.Thread("thread").Run(context.Background(), "changed revision"); err != nil {
+	if _, err := secondAgent.Thread("thread").Send(context.Background(), "changed revision").Result(); err != nil {
 		t.Fatalf("changed revision: %v", err)
 	}
 	second := fake.request(t, 1)
@@ -335,7 +335,7 @@ func TestToolCatalogResumesThreadAcrossAgentRestartAndEphemeralPortChange(t *tes
 		adaptor.WithTools(hostedToolDefinition("echo", tool.Revision("echo/v1"))),
 		adaptor.WithRunServices(stableAttachment()),
 	)
-	if _, err := firstAgent.Thread("thread").Run(context.Background(), "first"); err != nil {
+	if _, err := firstAgent.Thread("thread").Send(context.Background(), "first").Result(); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 	first := firstDriver.request(t, 0)
@@ -363,7 +363,7 @@ func TestToolCatalogResumesThreadAcrossAgentRestartAndEphemeralPortChange(t *tes
 		adaptor.WithRunServices(stableAttachment()),
 	)
 	defer func() { _ = secondAgent.Close(context.Background()) }()
-	if _, err := secondAgent.Thread("thread").Run(context.Background(), "second"); err != nil {
+	if _, err := secondAgent.Thread("thread").Send(context.Background(), "second").Result(); err != nil {
 		t.Fatalf("second: %v", err)
 	}
 	second := secondDriver.request(t, 0)

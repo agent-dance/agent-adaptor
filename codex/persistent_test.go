@@ -14,17 +14,21 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/testutil"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/tool"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/testutil"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 )
 
 const codexHelperEnv = "GO_WANT_AGENT_ADAPTOR_CODEX_HELPER"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(codexHelperEnv) == "1" {
+		if len(os.Args) == 2 && os.Args[1] == "--version" {
+			fmt.Println("codex-cli 0.166.0")
+			os.Exit(0)
+		}
 		os.Exit(runCodexHelper())
 	}
 	os.Exit(m.Run())
@@ -83,10 +87,10 @@ func TestPersistentCodexReusesAppServerWithHostDefinedTools(t *testing.T) {
 		}
 	}()
 	thread := agent.Thread("codex-tools-persistent")
-	if _, err := thread.Run(context.Background(), "one"); err != nil {
+	if _, err := thread.Send(context.Background(), "one").Result(); err != nil {
 		t.Fatalf("first turn: %v", err)
 	}
-	if _, err := thread.Run(context.Background(), "two"); err != nil {
+	if _, err := thread.Send(context.Background(), "two").Result(); err != nil {
 		t.Fatalf("second turn: %v", err)
 	}
 	if got := helperSpawnCount(t, spawnFile); got != 1 {
@@ -311,6 +315,7 @@ func TestPersistentCodexNativeSchemaUsesPerTurnFieldWithoutHandoff(t *testing.T)
 	first := runCodexTurn(t, a, req)
 
 	structuredReq := resumedCodexRequest(req, first)
+	structuredReq.Streaming = false
 	structuredReq.StructuredOutputSource = driver.StructuredOutputSourceNative
 	structuredReq.OutputSchema = &driver.OutputSchema{
 		Format:     driver.OutputFormatJSONSchema,
@@ -492,6 +497,7 @@ type helperRequest struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
+	Result json.RawMessage `json:"result"`
 }
 
 type helperResponse struct {
@@ -500,6 +506,9 @@ type helperResponse struct {
 }
 
 func runCodexHelper() int {
+	if os.Getenv("CODEX_MSG_SCENARIO") != "" {
+		return runCodexMessageConformanceHelper()
+	}
 	spawnFile := os.Getenv("CODEX_HELPER_SPAWN_FILE")
 	activeFile := os.Getenv("CODEX_HELPER_ACTIVE_FILE")
 	overlapFile := os.Getenv("CODEX_HELPER_OVERLAP_FILE")
@@ -527,6 +536,34 @@ func runCodexHelper() int {
 		if mode == "fail_open_once" && spawnNo == 1 && req.Method == "initialize" {
 			return 21
 		}
+		if mode == "f2_policy_deny" && req.Method == "" && string(req.ID) == `"mcp-approval"` {
+			var response struct {
+				Action string `json:"action"`
+			}
+			if json.Unmarshal(req.Result, &response) != nil || response.Action != "decline" {
+				return 57
+			}
+			writeHelperRejectedTool(writer, turn, "host rejected MCP tool call")
+			continue
+		}
+		if strings.HasPrefix(mode, "f2_mcp_") && req.Method == "" && string(req.ID) == `"mcp-approval"` {
+			var response struct {
+				Action string `json:"action"`
+			}
+			if json.Unmarshal(req.Result, &response) != nil || response.Action != strings.TrimPrefix(mode, "f2_mcp_") {
+				return 56
+			}
+			writeHelperMessageCompletion(writer, turn, "completed", "mcp-action:"+response.Action)
+			continue
+		}
+		if path := os.Getenv("CODEX_HELPER_RPC_FILE"); path != "" && req.Method != "" {
+			file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				return 61
+			}
+			_ = json.NewEncoder(file).Encode(req)
+			_ = file.Close()
+		}
 		switch req.Method {
 		case "initialize":
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"userAgent": "fake-codex"}})
@@ -540,6 +577,9 @@ func runCodexHelper() int {
 			}
 			_ = json.Unmarshal(req.Params, &params)
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"thread": map[string]any{"id": params.ThreadID}}})
+			if mode == "f2_resume_stale" {
+				writeHelperNotification(writer, "thread/tokenUsage/updated", map[string]any{"threadId": params.ThreadID, "turnId": "turn-previous", "tokenUsage": map[string]any{"last": map[string]any{"inputTokens": 1, "outputTokens": 2}, "total": map[string]any{"inputTokens": 101, "outputTokens": 202, "cachedInputTokens": 3}}})
+			}
 		case "turn/start":
 			turn++
 			appendHelperRecord(os.Getenv("CODEX_HELPER_TURN_FILE"))
@@ -550,7 +590,11 @@ func runCodexHelper() int {
 				continue
 			}
 			var turnParams struct {
-				OutputSchema json.RawMessage `json:"outputSchema"`
+				OutputSchema   json.RawMessage `json:"outputSchema"`
+				ApprovalPolicy string          `json:"approvalPolicy"`
+				SandboxPolicy  struct {
+					Type string `json:"type"`
+				} `json:"sandboxPolicy"`
 			}
 			_ = json.Unmarshal(req.Params, &turnParams)
 			turnID := fmt.Sprintf("turn-%d", turn)
@@ -559,16 +603,117 @@ func runCodexHelper() int {
 			if len(turnParams.OutputSchema) > 0 {
 				text = `{"answer":42}`
 			}
+			if strings.HasPrefix(mode, "structured") {
+				_, _ = fmt.Fprintln(os.Stderr, "structured diagnostic")
+				if hasProcessArg("--output-schema") || len(turnParams.OutputSchema) == 0 {
+					return 62
+				}
+				if mode == "structured_invalid" {
+					text = "not json"
+				}
+				if mode == "structured_mismatch" {
+					text = `{"answer":"wrong"}`
+				}
+			}
+			if mode == "f2_stale" {
+				// Resume replay and frames already on the wire before turn/start's
+				// response are deliberately routed after the new run is installed.
+				writeHelperNotification(writer, "thread/tokenUsage/updated", helperUsage("other-thread", "foreign", 9000, 9000))
+				if turn > 1 {
+					writeHelperNotification(writer, "thread/tokenUsage/updated", helperUsage("thread-1", fmt.Sprintf("turn-%d", turn-1), 5*(turn-1), 5))
+					writeHelperNotification(writer, "turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": fmt.Sprintf("turn-%d", turn-1), "status": "completed"}})
+				}
+			}
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"turn": map[string]any{"id": turnID, "status": "inProgress"}}})
 			writeHelperNotification(writer, "turn/started", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": "inProgress"}})
+			if mode == "structured_malformed" {
+				_, _ = writer.WriteString("{broken\n")
+				_ = writer.Flush()
+				continue
+			}
+			if mode == "structured_missing" {
+				writeHelperNotification(writer, "turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": "completed"}})
+				continue
+			}
+			if strings.HasPrefix(mode, "structured") {
+				writeHelperNotification(writer, "item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": itemID + "-draft", "type": "agentMessage", "text": `{"answer":1}`}})
+			}
+			if mode == "f2_cancel" {
+				writeHelperNotification(writer, "item/started", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": "shell-running", "type": "commandExecution", "command": "long shell command", "cwd": "/tmp", "status": "inProgress"}})
+				continue
+			}
+			if mode == "f2_policy_deny" || mode == "f2_policy_never" {
+				if turnParams.SandboxPolicy.Type != "readOnly" || !processHasMCPApproval("agent-adaptor-tools", "prompt") {
+					return 58
+				}
+				item := map[string]any{"id": "delegate-call", "type": "mcpToolCall", "server": "agent-adaptor-tools", "tool": "team_delegate", "arguments": map[string]any{"member": "worker"}, "status": "inProgress"}
+				writeHelperNotification(writer, "item/started", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": item})
+				if mode == "f2_policy_never" {
+					if turnParams.ApprovalPolicy != "never" {
+						return 59
+					}
+					// Codex refuses a prompt-requiring tool under Never before
+					// sending an elicitation; it publishes a failed tool result.
+					writeHelperRejectedTool(writer, turn, "MCP tool call requires approval, but approval policy is never")
+					continue
+				}
+				if turnParams.ApprovalPolicy != "on-request" {
+					return 60
+				}
+				writeHelperJSON(writer, map[string]any{"id": "mcp-approval", "method": "mcpServer/elicitation/request", "params": map[string]any{"threadId": "thread-1", "turnId": turnID, "serverName": "agent-adaptor-tools", "mode": "form", "message": "Allow team_delegate?", "requestedSchema": map[string]any{"type": "object", "properties": map[string]any{}}}})
+				continue
+			}
+			if strings.HasPrefix(mode, "f2_mcp_") {
+				writeHelperJSON(writer, map[string]any{"id": "mcp-approval", "method": "mcpServer/elicitation/request", "params": map[string]any{
+					"threadId": "thread-1", "turnId": turnID, "serverName": "agent_adaptor_tools", "mode": "form", "message": "Allow team_delegate?", "requestedSchema": map[string]any{"type": "object", "properties": map[string]any{}}, "_meta": map[string]any{"toolName": "team_delegate"},
+				}})
+				continue
+			}
+			if mode == "f2_stale" {
+				writeHelperNotification(writer, "thread/tokenUsage/updated", helperUsage("thread-1", turnID, 5*turn, 5))
+				writeHelperNotification(writer, "item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": itemID, "type": "agentMessage", "text": text}})
+				writeHelperNotification(writer, "turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": "completed"}})
+				writeHelperNotification(writer, "thread/tokenUsage/updated", helperUsage("thread-1", turnID, 5*turn, 5))
+				continue
+			}
+			if turn == 1 && (mode == "messages_steer" || mode == "messages_interrupt") {
+				continue
+			}
 			writeHelperNotification(writer, "item/agentMessage/delta", map[string]any{"threadId": "thread-1", "turnId": turnID, "itemId": itemID, "delta": text})
 			writeHelperNotification(writer, "item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": itemID, "type": "agentMessage", "text": text}})
 			writeHelperNotification(writer, "turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": "completed", "usage": map[string]any{"inputTokens": 2, "outputTokens": 1, "cachedInputTokens": 0}}})
+		case "turn/steer":
+			var params struct {
+				ThreadID       string `json:"threadId"`
+				ExpectedTurnID string `json:"expectedTurnId"`
+				Input          []struct {
+					Text string `json:"text"`
+				} `json:"input"`
+			}
+			if err := json.Unmarshal(req.Params, &params); err != nil || params.ThreadID != "thread-1" || params.ExpectedTurnID != fmt.Sprintf("turn-%d", turn) || len(params.Input) == 0 {
+				return 23
+			}
+			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{"turnId": params.ExpectedTurnID}})
+			texts := make([]string, 0, len(params.Input))
+			for _, item := range params.Input {
+				texts = append(texts, item.Text)
+			}
+			writeHelperMessageCompletion(writer, turn, "completed", strings.Join(texts, "\n\n"))
 		case "turn/interrupt":
 			writeHelperJSON(writer, helperResponse{ID: req.ID, Result: map[string]any{}})
+			if mode == "messages_interrupt" {
+				writeHelperMessageCompletion(writer, turn, "interrupted", "partial")
+			}
 		}
 	}
 	return 0
+}
+
+func writeHelperMessageCompletion(writer *bufio.Writer, turn int, status, text string) {
+	turnID := fmt.Sprintf("turn-%d", turn)
+	itemID := fmt.Sprintf("item-%d", turn)
+	writeHelperNotification(writer, "item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": map[string]any{"id": itemID, "type": "agentMessage", "text": text}})
+	writeHelperNotification(writer, "turn/completed", map[string]any{"threadId": "thread-1", "turn": map[string]any{"id": turnID, "status": status, "usage": map[string]any{"inputTokens": 2, "outputTokens": 1}}})
 }
 
 func hasProcessArg(want string) bool {
@@ -625,4 +770,15 @@ func clearHelperActive(activeFile string) {
 func readFileString(path string) string {
 	raw, _ := os.ReadFile(path)
 	return string(raw)
+}
+
+func helperUsage(thread, turn string, total, last int) map[string]any {
+	return map[string]any{"threadId": thread, "turnId": turn, "tokenUsage": map[string]any{"total": map[string]any{"inputTokens": total, "outputTokens": total}, "last": map[string]any{"inputTokens": last, "outputTokens": last}}}
+}
+
+func writeHelperRejectedTool(writer *bufio.Writer, turn int, message string) {
+	turnID := fmt.Sprintf("turn-%d", turn)
+	item := map[string]any{"id": "delegate-call", "type": "mcpToolCall", "server": "agent-adaptor-tools", "tool": "team_delegate", "arguments": map[string]any{"member": "worker"}, "status": "failed", "error": map[string]any{"message": message}}
+	writeHelperNotification(writer, "item/completed", map[string]any{"threadId": "thread-1", "turnId": turnID, "item": item})
+	writeHelperMessageCompletion(writer, turn, "completed", "delegation rejected")
 }

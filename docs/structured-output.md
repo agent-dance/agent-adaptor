@@ -7,6 +7,8 @@ terminal payload.
 
 ## Public API
 
+Import the root package as `github.com/agent-dance/agent-adaptor/v2`.
+
 The shortest path accepts any `adaptor.Runner`, so an `Agent` and a `Thread`
 use the same helper:
 
@@ -28,7 +30,7 @@ fmt.Println(value.ProjectName, result.RunID)
 ```
 
 `RunAs[T]` prepends `WithSchema[T]()` to the supplied call options, calls
-`Runner.Run`, and decodes the validated value. In ordinary code this is the
+`Runner.Send(...).Result()`, and decodes the validated value. In ordinary code this is the
 only structured-output API needed. A later explicit schema option is useful
 only when the schema needs metadata or generation customization:
 
@@ -41,17 +43,19 @@ value, result, err := adaptor.RunAs[ProjectMetadata](
 )
 ```
 
+The helper still uses `Send`; its name does not introduce a second execution path.
+
 Schema derivation failures are sticky: a later explicit schema option does not
 clear an error produced while deriving the implicit `WithSchema[T]()` schema.
 
 On an execution error, `RunAs` returns the zero value of `T` together with the
-normal `Runner.Run` result/error pair. On a decode error, it returns the
+normal execution result/error pair. On a decode error, it returns the
 available `*Result` with that error.
 
-For event consumption or manual decode, attach a schema to `Run` or `Stream`:
+For event consumption or manual decode, attach a schema to `Send`:
 
 ```go
-stream := runner.Stream(ctx, prompt,
+stream := runner.Send(ctx, prompt,
 	adaptor.WithSchema[ProjectMetadata](
 		adaptor.SchemaName("project_metadata"),
 	),
@@ -74,15 +78,15 @@ For a schema owned outside Go, use the raw-document escape hatch. The byte
 slice is copied when the option is built.
 
 ```go
-result, err := runner.Run(ctx, prompt,
+result, err := runner.Send(ctx, prompt,
 	adaptor.WithSchemaJSON(schemaBytes,
 		adaptor.SchemaDescription("Release readiness report"),
 	),
-)
+).Result()
 ```
 
 `WithSchema[T]` and `WithSchemaJSON` return `CallOption`: they are valid only
-on `Run` and `Stream`, never on `adaptor.New`.
+on Agent/Thread/Standby `Send` (and `RunAs`), never on `adaptor.New` or `Stream.Send`. Standby messages carrying a schema queue a separate execution.
 
 ## Schema options
 
@@ -124,8 +128,7 @@ rule before invoking the Driver:
 Explicit approval `Ask` policies additionally require `WorksWithHITL` for the
 selected mechanism.
 
-The consumer's choice between `Run` and `Stream` does not select the provider
-transport. The unified invocation pipeline prefers a Driver's rich transport,
+Calling `Events()` or `Result()` does not select the provider transport. The unified invocation pipeline prefers a Driver's rich transport,
 then negotiates its batch transport when structured output is not supported by
 that rich transport. A `Stream` therefore remains usable but may receive fewer
 incremental provider events. If neither transport can honor the request, the
@@ -146,7 +149,7 @@ Current built-in declarations are:
 
 | Driver | Native schema | Prompt validation | Rich provider transport | Explicit HITL `Ask` |
 |---|---:|---:|---:|---:|
-| Codex | yes | yes | no; batch is negotiated | no |
+| Codex | yes | yes | yes, including app-server schema output | yes |
 | Claude | yes | yes | yes | no |
 | Cursor | no | yes | yes | no |
 | CodeBuddy | yes | yes | no; batch is negotiated | no |
@@ -157,15 +160,20 @@ value; it does not strip Markdown fences, search raw stdout, or guess through
 provider envelopes. Provider-native output is also revalidated by the SDK
 before its raw JSON is made available to `Result.Decode`.
 
-For Codex batch runs, `codex exec --json --output-schema` carries the native
-JSON value in the `text` field of the last completed `agent_message` item. The
-Driver keeps all completed assistant messages in `Result.Text`, keeps
-`turn.completed` as the provider terminal payload in `Result.Raw()`, and gives
-only that last assistant value to the shared schema validator. A top-level
-`result` envelope is not part of this wire contract and is never treated as
-structured output. Missing or failed terminals, malformed protocols, nonzero
-exits, signals, timeouts, and business failures cannot yield a native
+Codex native schema requests use app-server, including Driver requests with
+`Streaming=false`. Every `turn/start` receives `outputSchema`, including
+continuations and interrupt restarts. Named Threads can reuse their resident
+process; `WithSpawn()` requests a fresh process. Reading only `Result()` or
+consuming `Events()` does not change this selection.
+
+The Driver validates the last turn's final assistant JSON value, preserves its
+assistant-facing text in `Result.Text`, and retains `turn/completed` as the
+provider terminal payload in `Result.Raw()`. The terminal envelope is not the
+structured business value. Missing or failed terminals, malformed protocols,
+nonzero exits, signals, timeouts, and business failures cannot yield a native
 structured-output candidate.
+
+A message can extend the execution into more provider turns. The final Result keeps the last turn's structured value and Text, sums Usage, and retains audit output across all turns. `TurnEnd` is a per-turn observation; use `Done` or `Result()` for final schema and cleanup errors. A Standby has no overall Result. Decode each execution's `Done.Result` after checking `Done.Err`; TurnEnd snapshots do not necessarily contain the finalized structured payload.
 
 ## Decode and failure behavior
 
@@ -182,9 +190,9 @@ The default invalid-result policy fails the completed run with a
 is retained in `runErr.Result`:
 
 ```go
-result, err := runner.Run(ctx, prompt,
+result, err := runner.Send(ctx, prompt,
 	adaptor.WithSchema[ProjectMetadata](),
-)
+).Result()
 if err != nil {
 	var runErr *adaptor.RunError
 	if errors.As(err, &runErr) && errors.Is(err, adaptor.ErrPolicyViolation) {
@@ -198,8 +206,7 @@ With `SchemaReturnInvalid`, the run returns `*Result, nil`, while
 `result.Decode(&value)` reports the validation diagnostics. This option changes
 only the run verdict; it does not make invalid JSON decodable.
 
-`Run` and `Stream.Result` share the same negotiation, validation, and decode
-surface. Changing an output schema does not change Thread compatibility or
+`Stream.Result()` and the terminal `Done` share the same finalized verdict. `RunAs[T]` calls Send and Result internally, using the same negotiation, validation, and decode surface. Changing an output schema does not change Thread compatibility or
 split an otherwise compatible conversation.
 
 ## Security and dependencies

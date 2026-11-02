@@ -3,7 +3,7 @@ package codebuddy
 import (
 	"testing"
 
-	driver "github.com/agent-dance/agent-adaptor/driver"
+	driver "github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func TestCodeBuddyCheckpointRequiresOfficialSuccessAndCleanOutcome(t *testing.T) {

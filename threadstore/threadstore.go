@@ -8,7 +8,8 @@
 // encoding when several dimensions must share that key.
 //
 // A Store holds resume tokens, compatibility fingerprints, and lease
-// coordination. It is not a chat-history store, an HITL pending queue,
+// coordination, plus bounded guidance and recent turns for session recovery.
+// It is not a chat-history store, an HITL pending queue,
 // and not "the conversation a user sees in a chat UI" — hosts that need
 // those compose their own recording on top (see hosttools/sessionrecorder).
 //
@@ -21,7 +22,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Status is the storage lifecycle state of a Record.
@@ -39,6 +40,17 @@ const (
 // unsafe resumes when important context (identity, model, workspace,
 // instructions, ...) changed between runs.
 type Record struct {
+	// EarlierGuidance is bounded, author-framed supplemental input that the
+	// provider does not retain across resumes. Replay it before the next prompt.
+	EarlierGuidance []string
+	// RecentTurns contains the latest three assistant turn texts for recovery
+	// after a fresh-session fallback. Together with EarlierGuidance it occupies
+	// at most 8 KiB; SDK writers retain the newest text when trimming.
+	RecentTurns []string
+	// DeliveredMessages contains the most recent 1000 delivered message IDs,
+	// no older than seven days. Stores must copy and atomically persist it
+	// together with the checkpoint under the same validated leases.
+	DeliveredMessages []DeliveredMessage
 	// ID is the SDK-assigned internal session identifier. Consumers use the
 	// thread key and run IDs; stores index by ID and keep it stable for the
 	// record's lifetime.
@@ -204,3 +216,11 @@ func (e *AlreadyExistsError) Unwrap() error { return ErrAlreadyExists }
 // conflict understood by the internal coordinator. The method deliberately
 // carries no data and keeps threadstore independent of internal/engine.
 func (e *AlreadyExistsError) ThreadAlreadyExists() bool { return true }
+
+// DeliveredMessage is a Thread-scoped delivery idempotency receipt.
+type DeliveredMessage struct {
+	// ID is the opaque host-supplied or core-generated message ID.
+	ID string
+	// At is the UTC time delivery was acknowledged.
+	At time.Time
+}

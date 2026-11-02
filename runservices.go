@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 )
 
 const runResourceCleanupTimeout = 5 * time.Second
@@ -345,6 +345,10 @@ type RunServiceProvider interface {
 // interleaved with the driver's own events — there is no second stream to merge
 // and no wrapper goroutine on the driver's hot path.
 type RunAttachment struct {
+	// Preamble is prepended to the execution prompt; it is excluded from Thread compatibility.
+	Preamble string
+	// Results is called once during finalization, before DetachRun, to collect task summaries.
+	Results func() []SubagentResult
 	// Services are the concrete endpoints this provider ensured for the run.
 	Services []ServiceRef
 	// Events optionally streams provider-side events into the run.
@@ -382,7 +386,11 @@ type runResources struct {
 	runtime        driver.RuntimePayload
 	runtimeEnsured bool
 
-	attached []RunServiceProvider
+	attached   []RunServiceProvider
+	preamble   string
+	results    []func() []SubagentResult
+	resultOnce sync.Once
+	subagents  []SubagentResult
 
 	pumpCancel context.CancelFunc
 	pumpDone   chan struct{}
@@ -484,6 +492,12 @@ func (a *Agent) acquireRun(ctx context.Context, runID string, eff *RunSettings, 
 			return nil, errors.Join(err, releaseErr)
 		}
 		r.attached = append(r.attached, p)
+		if att.Preamble != "" {
+			r.preamble += att.Preamble + "\n\n"
+		}
+		if att.Results != nil {
+			r.results = append(r.results, att.Results)
+		}
 		if len(att.Services) > 0 {
 			// Secrets are harvested from the raw refs before normalization:
 			// normalized refs deliberately carry no
@@ -563,7 +577,7 @@ func (r *runResources) startPumps(ctx context.Context, sink *eventSink, sources 
 				// cannot open or close that envelope themselves. Filtering here
 				// keeps lifecycle uniqueness independent of provider correctness.
 				switch ev.(type) {
-				case RunStarted, *RunStarted, RunFinished, *RunFinished:
+				case RunStarted, *RunStarted, RunFinished, *RunFinished, Done, *Done:
 					continue
 				}
 				sink.push(ev)
@@ -812,6 +826,9 @@ func (r *runResources) releaseActionCount() int {
 // release detaches providers and releases managed resources in reverse
 // acquisition order. It is also the unwind path for a failed acquireRun.
 func (r *runResources) release(ctx context.Context) error {
+	if r != nil {
+		r.collectSubagents()
+	}
 	if r == nil {
 		return nil
 	}
@@ -909,4 +926,18 @@ func boundedCleanupCall(ctx context.Context, call func(context.Context) error) e
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// collectSubagents snapshots results before DetachRun can discard provider state.
+// The same path covers a partially acquired execution's cleanup.
+func (r *runResources) collectSubagents() []SubagentResult {
+	if r == nil {
+		return nil
+	}
+	r.resultOnce.Do(func() {
+		for _, collect := range r.results {
+			r.subagents = append(r.subagents, cloneSubagents(collect())...)
+		}
+	})
+	return r.subagents
 }

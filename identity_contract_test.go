@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func TestIdentityZeroValueIsExplicitlyInjected(t *testing.T) {
@@ -17,7 +17,7 @@ func TestIdentityZeroValueIsExplicitlyInjected(t *testing.T) {
 		return driver.Response{Output: "ok"}, nil
 	}
 
-	if _, err := adaptor.New(fake).Run(context.Background(), "zero", adaptor.WithIdentity(adaptor.Identity{})); err != nil {
+	if _, err := adaptor.New(fake).Send(context.Background(), "zero", adaptor.WithIdentity(adaptor.Identity{})).Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if !ok || got != (adaptor.Identity{}) {
@@ -37,7 +37,7 @@ func TestPerCallIdentityOverridesAgentDefault(t *testing.T) {
 	defaultIdentity := adaptor.Identity{ID: "default", Tenant: "tenant-a", Profile: "profile-a", Name: "Default"}
 	override := adaptor.Identity{ID: "override", Tenant: "tenant-b", Profile: "profile-b", Name: "Override"}
 	agent := adaptor.New(fake, adaptor.WithIdentity(defaultIdentity))
-	if _, err := agent.Run(context.Background(), "override", adaptor.WithIdentity(override)); err != nil {
+	if _, err := agent.Send(context.Background(), "override", adaptor.WithIdentity(override)).Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if !identityPresent || got != override {

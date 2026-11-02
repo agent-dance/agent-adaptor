@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/adaptertest"
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/adaptertest"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // ---------------------------------------------------------------------------
@@ -448,44 +448,16 @@ func TestRunStateOutputUsesOnlyLastCompletedAgentMessage(t *testing.T) {
 	}
 }
 
-func TestRunStateRejectsWrongTurnBeforeAbsorbingSemanticOutput(t *testing.T) {
-	t.Parallel()
-	sink := &recordingSink{}
-	state := newRunState("run-wrong-turn", sink)
+func TestRunStateIgnoresForeignTurnBeforeAbsorbingSemanticOutput(t *testing.T) {
+	state := newRunState("run", &recordingSink{})
 	state.setThread("thread-expected")
 	state.setTurn("turn-expected")
 	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-expected","turnId":"turn-wrong","item":{"id":"wrong","type":"agentMessage","text":"must not escape"}}`))
-	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-expected","turnId":"turn-expected","item":{"id":"later","type":"agentMessage","text":"must also not escape"}}`))
+	state.onNotification(NotifyItemCompleted, json.RawMessage(`{"threadId":"thread-expected","turnId":"turn-expected","item":{"id":"current","type":"agentMessage","text":"current answer"}}`))
 	state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"thread-expected","turn":{"id":"turn-expected","status":"completed"}}`))
-	if err := state.protocolError(); err == nil || !strings.Contains(err.Error(), "belongs to turn") {
-		t.Fatalf("protocol error = %v", err)
-	}
 	result := state.snapshot(Options{}, "thread-expected", "raw", "", 0, "", false)
-	if result.Output != "" || result.Checkpoint != nil {
-		t.Fatalf("wrong-turn result = %#v", result)
-	}
-	for _, item := range result.Transcript {
-		if item.Kind == driver.TranscriptAssistant || item.Kind == driver.TranscriptResult {
-			t.Fatalf("semantic transcript was absorbed after scope failure: %#v", result.Transcript)
-		}
-	}
-	state.finishPublicResult(result, state.protocolError())
-	finished, failed := 0, 0
-	for _, payload := range sink.streams {
-		switch payload.Kind {
-		case driver.StreamRunFinished:
-			finished++
-		case driver.StreamRunError:
-			failed++
-		}
-	}
-	if finished != 0 || failed != 1 {
-		t.Fatalf("terminal lifecycle finished=%d error=%d streams=%#v", finished, failed, sink.streams)
-	}
-	select {
-	case <-state.done:
-	default:
-		t.Fatal("wrong-turn semantic event did not terminate the run")
+	if err := state.protocolError(); err != nil || result.Output != "current answer" || result.Checkpoint == nil {
+		t.Fatalf("foreign turn contaminated current run: err=%v response=%+v", err, result)
 	}
 }
 
@@ -885,26 +857,11 @@ func TestRunResumeRejectsProviderThreadIdentityChange(t *testing.T) {
 	}
 }
 
-func TestRunRejectsNotificationOutsideExpectedThreadAndTurn(t *testing.T) {
+func TestRunIgnoresNotificationsOutsideExpectedThreadAndTurn(t *testing.T) {
 	fake := buildFakeAppserver(t)
-	sink := &recordingSink{}
-	result, err := Run(context.Background(), Options{
-		Command: fake,
-		Env:     []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "scope-mismatch"}},
-	}, sink)
-	if err == nil || !strings.Contains(err.Error(), "belongs to thread") {
-		t.Fatalf("error = %v, want notification scope mismatch", err)
-	}
-	if result.Checkpoint != nil || result.Output != "" || result.RawStreams == nil || result.RawStreams.Stdout == "" {
-		t.Fatalf("scope mismatch result = %#v", result)
-	}
-	for _, item := range result.Transcript {
-		if item.Kind == driver.TranscriptAssistant || item.Kind == driver.TranscriptResult {
-			t.Fatalf("wrong-thread semantic item escaped: %#v", result.Transcript)
-		}
-	}
-	if len(sink.streams) == 0 || sink.streams[len(sink.streams)-1].Kind != driver.StreamRunError {
-		t.Fatalf("scope mismatch stream terminal = %#v", sink.streams)
+	result, err := Run(context.Background(), Options{Command: fake, Env: []driver.EnvBinding{{Name: "FAKE_APPSERVER_SCENARIO", Value: "scope-mismatch"}}}, &recordingSink{})
+	if err != nil || result.Checkpoint == nil || result.Output != "hello from fake" {
+		t.Fatalf("foreign notification affected run: err=%v response=%+v", err, result)
 	}
 }
 
@@ -986,22 +943,49 @@ func TestRunCancellationReturnsPartialRawWithoutCheckpoint(t *testing.T) {
 	}
 }
 
+var fakeAppserverBuild struct {
+	once   sync.Once
+	dir    string
+	binary string
+	err    error
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if fakeAppserverBuild.dir != "" {
+		if err := os.RemoveAll(fakeAppserverBuild.dir); err != nil {
+			fmt.Fprintf(os.Stderr, "clean fake app-server: %v\n", err)
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
 func buildFakeAppserver(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	source := filepath.Join(dir, "fake_appserver.go")
-	if err := os.WriteFile(source, []byte(fakeAppserverSource), 0o600); err != nil {
-		t.Fatalf("write fake app-server: %v", err)
+	fakeAppserverBuild.once.Do(func() {
+		build := &fakeAppserverBuild
+		build.dir, build.err = os.MkdirTemp("", "agent-adaptor-appserver-fixture-")
+		if build.err != nil {
+			return
+		}
+		source := filepath.Join(build.dir, "fake_appserver.go")
+		if build.err = os.WriteFile(source, []byte(fakeAppserverSource), 0o600); build.err != nil {
+			return
+		}
+		build.binary = filepath.Join(build.dir, "fake-appserver")
+		if runtime.GOOS == "windows" {
+			build.binary += ".exe"
+		}
+		cmd := exec.Command("go", "build", "-o", build.binary, source)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			build.err = fmt.Errorf("build fake app-server: %w\n%s", err, output)
+		}
+	})
+	if fakeAppserverBuild.err != nil {
+		t.Fatal(fakeAppserverBuild.err)
 	}
-	binary := filepath.Join(dir, "fake-appserver")
-	if runtime.GOOS == "windows" {
-		binary += ".exe"
-	}
-	cmd := exec.Command("go", "build", "-o", binary, source)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build fake app-server: %v\n%s", err, output)
-	}
-	return binary
+	return fakeAppserverBuild.binary
 }
 
 const fakeAppserverSource = `package main
@@ -1011,6 +995,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 type request struct {
@@ -1021,6 +1008,7 @@ type request struct {
 
 func main() {
 	scenario := os.Getenv("FAKE_APPSERVER_SCENARIO")
+	turnCount := 0
 	decoder := json.NewDecoder(os.Stdin)
 	writer := bufio.NewWriter(os.Stdout)
 	defer func() {
@@ -1028,6 +1016,9 @@ func main() {
 		_, _ = fmt.Fprint(os.Stderr, "stderr-after-terminal")
 	}()
 	write := func(frame string) {
+		if scenario == "mixed-usage-chain" || scenario == "missing-usage-chain" {
+			frame = strings.ReplaceAll(frame, "turn-fake", fmt.Sprintf("turn-%d", turnCount))
+		}
 		_, _ = fmt.Fprintln(writer, frame)
 		_ = writer.Flush()
 	}
@@ -1049,6 +1040,9 @@ func main() {
 				continue
 			}
 			currentThread = "thread-fake"
+			if req.Method == "thread/resume" && scenario == "resume-stale-usage-baseline" {
+				write("{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-previous\",\"tokenUsage\":{\"last\":{\"inputTokens\":7,\"outputTokens\":7},\"total\":{\"inputTokens\":100,\"outputTokens\":100}}}}")
+			}
 			respond(req.ID, "{\"thread\":{\"id\":\"thread-fake\"}}")
 		case "thread/fork":
 			if scenario == "whitespace-thread-fork" {
@@ -1063,6 +1057,21 @@ func main() {
 			currentThread = "thread-child"
 			respond(req.ID, "{\"thread\":{\"id\":\"thread-child\"}}")
 		case "turn/start":
+			turnCount++
+			if scenario == "stderr-barrier" {
+				_, _ = fmt.Fprintf(os.Stderr, "stderr-turn-%d\n", turnCount)
+				// The parent releases this barrier only after its stderr reader
+				// captured the marker; stdout must not imply cross-pipe ordering.
+				release := filepath.Join(os.Getenv("FAKE_APPSERVER_STDERR_BARRIER_DIR"), fmt.Sprintf("release-%d", turnCount))
+				for {
+					if _, err := os.Stat(release); err == nil {
+						break
+					} else if !os.IsNotExist(err) {
+						os.Exit(19)
+					}
+					runtime.Gosched()
+				}
+			}
 			var params struct { ThreadID string ` + "`json:\"threadId\"`" + ` }
 			if err := json.Unmarshal(req.Params, &params); err != nil || params.ThreadID != currentThread {
 				write(fmt.Sprintf("{\"id\":%s,\"error\":{\"code\":-32602,\"message\":\"turn started on wrong thread\"}}", req.ID))
@@ -1072,12 +1081,20 @@ func main() {
 				respond(req.ID, "{\"turn\":{\"id\":\" \",\"status\":\"inProgress\"}}")
 				continue
 			}
+			if scenario == "fresh-early-usage" {
+				write("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}}")
+				write(fmt.Sprintf("{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-fake\",\"tokenUsage\":{\"last\":{\"inputTokens\":2,\"outputTokens\":2},\"total\":{\"inputTokens\":%d,\"outputTokens\":%d}}}}", turnCount*5, turnCount*5))
+				write("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"completed\"}}}")
+				respond(req.ID, "{\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}")
+				continue
+			}
 			respond(req.ID, "{\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}")
 			eventThread := currentThread
 			if scenario == "scope-mismatch" {
 				eventThread = "wrong-thread"
 			}
 			write(fmt.Sprintf("{\"method\":\"turn/started\",\"params\":{\"threadId\":%q,\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}}", eventThread))
+			eventThread = currentThread
 			if scenario == "cancel" {
 				continue
 			}
@@ -1091,6 +1108,31 @@ func main() {
 			write(fmt.Sprintf("{\"method\":\"item/started\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":\"\"}}}", eventThread))
 			write(fmt.Sprintf("{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":%q,\"itemId\":\"msg-fake\",\"threadId\":%q,\"turnId\":\"turn-fake\"}}", message, eventThread))
 			write(fmt.Sprintf("{\"method\":\"item/completed\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":%q}}}", eventThread, message))
+			if scenario == "terminal-usage-chain" || scenario == "mixed-usage-chain" || scenario == "missing-usage-chain" {
+				if turnCount < 3 {
+					if scenario != "terminal-usage-chain" && turnCount == 1 {
+						write("{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-fake\",\"tokenUsage\":{\"last\":{\"inputTokens\":2,\"outputTokens\":2},\"total\":{\"inputTokens\":2,\"outputTokens\":2}}}}")
+					}
+					if scenario == "missing-usage-chain" && turnCount == 2 {
+						write("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"completed\"}}}")
+					} else {
+						write(fmt.Sprintf("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"completed\",\"usage\":{\"inputTokens\":%d,\"outputTokens\":%d}}}}", turnCount+1, turnCount+1))
+					}
+				} else {
+					write("{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-fake\",\"tokenUsage\":{\"last\":{\"inputTokens\":3,\"outputTokens\":3},\"total\":{\"inputTokens\":8,\"outputTokens\":8}}}}")
+					write("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"completed\"}}}")
+				}
+				continue
+			}
+			if scenario == "resume-stale-usage-baseline" || scenario == "fresh-usage-baseline" {
+				total := 105
+				if scenario == "fresh-usage-baseline" {
+					total = 5
+				}
+				write(fmt.Sprintf("{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-fake\",\"tokenUsage\":{\"last\":{\"inputTokens\":2,\"outputTokens\":2},\"total\":{\"inputTokens\":%d,\"outputTokens\":%d}}}}", total, total))
+				write("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"completed\"}}}")
+				continue
+			}
 			if scenario == "missing" {
 				return
 			}
@@ -1102,7 +1144,7 @@ func main() {
 			if status == "scope-mismatch" {
 				status = "completed"
 			}
-			if status == "success" || status == "" || status == "structured-valid" || status == "nonzero-after-terminal" || status == "malformed-item-live" {
+			if status == "success" || status == "" || status == "structured-valid" || status == "nonzero-after-terminal" || status == "malformed-item-live" || status == "stderr-barrier" {
 				status = "completed"
 			}
 			errorField := ""

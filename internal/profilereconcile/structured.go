@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/internal/profilestate"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilestate"
 	toml "github.com/pelletier/go-toml/v2"
 )
 

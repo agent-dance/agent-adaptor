@@ -17,9 +17,9 @@ import (
 	"os"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 func main() {
@@ -91,7 +91,7 @@ func main() {
 func runOnce(r adaptor.Runner, timeout time.Duration, prompt string) (*adaptor.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return r.Run(ctx, prompt)
+	return r.Send(ctx, prompt).Result()
 }
 
 func runStep(r adaptor.Runner, timeout time.Duration, prompt, label string) {

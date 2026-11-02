@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
 type leaseRecord struct {
@@ -20,18 +20,33 @@ type leaseRecord struct {
 
 var leaseEntropyRead = rand.Read
 
+// Keep record timestamps and lease time separate: wall-clock corrections must
+// not expire an exclusive lease or extend the lifetime of a stale writer.
+type storeClock interface {
+	now() time.Time
+	leaseNow() time.Time
+}
+
+type monotonicStoreClock struct{}
+
+func (monotonicStoreClock) now() time.Time      { return time.Now().UTC() }
+func (monotonicStoreClock) leaseNow() time.Time { return time.Now() }
+
 // Store is an in-memory implementation of threadstore.Store. It is useful for
 // tests, local CLIs, demos, and single-process hosts that do not need thread
 // state to survive process restarts. Production services that run multiple
 // processes should provide a durable/centralized store instead.
 //
 // Store coordinates callers within one process. It does not provide durable
-// storage or coordination across processes.
+// storage or coordination across processes. Lease TTLs use monotonic elapsed
+// time, so wall-clock corrections cannot expire or prolong them. Record
+// timestamps use UTC wall time.
 type Store struct {
 	mu       sync.Mutex
 	records  map[string]threadstore.Record
 	keyIndex map[string]string
 	leases   map[string]leaseRecord
+	clock    storeClock
 }
 
 var _ threadstore.Store = (*Store)(nil)
@@ -42,6 +57,7 @@ func NewStore() *Store {
 		records:  map[string]threadstore.Record{},
 		keyIndex: map[string]string{},
 		leases:   map[string]leaseRecord{},
+		clock:    monotonicStoreClock{},
 	}
 }
 
@@ -82,7 +98,7 @@ func (s *Store) Finalize(_ context.Context, req threadstore.FinalizeRequest) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now().UTC()
+	now := s.clock.leaseNow()
 	for _, lease := range req.HeldLeases {
 		current, ok := s.leases[lease.Target]
 		if !ok || current.Owner != lease.Owner || current.Token != lease.Token || !current.Until.After(now) {
@@ -102,7 +118,7 @@ func (s *Store) Finalize(_ context.Context, req threadstore.FinalizeRequest) err
 		record, ok := s.records[req.PreviousID]
 		if ok {
 			record.Status = threadstore.StatusArchived
-			record.UpdatedAt = now
+			record.UpdatedAt = s.clock.now()
 			s.records[req.PreviousID] = record
 		}
 	}
@@ -115,6 +131,9 @@ func (s *Store) Finalize(_ context.Context, req threadstore.FinalizeRequest) err
 
 func cloneThreadRecord(record threadstore.Record) threadstore.Record {
 	copyRecord := record
+	copyRecord.EarlierGuidance = append([]string(nil), record.EarlierGuidance...)
+	copyRecord.RecentTurns = append([]string(nil), record.RecentTurns...)
+	copyRecord.DeliveredMessages = append([]threadstore.DeliveredMessage(nil), record.DeliveredMessages...)
 	if record.State != nil {
 		state := *record.State
 		if record.State.Data != nil {
@@ -139,7 +158,7 @@ func (s *Store) AcquireLease(ctx context.Context, target, owner string, ttl time
 	if err := ctx.Err(); err != nil {
 		return threadstore.Lease{}, err
 	}
-	now := time.Now().UTC()
+	now := s.clock.leaseNow()
 	current, ok := s.leases[target]
 	if ok && current.Until.After(now) && current.Owner != owner {
 		return threadstore.Lease{}, &threadstore.BusyError{Target: target}
@@ -168,11 +187,12 @@ func (s *Store) AcquireLease(ctx context.Context, target, owner string, ttl time
 func (s *Store) RenewLease(_ context.Context, lease threadstore.Lease, ttl time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.clock.leaseNow()
 	current, ok := s.leases[lease.Target]
-	if !ok || current.Owner != lease.Owner || current.Token != lease.Token || !current.Until.After(time.Now().UTC()) {
+	if !ok || current.Owner != lease.Owner || current.Token != lease.Token || !current.Until.After(now) {
 		return &threadstore.LeaseLostError{Target: lease.Target}
 	}
-	current.Until = time.Now().UTC().Add(ttl)
+	current.Until = now.Add(ttl)
 	s.leases[lease.Target] = current
 	return nil
 }

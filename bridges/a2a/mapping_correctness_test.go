@@ -9,8 +9,8 @@ import (
 	"time"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func dataValue(t *testing.T, event a2aproto.Event) any {
@@ -212,7 +212,7 @@ func (d rawResultDriver) Run(context.Context, driver.Request, driver.EventSink) 
 
 func resultWithRawForTest(t *testing.T, raw adaptor.RawStreams) *adaptor.Result {
 	t.Helper()
-	result, err := adaptor.New(rawResultDriver{raw: raw}).Run(context.Background(), "prompt")
+	result, err := adaptor.New(rawResultDriver{raw: raw}).Send(context.Background(), "prompt").Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func (d usageResultDriver) Run(context.Context, driver.Request, driver.EventSink
 
 func resultWithUsageForTest(t *testing.T, usage *driver.Usage) *adaptor.Result {
 	t.Helper()
-	result, err := adaptor.New(usageResultDriver{usage: usage}).Run(context.Background(), "prompt")
+	result, err := adaptor.New(usageResultDriver{usage: usage}).Send(context.Background(), "prompt").Result()
 	if err != nil {
 		t.Fatal(err)
 	}

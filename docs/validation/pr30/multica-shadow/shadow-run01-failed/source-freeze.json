@@ -1,0 +1,36 @@
+{
+  "sources": [
+    {
+      "name": "agent-adaptor-shadow.acceptance.spec.ts",
+      "sha256": "a905854661bd21f4cdb39845c9ba2b7110c0613b39bccd3255bb4e99f0fb494b"
+    },
+    {
+      "name": "agent-adaptor-shadow.acceptance.ts",
+      "sha256": "b11d2b327a59fb646c3a795bb1dd79fbdea04f9509d4e013834ab06439accf5f"
+    },
+    {
+      "name": "agent-adaptor-shadow.evidence.spec.ts",
+      "sha256": "8df0e76b9e9e884e6cf0fbbd164dc7e9938bddc62e5b8f12319c241888fc7825"
+    },
+    {
+      "name": "agent-adaptor-shadow.evidence.ts",
+      "sha256": "762267360daf380e733baef41d9553515cf3db9ba04d6c70aa9db510cfc92e17"
+    },
+    {
+      "name": "agent-adaptor-shadow.md",
+      "sha256": "b47121f1ed20da57b298d74b2e3cc5fb8bf64325c8fa572633d2c72c1436ba75"
+    },
+    {
+      "name": "agent-adaptor-shadow.report.spec.ts",
+      "sha256": "647cfa3b11dd8093810e83b2518a773e09e4be7091aa84e9117fade393404650"
+    },
+    {
+      "name": "agent-adaptor-shadow.report.ts",
+      "sha256": "662b689bef2bc33a5782e31e3e057753a13e8488883a4db939e6db50b280a223"
+    },
+    {
+      "name": "agent-adaptor-shadow.spec.ts",
+      "sha256": "00c8e1278a3454eed6938c320cc2d64e9d2afa188dc51d30876008cae7599847"
+    }
+  ]
+}

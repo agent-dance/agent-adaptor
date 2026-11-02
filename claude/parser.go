@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // claudeParser consumes raw stdout/stderr chunks from a Claude CLI run
@@ -39,7 +39,14 @@ type claudeParser struct {
 	terminalSuccess   bool
 	protocolMalformed bool
 
-	stream *streamingState
+	stream           *streamingState
+	messages         *messageSession
+	turnText         string
+	turnIndex        int
+	turnComplete     bool
+	turnUsage        *driver.Usage
+	completedUsage   *driver.Usage
+	turnMessageUsage map[string]driver.Usage
 
 	runID  string
 	policy driver.HumanDecisionPolicy
@@ -181,6 +188,8 @@ func (p *claudeParser) finalize() {
 func (p *claudeParser) completeStream(failure *driver.RunFailure, exitCode int, signal string, timedOut bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.ensureAggregateUsage()
+	p.emitTurnCompleted(p.turnText, p.finalTurnUsage())
 	if p.stream != nil {
 		p.stream.complete(failure, exitCode, signal, timedOut)
 	}
@@ -283,6 +292,9 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 		// ignore defensively so batch transcript stays clean.
 		return
 	case "control_request":
+		if p.messages != nil && p.prepareMessageHook(payload) {
+			return
+		}
 		if p.interactive && p.handleInteractiveControlRequest(payload) {
 			return
 		}
@@ -293,9 +305,20 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 			Data:    map[string]any{"payload": payload},
 		})
 		return
+	case "control_response":
+		if p.messages != nil && p.messages.handleResponse(payload) {
+			return
+		}
+		p.emit(driver.TranscriptItem{Kind: driver.TranscriptSystem, Text: raw, Subtype: eventType})
 	case "assistant":
 		message := claudeTopLevelObject(payload, "message")
+		text, completed := p.turnText, p.turnComplete
 		p.handleAssistantMessage(message)
+		if claudeExactString(payload, "parent_tool_use_id") != "" || claudeExactString(payload, "agent_id") != "" {
+			p.turnText, p.turnComplete = text, completed
+		} else {
+			p.observeAssistantUsage(message)
+		}
 	case "user":
 		message := claudeTopLevelObject(payload, "message")
 		p.handleUserMessage(message)
@@ -310,6 +333,8 @@ func (p *claudeParser) handlePayload(raw string, payload map[string]any) {
 			message = "claude provider error"
 		}
 		p.errorMessage = message
+		p.turnComplete = false
+		p.emitTurnCompleted(p.turnText, p.turnUsage)
 		if p.stream != nil {
 			p.stream.handleErrorTerminal(payload)
 		}
@@ -389,11 +414,13 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 	if len(message) == 0 {
 		return
 	}
+	p.turnComplete = false
 	model := claudeTopLevelString(message, "model")
 	content, ok := message["content"].([]any)
 	if !ok {
 		return
 	}
+	var texts []string
 	for _, raw := range content {
 		block, ok := raw.(map[string]any)
 		if !ok {
@@ -402,6 +429,9 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 		kind := strings.ToLower(claudeTopLevelString(block, "type"))
 		switch kind {
 		case "text":
+			if exact := claudeExactString(block, "text"); exact != "" {
+				texts = append(texts, exact)
+			}
 			text := claudeTopLevelString(block, "text")
 			if text == "" {
 				continue
@@ -434,6 +464,9 @@ func (p *claudeParser) handleAssistantMessage(message map[string]any) {
 				Input:     block["input"],
 			})
 		}
+	}
+	if len(texts) > 0 {
+		p.turnText = strings.Join(texts, "\n\n")
 	}
 }
 
@@ -537,6 +570,9 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 		}
 	}
 
+	// Preserve assistant observations for fields omitted by the terminal,
+	// then let the terminal's aggregate accounting take precedence.
+	p.ensureAggregateUsage()
 	usage := claudeTopLevelObject(payload, "usage")
 	if usage != nil {
 		input, okInput := claudeTopLevelInt(usage, "input_tokens")
@@ -583,6 +619,8 @@ func (p *claudeParser) handleResult(raw string, payload map[string]any, subtype 
 	if p.stream != nil {
 		p.stream.handleResultTerminal(payload)
 	}
+	p.turnComplete = false
+	p.emitTurnCompleted(p.terminalResult, p.finalTurnUsage())
 }
 
 func claudeFormalEvent(eventType string) bool {
@@ -826,7 +864,13 @@ func (p *claudeParser) enableInteractive(ctx context.Context, sink driver.Decisi
 // tool_use turn lets the process flush type:result and exit so the
 // host's /agent run can end and the UI can leave the busy state.
 func (p *claudeParser) onAssistantMessageStop(stopReason string) {
-	if !p.interactive || p.stdin == nil {
+	// SDK hooks still need stdin after message_stop, including the Stop
+	// callback that can continue this same agent loop. Without hooks, match
+	// ordinary interactive EOF: per-run closes, resident stays open.
+	if p.messages != nil && (p.messages.hooksEnabled() || p.messages.resident) {
+		return
+	}
+	if (!p.interactive && p.messages == nil) || p.stdin == nil {
 		return
 	}
 	// A tool_use stop means the model is waiting for a control_request

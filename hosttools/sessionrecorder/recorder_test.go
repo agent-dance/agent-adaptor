@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 func TestEventRecorderAssignsSequentialHostSeqAndSince(t *testing.T) {
@@ -100,7 +100,7 @@ func TestEventRecordJSONRoundTripAllKinds(t *testing.T) {
 		{"process.info", adaptor.ProcessInfo{Kind: "stderr", Bytes: []byte("warn\n"), Metadata: map[string]string{"pid": "42"}}},
 		{"notice", adaptor.Notice{Kind: adaptor.NoticeStep, Text: "plan", Data: map[string]any{"phase": "started"}}},
 		{"dropped", adaptor.Dropped{Count: 3}},
-		{"subagent.update", adaptor.SubagentUpdate{Agent: "researcher", Kind: adaptor.SubagentDelta, Delta: "partial", Data: map[string]any{"seq": "9"}}},
+		{"subagent.update", adaptor.SubagentUpdate{Member: "researcher", Kind: adaptor.SubagentDelta, Delta: "partial", Data: map[string]any{"seq": "9"}}},
 		{"approval.request", &adaptor.ApprovalRequest{
 			ID: "q1", RunID: "r1", Kind: adaptor.ApprovalPermission,
 			Title: "run rm?", Source: "bash", ToolCallID: "tc1",
@@ -241,4 +241,36 @@ func TestNewEventRecorderPanicsOnNilBackend(t *testing.T) {
 		}
 	}()
 	sessionrecorder.NewEventRecorder(nil)
+}
+
+func TestV2ExecutionEventsRoundTrip(t *testing.T) {
+	for _, event := range []adaptor.Event{
+		adaptor.Done{Result: &adaptor.Result{RunID: "run", Turns: 2, Text: "answer"}},
+		adaptor.Done{Err: &adaptor.RunError{Reason: adaptor.ReasonAgentError, Message: "failed", Result: &adaptor.Result{RunID: "run", Text: "partial"}}},
+		adaptor.TurnEnd{Turn: 2, Result: &adaptor.Result{Text: "answer"}, MessageIDs: []string{"message"}},
+		(&adaptor.ApprovalRequest{ID: "approval"}).Forward(adaptor.Origin{Member: "worker", Task: "task"}),
+		adaptor.MessageUpdate{ID: "message", State: adaptor.MessageFailed, Reason: adaptor.MessageCancelled, Text: "original"},
+	} {
+		record := sessionrecorder.EventRecord{Event: event}
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored sessionrecorder.EventRecord
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if reflect.TypeOf(restored.Event) != reflect.TypeOf(event) {
+			t.Fatalf("event=%T restored=%T", event, restored.Event)
+		}
+		if got, ok := restored.Event.(*adaptor.ApprovalRequest); ok && got.Origin().Member != "worker" {
+			t.Fatal("approval origin lost")
+		}
+		if got, ok := restored.Event.(adaptor.Done); ok && got.Err != nil {
+			var re *adaptor.RunError
+			if !errors.As(got.Err, &re) || re.Result.Text != "partial" {
+				t.Fatalf("restored error=%v", got.Err)
+			}
+		}
+	}
 }

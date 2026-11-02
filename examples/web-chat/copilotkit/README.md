@@ -5,7 +5,7 @@
 1. **Streaming**：文本、thinking、tool_call 通过一条 `stream.Events()` 通道流式传递，终局由一次 `stream.Result()` 收口。若 Driver 没有发布 assistant delta 但终局 `Result.Text` 非空，后端会在 terminal 前投影一次完整 assistant message；已有流式文本时绝不重复。
 2. **HITL**：没有安装 `OnApproval` 回调时，approval 以自带 responder 的 `*adaptor.ApprovalRequest` 事件出现在同一条流上。宿主停放请求后直接调用 `req.Approve(ctx)` / `req.Deny(ctx, reason)` / `req.Answer(ctx, option)`；`ErrApprovalResolved` 映射 HTTP 410，`ErrApprovalKindMismatch` 映射 400。`NoticeApprovalResolved` 会自动清掉 pending。
 3. **Recovery**：每个浏览器有稳定 `thread_id`，右侧面板通过 `/session/events` + `/decision/pending` 恢复历史与未决决策。`EventMeta.Sequence` 只在单次 run 内排序；跨 run 重放使用 `hosttools/sessionrecorder` 分配的 `HostSeq`。
-4. **User-prompt persistence**：user prompt 不会自动进入 SDK 持久层（thread store 只存 resume 元数据；driver 只 emit assistant 侧）。`handleAgent` 用 `userTurnEvents(lastUserMessageID(input), prompt)` 构造三段 `adaptor.TextDelta{Role: RoleUser, Phase: Start/Content/End}`，让它经过和 driver 事件相同的 fan-out。刷新页面拉 `/session/events` 即可恢复含 user 气泡的完整 transcript。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。
+4. **User-prompt persistence**：SDK 的消息回执不等于 UI transcript；示例仍需显式记录 user prompt 气泡。`handleAgent` 用 `userTurnEvents(lastUserMessageID(input), prompt)` 构造三段 `adaptor.TextDelta{Role: RoleUser, Phase: Start/Content/End}`，让它经过和 driver 事件相同的 fan-out。刷新页面拉 `/session/events` 即可恢复含 user 气泡的完整 transcript。<br>实现入口：`server.go::handleAgent` + `agui_run_session.go::recordUserTurn`；验证用例：`agui_run_session_test.go::TestAGUIRunSessionRecordsUserTurnBeforeAssistant`。
 
 后端只调用真实本机 CLI：
 
@@ -51,7 +51,7 @@ Browser
   │     │  POST /agent  (AG-UI RunAgentInput)
   │     ▼
   │  Go backend
-  │     ├─ ai.Thread(key).Stream(ctx, prompt)   →  adaptor.Stream
+  │     ├─ ai.Thread(key).Send(ctx, prompt)   →  adaptor.Stream
   │     └─ for ev := range stream.Events()      →  一条通道，两个去处
   │            ├─ recorder.Record(...)                    (历史，HostSeq 游标)
   │            ├─ translator.Translate(ev)  →  SSE        (实时)
@@ -71,25 +71,82 @@ Browser
 - Node.js 20+ + npm
 - 选用的 `codex` / `claude` / `cursor` CLI 已安装、已登录，并且 `--help` 可运行
 
-前端依赖固定使用 CopilotKit 1.63.2 与 `next@16.3.0-preview.8`。选择该
-Next preview 是因为截至冻结日最新 stable 16.2.12 仍落在已公开的 high
-advisory 范围内；同时以局部 `overrides` 将 Hono、PostCSS、fast-uri 提升到
-兼容的安全补丁版本，并更新 MCP SDK、DOMPurify、Mermaid 等仍在兼容范围内的
-传递依赖。lockfile 只保存 npm 官方 registry URL，CI 会执行 fresh `npm ci`、
-lint、build 与 `npm audit --omit=dev --audit-level=high`。冻结时 production tree
-没有 high/critical；剩余 moderate/low 来自 CopilotKit Runtime 尚未接受的
-`@hono/node-server`/`uuid` major 以及暂无已发布修复的上游链路，因此没有用
-`npm audit fix --force` 或不兼容的全局 override 掩盖风险。
+前端依赖固定使用 CopilotKit 1.83.0、`@ag-ui/client` 1.0.2（与 CopilotKit
+内部精确依赖的版本一致，避免出现两份 `HttpAgent`/`AbstractAgent`）以及
+stable `next@16.4.3`。CopilotKit 1.83 自带 AG-UI 1.0 客户端，会按 1.0 schema
+校验事件流（例如 `CUSTOM.value` 必填）。后端 `bridges/agui` 为没有 payload 的
+CUSTOM 事件发送空对象，文本、thinking 和 tool 流已通过这两个客户端版本验证。
+
+上游仍未修复的链路通过 `overrides` 提升，并都验证过运行时兼容：
+
+- `zod` → 4.6.7（GHSA-mrhx-c7xc-m3w5 没有 3.x 修复）。`@ag-ui/client` 已改用
+  `zod/v4` 子路径，`@ag-ui/core` 声明支持 `^4`，CopilotKit 的
+  `schemaToJsonSchema` 优先走 zod 4 原生 `toJSONSchema()`；默认解析下顶层
+  zod 本来就是 4.x。override 只影响 `@ag-ui/proto`（运行时不 import zod）、
+  `@copilotkit/shared`（`describe`/`any` 等 zod 4 仍保留的 API）以及 A2UI
+  链路 `@a2ui/web_core`/`@copilotkit/a2ui-renderer` 的嵌套副本；本示例的
+  Runtime 未启用 A2UI（`/info` 返回 `a2uiEnabled: false`）。
+- `undici` → 6.29.1：`@ai-sdk/provider-utils@3`（经 `@ai-sdk/google-vertex@3`）
+  声明 `^5.29.0`，5.x 没有修复；它只用 `Agent` + `fetch({ dispatcher })`，与
+  `provider-utils@4` 搭配 undici 6 的用法相同。同时移除了 undici 5 带入的
+  `@fastify/busboy` 2.x。
+- `graphql-scalars` → 2.0.1（GHSA-x8rm-f576-gq67）：Runtime 与 `type-graphql`
+  只使用 `GraphQLJSON`、`GraphQLJSONObject`、`GraphQLTimestamp`、
+  `GraphQLDateTimeISO`，2.0.1 仍导出这四个 scalar。
+
+lockfile 只保存 npm 官方 registry URL，CI 会执行 fresh `npm ci`、lint、build 与
+`npm audit --omit=dev --audit-level=high`。冻结时 production tree 没有
+high/critical；剩余项低于 CI 阈值：
+
+- `@hono/node-server` 1.19.17（moderate，GHSA-rmxm-3fg6-px4f）：修复只在 2.x，
+  CopilotKit Runtime 与 MCP SDK 仍要求 1.x；该漏洞位于 `serveStatic`，本示例
+  只通过 Next.js route handler 使用 Runtime，不走这条路径。
+- `katex` 0.16.x（low，GHSA-238p-pmpm-9mq7）及其 `streamdown`/`mermaid`/
+  `remark-math` 依赖链：修复在 0.18.2，`@copilotkit/react-core` 仍锁 `^0.16`；
+  它只在浏览器中渲染本地 agent 输出的数学公式。
+
+因此没有用 `npm audit fix --force`（它会把 CopilotKit 降到 1.54）掩盖风险。
 
 ## 后端 HTTP 端点
 
 | 路径 | 方法 | 用途 |
 | --- | --- | --- |
 | `/agent` | POST | AG-UI RunAgentInput -> SSE 流 |
+| `/message` | POST | 向同一 thread 的活动 Stream 补充输入，返回 JSON 接纳回执 |
 | `/session/events` | GET | 历史事件重放 |
 | `/decision/pending` | GET | 未解决的决策请求 |
 | `/decision/resolve` | POST | 宿主回填 HITL 决策 |
 | `/health` | GET | 就绪检查 |
+
+运行中可以使用聊天框下的 **Add guidance to the active run** 输入约束或补充信息。
+它通过普通 JSON 请求 `/api/supplement`，由 Next.js 转发到后端 `/message`；
+当前 SSE 流继续交付 `MessageUpdate`，不会重新启动任务。
+
+请求与成功响应示例：
+
+```json
+{"threadId":"conversation-42","messageId":"guidance-8","text":"Keep the public API unchanged"}
+```
+
+```json
+{"runId":"run_...","messageId":"guidance-8","state":"accepted"}
+```
+
+`202` 只表示输入已接纳，实际投递仍以原 SSE 流的回执为准。后端在派送前检查请求
+context，随后显式使用 `context.WithoutCancel(requestCtx)` 发送到活动 Stream。
+派送一旦开始，补充请求断开不会撤回输入，也不会终止队列满时的等待；当前执行
+结束或 Cancel 会解除等待。原 `/agent` 执行仍绑定自己的 SSE 请求 context。
+没有活动执行或执行已结束返回 `409`，其他
+`MessageError`（例如不支持或超出消息大小限制）返回 `422`，context 取消或截止返回
+`408`，基础设施错误返回 `500`；无效请求为 `400`，请求体过大为 `413`。
+
+如果后端已接纳但保存聊天历史失败，`500` 响应仍包含 `state: "accepted"`，UI 会保留
+“已接纳”的事实并报告保存错误；网络故障导致接纳状态不明时，保留文本并用
+同一个 `MessageID` 重试。
+
+`/agent` 与 `/message` 的补充输入只有接纳成功后才写入用户文本三段事件。
+原执行会持续排空普通事件，并在记录回答兜底与终局前等待这些历史写入完成，
+因此刷新重放时已接纳的用户文本始终先于该执行的 `Done`；拒绝的输入不会写入历史。
 
 ## 环境变量
 
@@ -112,37 +169,58 @@ lint、build 与 `npm audit --omit=dev --audit-level=high`。冻结时 productio
 
 如需从其他机器访问，必须显式设置监听地址与准确 Origin，例如 `ADDR=0.0.0.0:8080 CORS_ORIGIN=https://chat.example.com`；不要在不受信网络中使用 `CORS_ORIGIN=*`，因为每个请求都可能触发真实模型调用。
 
-## Visual subagent delegation hook
+## Visual team updates
 
-The backend can render remote A2A delegation progress in the same CopilotKit
-AG-UI stream. Create an `a2adelegation.Service` from the remote Agent Cards and
-pass `team.Option()` to `adaptor.New` (or pass the service through
-`adaptor.WithRunServices(team)`). The service creates an authenticated,
-run-scoped `delegate_to_agent` MCP sidecar, exposes it through the typed MCP
-contract, binds its cleanup to the run, and folds progress into the Agent's
-single event stream as `adaptor.SubagentUpdate`. The AG-UI bridge projects those
-updates into one incrementally patched AG-UI Activity message per delegation
-(`activityType="subagent"`, `messageId=delegationId`); Claude/Codex/Cursor
-receives only the final structured MCP result. In team-workflow mode the
-CopilotKit frontend renders these Activity messages as live cards in the right
-sidebar. A role's human-facing name carries its provider base, so the card tag
-shows `Claude Code`, `Codex`, `Cursor`, or `CodeBuddy` instead of the common
-A2A transport. Structured plan output shaped as a file value is rendered as a
-previewable and downloadable `PLAN.md` attachment.
+The team showcase uses this frontend with a `hosttools/team.Team` as the
+bridge's Runner. Team contains a host-selected leader and local `Member.Runner`
+or Remote A2A `Member.Remote` entries. The default backend in this directory
+still starts one local Agent; the showcase has its own backend and launch script:
 
-This example's default main path starts one local parent CLI. Hosts that enable
-delegation should run an A2A bridge for each remote agent (see
-`examples/a2a-server` and `docs/a2a.md`), construct the service once, keep it
-alive for the equipped Agent, and close it during host shutdown. No stringly
-runtime metadata or bridge-specific run handle is involved.
+```bash
+./examples/showcases/team-agent-workflow/start-all.sh claude
+```
 
-The important boundary for UI authors: render `activityType="subagent"` as a
-nested visual group, but do not turn it into a parent assistant message. The
-Activity content may include `parentToolCallId` when the host can correlate the
-delegation sidecar with a parent provider tool-use ID, but UI code should not
-require it. `subagentId` is the stable nested group key and `runId` is its run
-scope. The parent transcript should contain the normal tool call plus the
-concise final delegation result only.
+Team owns one capability-token-protected loopback MCP listener. Its leader has
+four tools (delegate/send/status/cancel); local workers have send/status. The
+leader relays messages, while bound local worker approvals carry
+`Origin{Member, Task}` to the host. Remote input-required follows remote policy,
+with no portable local approval responder. The showcase uses noninteractive
+member policies and does not provide this backend's HITL/recovery endpoints.
+
+The single Team Event stream includes typed `SubagentUpdate` values. AG-UI
+projects their lifecycles into Activity messages with
+`activityType="subagent"`; team-workflow mode renders them as sidebar cards.
+Use the task handle for task identity and `Member` for roster identity. There
+is no separate delegation bus or extra subagent merge to attach.
+
+The frontend renders member/provider labels, live worker text and structured
+`PLAN.md` attachments. Team supplies the member display name, objective and
+observed update time; worker text deltas accumulate in Activity text. Terminal
+updates include safe result text, summary, model, provider and decoded output
+when available, so the planner's structured output becomes a downloadable plan.
+Worker tool and thinking events are not all forwarded to these cards. Full
+local worker results and Remote protocol artifacts remain in the host's Team
+TaskStore; this backend does not expose a TaskStore download endpoint.
+
+The maintained backend here uses task-mode `Thread.Send` and routes `/message`
+to the current `Stream.Send`. The showcase publishes a Team Runner through
+request-scoped SSE. These examples do not provide a Standby UI. A host adding
+ongoing chat can create `Team.Thread(key).Standby(serverCtx)`, subscribe once and
+broadcast its events; route user input through `Standby.Send` and a stop button
+through `Standby.Cancel`. Task-mode sends to a busy named scope report
+`ErrThreadBusy`.
+
+For Remote members, the host provides Agent Card URL, trusted-origin auth and
+policy in `RemoteSpec`; no per-member A2A server is needed for local members.
+Close the Team during shutdown, then close the host-owned Agents. See the
+[team guide](../../../docs/team.md) and [A2A guide](../../../docs/a2a.md) for
+recovery, Fork and Remote timing/schema/approval limits.
+
+UI authors should keep worker Activities in their own visual groups, without
+turning them into parent assistant messages. `parentToolCallId` is optional;
+`subagentId` identifies an Activity within its `runId`. A delegated tool result
+is a task handle/admission result; worker completion reaches the leader later
+as a notification. It is not a synchronous final MCP result.
 
 ## 相关文档
 

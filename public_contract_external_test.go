@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/skill"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 type externalServiceManager struct{}

@@ -1,0 +1,1679 @@
+From 1bab70fa1fb9a6f1a742da78d1162e1e72dce883 Mon Sep 17 00:00:00 2001
+From: buthim <me@blurooo.com>
+Date: Mon, 2 Nov 2026 01:29:44 +0800
+Subject: [PATCH] test(e2e): verify real Codex SDK shadow routes and host
+ products
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+由 Codex 接续补做 agent-adaptor PR #30 的本机影子验收（审查标识：便便）。
+
+Exercise native comparison, actual comment receipts, queued next runs, cancel/restart and Chat UI through the real daemon. Require independent host arithmetic acceptance and actual generated unittest completion, preserving bound command receipts and failure reports. Keep model execution explicitly opt-in and provide offline counterexample regressions.
+---
+ e2e/agent-adaptor-shadow.acceptance.spec.ts | 224 ++++++++++
+ e2e/agent-adaptor-shadow.acceptance.ts      | 302 ++++++++++++++
+ e2e/agent-adaptor-shadow.evidence.spec.ts   | 220 ++++++++++
+ e2e/agent-adaptor-shadow.evidence.ts        | 175 ++++++++
+ e2e/agent-adaptor-shadow.md                 |  71 ++++
+ e2e/agent-adaptor-shadow.report.spec.ts     | 101 +++++
+ e2e/agent-adaptor-shadow.report.ts          |  78 ++++
+ e2e/agent-adaptor-shadow.spec.ts            | 426 ++++++++++++++++++++
+ 8 files changed, 1597 insertions(+)
+ create mode 100644 e2e/agent-adaptor-shadow.acceptance.spec.ts
+ create mode 100644 e2e/agent-adaptor-shadow.acceptance.ts
+ create mode 100644 e2e/agent-adaptor-shadow.evidence.spec.ts
+ create mode 100644 e2e/agent-adaptor-shadow.evidence.ts
+ create mode 100644 e2e/agent-adaptor-shadow.md
+ create mode 100644 e2e/agent-adaptor-shadow.report.spec.ts
+ create mode 100644 e2e/agent-adaptor-shadow.report.ts
+ create mode 100644 e2e/agent-adaptor-shadow.spec.ts
+
+diff --git a/e2e/agent-adaptor-shadow.acceptance.spec.ts b/e2e/agent-adaptor-shadow.acceptance.spec.ts
+new file mode 100644
+index 000000000..df0adb64c
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.acceptance.spec.ts
+@@ -0,0 +1,224 @@
++import { expect, test } from "@playwright/test";
++import { createHash } from "node:crypto";
++import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { inspectDevelopmentWorkspace } from "./agent-adaptor-shadow.acceptance";
++import { appendShadowReport } from "./agent-adaptor-shadow.report";
++
++const python = process.env.MULTICA_SHADOW_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
++const validMath = '"""The authorized arithmetic fixture."""\ndef add(a, b):\n    """Add integers."""\n    return a + b\n';
++const validTests = `import unittest
++from shadow_math import add
++class AdditionTests(unittest.TestCase):
++    def test_positive(self):
++        self.assertEqual(add(1, 2), 3)
++    def test_negative(self):
++        self.assertEqual(add(-4, 2), -2)
++`;
++
++async function fixture(math: string | undefined, tests: string | undefined, run: (workspace: string) => Promise<void>): Promise<void> {
++  const workspace = await mkdtemp(join(tmpdir(), "multica-shadow-acceptance-"));
++  try {
++    if (math !== undefined) await writeFile(join(workspace, "shadow_math.py"), math);
++    if (tests !== undefined) await writeFile(join(workspace, "test_shadow_math.py"), tests);
++    await run(workspace);
++  } finally {
++    await rm(workspace, { recursive: true, force: true });
++  }
++}
++
++test("host acceptance verifies positive, negative, zero, and large integer addition", async () => {
++  await fixture(validMath, validTests, async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-valid", workspace, python });
++    expect(receipt.passed).toBe(true);
++    expect(receipt.errors).toEqual([]);
++    expect(receipt.sources).toHaveLength(2);
++    for (const source of receipt.sources) {
++      expect(source.sha256).toBe(createHash("sha256").update(await readFile(join(workspace, source.path))).digest("hex"));
++      expect(source.afterSHA256).toBe(source.sha256);
++    }
++    expect(receipt.commands.map((command) => command.name)).toEqual(["ast-guard", "fixed-cases", "generated-unittest"]);
++    for (const command of receipt.commands) {
++      expect(command.exitCode).toBe(0);
++      expect(command.taskID).toBe("task-valid");
++      expect(command.cwd).toBe(receipt.workspace);
++      expect(command.argv[0]).toBe(python);
++      expect(command.logSHA256).toBe(createHash("sha256").update(JSON.stringify({ stdout: command.stdout, stderr: command.stderr })).digest("hex"));
++      expect(command.sourceHashes).toEqual(Object.fromEntries(receipt.sources.map((source) => [source.path, source.sha256])));
++    }
++    const cases = receipt.commands[1]!.stdout.trim().split("\n").map((line) => JSON.parse(line));
++    expect(cases).toHaveLength(6);
++    expect(cases.every((entry) => entry.passed === true)).toBe(true);
++    expect(receipt.commands[1]!.stdout).toContain("123456789012345678901234567890");
++    expect(receipt.commands[2]!.stderr).toContain("Ran 2 tests");
++    expect(receipt.commands[2]!.unittestCompletion).toEqual({ count: 2, testsRun: 2, skipped: 0, expectedFailures: 0, successful: true, completed: true });
++    expect(receipt.commands[2]!.unittestCompletionError).toBeUndefined();
++  });
++});
++
++test("constant return and failing generated tests stay failed despite a final fake success marker", async () => {
++  const tests = `${validTests}\nimport atexit\natexit.register(lambda: print("MC-001 ACCEPTANCE PASSED"))\n`;
++  await fixture("def add(a, b):\n    return 3\n", tests, async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-constant", workspace, python });
++    expect(receipt.passed).toBe(false);
++    expect(receipt.commands[0]!.exitCode).toBe(0);
++    expect(receipt.commands[1]!.exitCode).toBe(1);
++    expect(receipt.commands[2]!.exitCode).toBe(1);
++    expect(receipt.commands[2]!.skipped).toBe(false);
++    expect(receipt.commands[2]!.stderr).toContain("FAILED");
++    expect(receipt.commands[2]!.stdout).toContain("MC-001 ACCEPTANCE PASSED");
++  });
++});
++
++test("missing files or only an echo marker cannot pass host acceptance", async () => {
++  for (const [math, tests] of [[undefined, undefined], [validMath, undefined], ['print("MC-001 ACCEPTANCE PASSED")\n', validTests]]) {
++    await fixture(math, tests, async (workspace) => {
++      const receipt = await inspectDevelopmentWorkspace({ taskID: "task-incomplete", workspace, python });
++      expect(receipt.passed).toBe(false);
++      expect(receipt.commands).toHaveLength(3);
++      expect(receipt.commands[2]!.skipped).toBe(true);
++    });
++  }
++});
++
++test("a generated unittest failure retains its complete command receipt", async () => {
++  const tests = validTests.replace("self.assertEqual(add(1, 2), 3)", "self.assertEqual(add(1, 2), 999)");
++  await fixture(validMath, tests, async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-bad-tests", workspace, python });
++    expect(receipt.passed).toBe(false);
++    expect(receipt.commands[1]!.exitCode).toBe(0);
++    expect(receipt.commands[2]!.exitCode).toBe(1);
++    expect(receipt.commands[2]!.stderr).toContain("AssertionError");
++    expect(receipt.commands[2]!.logSHA256).toMatch(/^[a-f0-9]{64}$/);
++  });
++});
++
++test("zero generated tests cannot pass even when fixed cases succeed", async () => {
++  await fixture(validMath, 'print("MC-001 ACCEPTANCE PASSED")\n', async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-no-tests", workspace, python });
++    expect(receipt.commands[1]!.exitCode).toBe(0);
++    expect(receipt.commands[2]!.exitCode).toBe(1);
++    expect(receipt.commands[2]!.stderr).toContain("observed 0");
++    expect(receipt.passed).toBe(false);
++  });
++  await fixture(validMath, 'print("MC-001 ACCEPTANCE PASSED")\nraise SystemExit(0)\n', async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-early-exit", workspace, python });
++    expect(receipt.commands[1]!.exitCode).toBe(0);
++    expect(receipt.commands[2]!.exitCode).toBe(1);
++    expect(receipt.commands[2]!.stderr).toContain("SystemExit: 0");
++    expect(receipt.commands[2]!.unittestCompletionError).toContain("Missing unittest completion");
++    expect(receipt.passed).toBe(false);
++  });
++});
++
++test("early module or loader exits cannot replace the private host completion receipt", async () => {
++  const scripts = [
++    'raise SystemExit(0)\n',
++    'import unittest\ndef exit_loader(*args):\n    raise SystemExit(0)\nunittest.defaultTestLoader.loadTestsFromModule = exit_loader\n',
++    'import os\nprint(\'{"count":2,"successful":true,"completed":true}\', flush=True)\nos._exit(0)\n',
++  ];
++  for (const script of scripts) {
++    await fixture(validMath, script, async (workspace) => {
++      const receipt = await inspectDevelopmentWorkspace({ taskID: "task-early-exit", workspace, python });
++      expect(receipt.commands[1]!.exitCode).toBe(0);
++      expect(receipt.commands[2]!.unittestCompletion).toBeUndefined();
++      expect(receipt.commands[2]!.unittestCompletionError).toContain("Missing unittest completion");
++      expect(receipt.passed).toBe(false);
++      if (script.includes("os._exit")) {
++        expect(receipt.commands[2]!.exitCode).toBe(0);
++        expect(receipt.commands[2]!.stdout).toContain('"completed":true');
++      } else {
++        expect(receipt.commands[2]!.exitCode).toBe(1);
++      }
++    });
++  }
++});
++
++test("skipped and expected-failure generated tests cannot count as exercised passing cases", async () => {
++  const skipped = validTests.replace("class AdditionTests", '@unittest.skip("not exercised")\nclass AdditionTests');
++  const expectedFailures = validTests.replaceAll("    def test_", "    @unittest.expectedFailure\n    def test_")
++    .replace("add(1, 2), 3", "add(1, 2), 999").replace("add(-4, 2), -2", "add(-4, 2), 999");
++  for (const [tests, field] of [[skipped, "skipped"], [expectedFailures, "expectedFailures"]] as const) {
++    await fixture(validMath, tests, async (workspace) => {
++      const receipt = await inspectDevelopmentWorkspace({ taskID: "task-unexercised-tests", workspace, python });
++      const generated = receipt.commands[2]!;
++      expect(generated.exitCode).toBe(0);
++      expect(generated.unittestCompletion?.count).toBe(2);
++      expect(generated.unittestCompletion?.testsRun).toBe(2);
++      expect(generated.unittestCompletion?.successful).toBe(true);
++      expect(generated.unittestCompletion?.[field]).toBe(2);
++      expect(receipt.passed).toBe(false);
++    });
++  }
++});
++
++test("imports, top-level calls, decorators, defaults, annotations, and impure expressions are rejected before fixture execution", async () => {
++  const danger = 'open("danger-executed", "w").write("executed")';
++  const scripts = [
++    `import os\n${validMath}`,
++    `${danger}\n${validMath}`,
++    `@${danger}\ndef add(a, b):\n    return a + b\n`,
++    `def add(a=${danger}, b=0):\n    return a + b\n`,
++    `def add(a: ${danger}, b):\n    return a + b\n`,
++    'def add(a, b):\n    return __import__("os")\n',
++    'def add(a, b):\n    return a.real\n',
++    'def add(a, b):\n    return a[0]\n',
++    'def add(a, b):\n    c = a + b\n    return c\n',
++  ];
++  for (const math of scripts) {
++    await fixture(math, `${danger}\n${validTests}`, async (workspace) => {
++      const receipt = await inspectDevelopmentWorkspace({ taskID: "task-rejected", workspace, python });
++      expect(receipt.passed).toBe(false);
++      expect(receipt.commands[0]!.exitCode).not.toBe(0);
++      expect(receipt.commands.slice(1).every((command) => command.skipped)).toBe(true);
++      await expect(readFile(join(workspace, "danger-executed"))).rejects.toMatchObject({ code: "ENOENT" });
++    });
++  }
++});
++
++test("source modification during generated tests invalidates otherwise successful commands", async () => {
++  const tests = `${validTests}\nfrom pathlib import Path\nPath("shadow_math.py").write_text("def add(a, b):\\n    return 3\\n")\n`;
++  await fixture(validMath, tests, async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-mutated", workspace, python });
++    expect(receipt.commands.every((command) => command.exitCode === 0)).toBe(true);
++    expect(receipt.passed).toBe(false);
++    expect(receipt.errors).toContain("shadow_math.py changed during acceptance");
++    expect(receipt.sources[0]!.afterSHA256).not.toBe(receipt.sources[0]!.sha256);
++  });
++});
++
++test("output truncation cannot produce a passing receipt", async () => {
++  await fixture(validMath, `${validTests}\nprint("x" * (2 * 1024 * 1024))\n`, async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-too-much-output", workspace, python });
++    const command = receipt.commands[2]!;
++    expect(command.truncated).toBe(true);
++    expect(Buffer.byteLength(command.stdout) + Buffer.byteLength(command.stderr)).toBeLessThanOrEqual(1024 * 1024);
++    expect(receipt.passed).toBe(false);
++  });
++});
++
++test("a missing Python executable returns failure evidence rather than throwing", async () => {
++  await fixture(validMath, validTests, async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-no-python", workspace, python: join(workspace, "missing-python") });
++    expect(receipt.passed).toBe(false);
++    expect(receipt.commands[0]!.error).toContain("ENOENT");
++    expect(receipt.commands[0]!.logSHA256).toMatch(/^[a-f0-9]{64}$/);
++  });
++});
++
++test("a failed host receipt survives report append and reread with its execution evidence", async () => {
++  await fixture("def add(a, b):\n    return 3\n", validTests, async (workspace) => {
++    const receipt = await inspectDevelopmentWorkspace({ taskID: "task-reported-failure", workspace, python });
++    const path = join(workspace, "report.json");
++    await appendShadowReport(path, "run-failed-host", "agent-adaptor", { name: "MC-001", passed: receipt.passed, hostAcceptance: receipt });
++    const saved = JSON.parse(await readFile(path, "utf8"));
++    expect(saved.passed).toBe(false);
++    expect(saved.cases[0].passed).toBe(false);
++    expect(saved.cases[0].hostAcceptance).toEqual(receipt);
++    expect(saved.cases[0].hostAcceptance.commands[1].exitCode).toBe(1);
++    expect(saved.cases[0].hostAcceptance.commands[1].taskID).toBe("task-reported-failure");
++    expect(saved.cases[0].hostAcceptance.commands[1].logSHA256).toMatch(/^[a-f0-9]{64}$/);
++    expect(saved.cases[0].hostAcceptance.sources.every((source: { sha256: string }) => /^[a-f0-9]{64}$/.test(source.sha256))).toBe(true);
++  });
++});
+diff --git a/e2e/agent-adaptor-shadow.acceptance.ts b/e2e/agent-adaptor-shadow.acceptance.ts
+new file mode 100644
+index 000000000..447c5c2f1
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.acceptance.ts
+@@ -0,0 +1,302 @@
++import { createHash } from "node:crypto";
++import { spawn } from "node:child_process";
++import { readFile, realpath } from "node:fs/promises";
++import { join, resolve } from "node:path";
++
++const sourceNames = ["shadow_math.py", "test_shadow_math.py"] as const;
++const outputLimit = 1024 * 1024;
++const commandTimeout = 10_000;
++
++interface SourceReceipt {
++  path: string;
++  sha256: string | null;
++  afterSHA256: string | null;
++}
++
++interface UnittestCompletion {
++  count: number;
++  testsRun: number;
++  skipped: number;
++  expectedFailures: number;
++  successful: boolean;
++  completed: true;
++}
++
++interface CommandReceipt {
++  name: string;
++  taskID: string;
++  argv: string[];
++  cwd: string;
++  sourceHashes: Record<string, string | null>;
++  exitCode: number | null;
++  signal: string | null;
++  stdout: string;
++  stderr: string;
++  logSHA256: string;
++  timedOut: boolean;
++  truncated: boolean;
++  skipped: boolean;
++  unittestCompletion?: UnittestCompletion;
++  unittestCompletionRaw?: string;
++  unittestCompletionError?: string;
++  error?: string;
++}
++
++export interface DevelopmentWorkspaceReceipt {
++  taskID: string;
++  workspace: string;
++  sources: SourceReceipt[];
++  commands: CommandReceipt[];
++  errors: string[];
++  passed: boolean;
++}
++
++function sha256(value: string | Buffer): string {
++  return createHash("sha256").update(value).digest("hex");
++}
++
++function errorText(error: unknown): string {
++  return error instanceof Error ? error.message : String(error);
++}
++
++// This guard admits only the authorized add fixture, not general Python programs.
++const pythonGuard = String.raw`
++import ast
++import hashlib
++import json
++import pathlib
++import sys
++import types
++
++expected = json.loads(sys.argv[1])
++sources = {}
++for name, digest in expected.items():
++    raw = pathlib.Path(name).read_bytes()
++    if hashlib.sha256(raw).hexdigest() != digest:
++        raise ValueError("source changed before execution: " + name)
++    sources[name] = raw.decode("utf-8-sig")
++
++def is_docstring(node):
++    return isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
++
++def without_docstring(nodes):
++    return nodes[1:] if nodes and is_docstring(nodes[0]) else nodes
++
++def arithmetic(node):
++    if isinstance(node, ast.Name):
++        return node.id in ("a", "b")
++    if isinstance(node, ast.Constant):
++        return type(node.value) in (int, float)
++    if isinstance(node, ast.BinOp):
++        return isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)) and arithmetic(node.left) and arithmetic(node.right)
++    if isinstance(node, ast.UnaryOp):
++        return isinstance(node.op, (ast.UAdd, ast.USub)) and arithmetic(node.operand)
++    return False
++
++tree = ast.parse(sources["shadow_math.py"], filename="shadow_math.py")
++body = without_docstring(tree.body)
++if len(body) != 1 or not isinstance(body[0], ast.FunctionDef) or body[0].name != "add":
++    raise ValueError("shadow_math.py must contain only an optional docstring and def add(a, b)")
++function = body[0]
++args = function.args
++if (function.decorator_list or function.returns is not None or getattr(function, "type_params", [])
++    or args.posonlyargs or args.kwonlyargs or args.vararg or args.kwarg or args.defaults or args.kw_defaults
++    or [arg.arg for arg in args.args] != ["a", "b"] or any(arg.annotation is not None for arg in args.args)):
++    raise ValueError("add must have exactly unannotated a, b parameters without defaults or decorators")
++statements = without_docstring(function.body)
++if len(statements) != 1 or not isinstance(statements[0], ast.Return) or not arithmetic(statements[0].value):
++    raise ValueError("add must return a pure arithmetic expression of a, b, and numeric constants")
++
++def load_math():
++    module = types.ModuleType("shadow_math")
++    module.__file__ = str(pathlib.Path("shadow_math.py").resolve())
++    exec(compile(tree, "shadow_math.py", "exec"), module.__dict__)
++    sys.modules["shadow_math"] = module
++    return module
++`;
++
++const fixedCases = `${pythonGuard}
++math = load_math()
++pairs = [(1, 2), (0, 0), (-2, -5), (5, -8), (-9, 9), (123456789012345678901234567890, 987654321098765432109876543210)]
++failures = []
++for a, b in pairs:
++    try:
++        actual = math.add(a, b)
++        passed = type(actual) is int and actual == a + b
++        print(json.dumps({"a": a, "b": b, "actual": actual, "expected": a + b, "passed": passed}))
++        if not passed:
++            failures.append([a, b])
++    except Exception as error:
++        failures.append([a, b])
++        print(repr(error), file=sys.stderr)
++sys.exit(1 if failures else 0)
++`;
++
++const generatedUnittest = `${pythonGuard}
++import unittest
++import os
++completion_write = os.write
++completion_encode = json.dumps
++try:
++    load_math()
++    test_module = types.ModuleType("test_shadow_math")
++    test_module.__file__ = str(pathlib.Path("test_shadow_math.py").resolve())
++    sys.modules["test_shadow_math"] = test_module
++    exec(compile(sources["test_shadow_math.py"], "test_shadow_math.py", "exec"), test_module.__dict__)
++    suite = unittest.defaultTestLoader.loadTestsFromModule(test_module)
++    count = suite.countTestCases()
++    result = unittest.TextTestRunner(verbosity=2).run(suite)
++    successful = result.wasSuccessful()
++    if count < 2:
++        print("Generated unittest must contain at least two test cases; observed " + str(count), file=sys.stderr)
++    completion_write(3, completion_encode({"count": count, "testsRun": result.testsRun, "skipped": len(result.skipped), "expectedFailures": len(result.expectedFailures), "successful": successful, "completed": True}).encode("utf-8"))
++except BaseException:
++    import traceback
++    traceback.print_exc()
++    sys.exit(1)
++sys.exit(0 if count >= 2 and successful else 1)
++`;
++
++function finishLog(receipt: CommandReceipt): CommandReceipt {
++  receipt.logSHA256 = sha256(JSON.stringify({ stdout: receipt.stdout, stderr: receipt.stderr }));
++  return receipt;
++}
++
++async function runCommand(receipt: CommandReceipt): Promise<CommandReceipt> {
++  return new Promise((done) => {
++    const stdout: Buffer[] = [];
++    const stderr: Buffer[] = [];
++    const completion: Buffer[] = [];
++    let bytes = 0;
++    let completionBytes = 0;
++    const child = spawn(receipt.argv[0]!, receipt.argv.slice(1), {
++      cwd: receipt.cwd,
++      shell: false,
++      windowsHide: true,
++      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONIOENCODING: "utf-8" },
++      stdio: ["ignore", "pipe", "pipe", "pipe"],
++    });
++    const timer = setTimeout(() => {
++      receipt.timedOut = true;
++      child.kill("SIGKILL");
++    }, commandTimeout);
++    const capture = (target: Buffer[], chunk: Buffer) => {
++      const available = outputLimit - bytes;
++      if (available > 0) target.push(chunk.subarray(0, available));
++      bytes += Math.min(available, chunk.length);
++      if (chunk.length > available) {
++        receipt.truncated = true;
++        child.kill("SIGKILL");
++      }
++    };
++    child.stdout!.on("data", (chunk: Buffer) => capture(stdout, chunk));
++    child.stderr!.on("data", (chunk: Buffer) => capture(stderr, chunk));
++    child.stdio[3]!.on("data", (chunk: Buffer) => {
++      const available = Math.max(0, 4096 - completionBytes);
++      if (available > 0) completion.push(chunk.subarray(0, available));
++      completionBytes += chunk.length;
++      if (completionBytes > 4096) {
++        receipt.unittestCompletionError = "Unittest completion exceeded 4096 bytes";
++        child.kill("SIGKILL");
++      }
++    });
++    child.on("error", (error) => { receipt.error = errorText(error); });
++    child.on("close", (code, signal) => {
++      clearTimeout(timer);
++      receipt.exitCode = code;
++      receipt.signal = signal;
++      receipt.stdout = Buffer.concat(stdout).toString("utf8");
++      receipt.stderr = Buffer.concat(stderr).toString("utf8");
++      if (receipt.name === "generated-unittest") {
++        receipt.unittestCompletionRaw = Buffer.concat(completion).toString("utf8");
++        if (!receipt.unittestCompletionError) {
++          try {
++            if (!receipt.unittestCompletionRaw) throw new Error("Missing unittest completion on private fd3");
++            const record: unknown = JSON.parse(receipt.unittestCompletionRaw);
++            if (record === null || typeof record !== "object" || Array.isArray(record)) throw new Error("Invalid unittest completion record");
++            const fields = record as Record<string, unknown>;
++            if (![fields.count, fields.testsRun, fields.skipped, fields.expectedFailures].every((value) =>
++              typeof value === "number" && Number.isInteger(value) && value >= 0) ||
++              typeof fields.successful !== "boolean" || fields.completed !== true) {
++              throw new Error("Invalid unittest completion fields");
++            }
++            receipt.unittestCompletion = {
++              count: fields.count as number,
++              testsRun: fields.testsRun as number,
++              skipped: fields.skipped as number,
++              expectedFailures: fields.expectedFailures as number,
++              successful: fields.successful,
++              completed: true,
++            };
++          } catch (error) {
++            receipt.unittestCompletionError = errorText(error);
++          }
++        }
++      }
++      done(finishLog(receipt));
++    });
++  });
++}
++
++function succeeded(command: CommandReceipt): boolean {
++  return !command.skipped && command.exitCode === 0 && !command.error && !command.timedOut && !command.truncated &&
++    (command.name !== "generated-unittest" || (!command.unittestCompletionError &&
++      command.unittestCompletion?.completed === true && command.unittestCompletion.count >= 2 &&
++      command.unittestCompletion.testsRun >= 2 && command.unittestCompletion.testsRun === command.unittestCompletion.count &&
++      command.unittestCompletion.skipped === 0 && command.unittestCompletion.expectedFailures === 0 &&
++      command.unittestCompletion.successful === true));
++}
++
++export async function inspectDevelopmentWorkspace({ taskID, workspace, python = "python3" }: {
++  taskID: string;
++  workspace: string;
++  python?: string;
++}): Promise<DevelopmentWorkspaceReceipt> {
++  const receipt: DevelopmentWorkspaceReceipt = { taskID, workspace: resolve(workspace), sources: [], commands: [], errors: [], passed: false };
++  try {
++    receipt.workspace = await realpath(receipt.workspace);
++  } catch (error) {
++    receipt.errors.push(`Workspace: ${errorText(error)}`);
++  }
++  if (!taskID.trim()) receipt.errors.push("Task ID is required");
++  for (const name of sourceNames) {
++    let digest: string | null = null;
++    try {
++      digest = sha256(await readFile(join(receipt.workspace, name)));
++    } catch (error) {
++      receipt.errors.push(`${name}: ${errorText(error)}`);
++    }
++    receipt.sources.push({ path: name, sha256: digest, afterSHA256: null });
++  }
++  const sourceHashes = Object.fromEntries(receipt.sources.map((source) => [source.path, source.sha256]));
++  const programs = [["ast-guard", pythonGuard], ["fixed-cases", fixedCases], ["generated-unittest", generatedUnittest]] as const;
++  for (const [name, program] of programs) {
++    const command: CommandReceipt = {
++      name, taskID, argv: [python, "-c", program, JSON.stringify(sourceHashes)], cwd: receipt.workspace,
++      sourceHashes: { ...sourceHashes }, exitCode: null, signal: null, stdout: "", stderr: "", logSHA256: "",
++      timedOut: false, truncated: false, skipped: false,
++    };
++    if (receipt.errors.length || (name !== "ast-guard" && !succeeded(receipt.commands[0]!))) {
++      command.skipped = true;
++      command.error = "Skipped because source collection or the AST guard failed";
++      receipt.commands.push(finishLog(command));
++      continue;
++    }
++    try {
++      receipt.commands.push(await runCommand(command));
++    } catch (error) {
++      command.error = errorText(error);
++      receipt.commands.push(finishLog(command));
++    }
++  }
++  for (const source of receipt.sources) {
++    try {
++      source.afterSHA256 = sha256(await readFile(join(receipt.workspace, source.path)));
++      if (source.afterSHA256 !== source.sha256) receipt.errors.push(`${source.path} changed during acceptance`);
++    } catch (error) {
++      receipt.errors.push(`${source.path} after execution: ${errorText(error)}`);
++    }
++  }
++  receipt.passed = receipt.errors.length === 0 && receipt.commands.every(succeeded);
++  return receipt;
++}
+diff --git a/e2e/agent-adaptor-shadow.evidence.spec.ts b/e2e/agent-adaptor-shadow.evidence.spec.ts
+new file mode 100644
+index 000000000..2376b0aa8
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.evidence.spec.ts
+@@ -0,0 +1,220 @@
++import { expect, test } from "@playwright/test";
++import {
++  deliveredReceipt,
++  requireAfterDone,
++  requireExactTaskIDs,
++  requireSDKCleanupBeforeNext,
++  requireSuccess,
++  sdkAuditRunIDs,
++  type ShadowTask,
++} from "./agent-adaptor-shadow.evidence";
++
++function task(overrides: Partial<ShadowTask> = {}): ShadowTask {
++  return {
++    id: "task-1",
++    agent_id: "agent-1",
++    status: "completed",
++    started_at: "2026-11-02T00:00:00.000Z",
++    completed_at: "2026-11-02T00:01:00.000Z",
++    ...overrides,
++  };
++}
++
++test("success requires Multica's completed state and no failure evidence", () => {
++  expect(() => requireSuccess(task())).not.toThrow();
++  expect(() => requireSuccess(task({ error: null, failure_reason: "" }))).not.toThrow();
++  for (const status of ["succeeded", "running", "failed", "cancelled", "", "Completed"]) {
++    expect(() => requireSuccess(task({ status }))).toThrow();
++  }
++  for (const failure of ["provider failed", " ", { message: "failed" }, false, 0]) {
++    expect(() => requireSuccess(task({ error: failure }))).toThrow();
++    expect(() => requireSuccess(task({ failure_reason: failure }))).toThrow();
++  }
++});
++
++test("a new task starts at or after a completed, cancelled, or failed task ends", () => {
++  for (const status of ["completed", "cancelled", "failed"]) {
++    const previous = task({ status, started_at: null });
++    const next = task({ id: "task-2", status: "running", started_at: previous.completed_at, completed_at: null });
++    expect(() => requireAfterDone(previous, next)).not.toThrow();
++    expect(() => requireAfterDone(previous, { ...next, started_at: "2026-11-02T00:02:00Z" })).not.toThrow();
++  }
++});
++
++test("ordering rejects reused IDs, nonterminal status, missing times, and overlap", () => {
++  const next = task({ id: "task-2", started_at: "2026-11-02T00:01:00Z" });
++  expect(() => requireAfterDone(task(), task())).toThrow();
++  expect(() => requireAfterDone(task({ id: "" }), next)).toThrow();
++  expect(() => requireAfterDone(task(), { ...next, id: "" })).toThrow();
++  for (const status of ["running", "queued", "succeeded"]) {
++    expect(() => requireAfterDone(task({ status }), next)).toThrow();
++  }
++  for (const value of [undefined, null, "", "not-a-date", "2026-11-02", "0"]) {
++    expect(() => requireAfterDone(task({ completed_at: value }), next)).toThrow();
++    expect(() => requireAfterDone(task(), { ...next, started_at: value })).toThrow();
++  }
++  expect(() => requireAfterDone(task(), { ...next, started_at: "2026-11-02T00:00:59.999Z" })).toThrow();
++});
++
++test("ordering compares instants rather than timestamp strings", () => {
++  expect(() => requireAfterDone(task(), task({ id: "task-2", started_at: "2026-11-02T01:01:00+01:00" }))).not.toThrow();
++  expect(() => requireAfterDone(task(), task({ id: "task-2", started_at: "2026-11-02T01:00:59+01:00" }))).toThrow();
++});
++
++test("task IDs must match exactly without additional tasks or duplicate masking", () => {
++  expect(() => requireExactTaskIDs([task({ id: "b" }), task({ id: "a" })], ["a", "b"])).not.toThrow();
++  expect(() => requireExactTaskIDs([], [])).not.toThrow();
++  expect(() => requireExactTaskIDs([task()], [])).toThrow();
++  expect(() => requireExactTaskIDs([], ["task-1"])).toThrow();
++  expect(() => requireExactTaskIDs([task(), task({ id: "extra" })], ["task-1"])).toThrow();
++  expect(() => requireExactTaskIDs([task(), task()], ["task-1"])).toThrow();
++  expect(() => requireExactTaskIDs([task(), task()], ["task-1", "task-1"])).toThrow();
++  expect(() => requireExactTaskIDs([task({ id: "" })], [""])).toThrow();
++  expect(() => requireExactTaskIDs([task({ id: "TASK-1" })], ["task-1"])).toThrow();
++});
++
++function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
++  return {
++    task_id: "task-1",
++    agent_id: "agent-1",
++    status: "delivered",
++    delivered_at: "2026-11-02T00:00:30.000Z",
++    ...overrides,
++  };
++}
++
++test("delivery evidence is the sole exact task and agent receipt", () => {
++  const delivered = receipt();
++  expect(deliveredReceipt({ supplements: [delivered] }, "task-1", "agent-1")).toBe(delivered);
++  for (const supplements of [[], [delivered, delivered], [receipt({ task_id: "task-other" })], [receipt({ agent_id: "agent-other" })]]) {
++    expect(() => deliveredReceipt({ supplements }, "task-1", "agent-1")).toThrow();
++  }
++  for (const comment of [null, [], {}, { supplements: null }, { supplements: {} }, { supplements: [null] }]) {
++    expect(() => deliveredReceipt(comment, "task-1", "agent-1")).toThrow();
++  }
++});
++
++test("pending, failed, timestamp-free, and legacy-only receipts do not prove delivery", () => {
++  for (const override of [
++    { status: "pending" }, { status: "failed" }, { delivered_at: null },
++    { delivered_at: "" }, { delivered_at: "invalid" }, { delivered_at: "2026-11-02" }, { failure_reason: "delivery failed" },
++    { task_id: undefined }, { agent_id: undefined },
++  ]) {
++    expect(() => deliveredReceipt({ supplements: [receipt(override)] }, "task-1", "agent-1")).toThrow();
++  }
++  expect(() => deliveredReceipt({ supplement_task_id: "task-1", supplement_status: "delivered" }, "task-1", "agent-1")).toThrow();
++  expect(() => deliveredReceipt({ supplements: [receipt()] }, "", "agent-1")).toThrow();
++});
++
++test("SDK IDs come from actual shadow startup slog text and JSON", () => {
++  const log = [
++    'time=2026-11-02T00:00:00Z level=INFO msg="agent-adaptor shadow execution started" task_id=multica-1 run_id=sdk-1 version=x resume=false',
++    JSON.stringify({ time: "2026-11-02T00:00:01Z", level: "INFO", msg: "agent-adaptor shadow execution started", task_id: "multica-2", run_id: "sdk-2" }),
++    'level=INFO msg="agent-adaptor shadow execution started" task_id="multica-3" run_id="sdk-3"',
++    "agent-adaptor run_id=sdk-4 backend=shadow",
++    "agent-adaptor run_id=sdk-1 backend=shadow",
++  ].join("\n");
++  expect(sdkAuditRunIDs(log)).toEqual(["sdk-1", "sdk-2", "sdk-3", "sdk-4"]);
++});
++
++test("task IDs and unrelated or malformed run logs are not SDK audit evidence", () => {
++  const log = [
++    "task_id=multica-only status=completed",
++    "run_id=multica-only",
++    'msg="some other execution started" task_id=multica-1 run_id=unrelated',
++    'msg="agent-adaptor message receipt" task_id=multica-1 run_id=receipt-only message_id=x state=delivered',
++    'msg="agent-adaptor shadow execution started" run_id=missing-task',
++    'msg="agent-adaptor shadow execution started" task_id=multica-1',
++    'msg="agent-adaptor shadow execution started" task_id=" " run_id=missing-task',
++    'msg="agent-adaptor shadow execution started" task_id=multica-1 run_id=" "',
++    JSON.stringify({ msg: "other", task_id: "multica-1", run_id: "wrong-json" }),
++    JSON.stringify({ msg: "agent-adaptor shadow execution started", task_id: "multica-1", run_id: "" }),
++    '{"msg":"agent-adaptor shadow execution started",',
++    "agent-adaptor run_id=wrong backend=legacy",
++    "agent-adaptor run_id=wrong backend=shadowed",
++    "fake-agent-adaptor run_id=wrong backend=shadow",
++  ].join("\r\n");
++  expect(sdkAuditRunIDs(log)).toEqual([]);
++});
++
++function lifecycle(msg: string, taskID: string, runID: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
++  return { msg: `agent-adaptor shadow execution ${msg}`, task_id: taskID, run_id: runID, ...extra };
++}
++
++function lifecycleLog(entries: Record<string, unknown>[], format: "json" | "text"): string {
++  return entries.map((entry) => format === "json" ? JSON.stringify(entry) : Object.entries(entry)
++    .map(([key, value]) => `${key}=${typeof value === "string" && /\s|^$/.test(value) ? JSON.stringify(value) : String(value)}`)
++    .join(" ")).join("\n");
++}
++
++function cleanupEntries(): Record<string, unknown>[] {
++  return [
++    lifecycle("started", "old-task", "sdk-old"),
++    lifecycle("finished", "old-task", "sdk-old", { status: "cancelled", cleanup_confirmed: true }),
++    lifecycle("started", "next-task", "sdk-next"),
++  ];
++}
++
++test("SDK cleanup must precede the next startup in JSON and slog text", () => {
++  for (const format of ["json", "text"] as const) {
++    for (const status of ["completed", "cancelled", "failed", "timeout"]) {
++      const entries = cleanupEntries();
++      entries[1]!.status = status;
++      const log = lifecycleLog(entries, format);
++      expect(() => requireSDKCleanupBeforeNext(log, "old-task", "next-task")).not.toThrow();
++      expect(sdkAuditRunIDs(log)).toEqual(["sdk-old", "sdk-next"]);
++    }
++  }
++});
++
++test("cleanup rejects missing, wrong-task, unconfirmed, and nonterminal finish evidence", () => {
++  for (const format of ["json", "text"] as const) {
++    const missing = cleanupEntries();
++    missing.splice(1, 1);
++    expect(() => requireSDKCleanupBeforeNext(lifecycleLog(missing, format), "old-task", "next-task")).toThrow();
++    for (const override of [
++      { task_id: "another-task" }, { msg: "agent-adaptor execution finished" },
++      { cleanup_confirmed: false }, { cleanup_confirmed: undefined },
++      { status: "running" }, { status: "cleanup_unconfirmed" }, { status: "canceled" }, { status: undefined },
++    ]) {
++      const entries = cleanupEntries();
++      entries[1] = { ...entries[1], ...override };
++      expect(() => requireSDKCleanupBeforeNext(lifecycleLog(entries, format), "old-task", "next-task")).toThrow();
++    }
++  }
++});
++
++test("cleanup rejects inverted order, reused run IDs, missing IDs, and ambiguous records", () => {
++  for (const format of ["json", "text"] as const) {
++    const entries = cleanupEntries();
++    expect(() => requireSDKCleanupBeforeNext(lifecycleLog([entries[0]!, entries[2]!, entries[1]!], format), "old-task", "next-task")).toThrow();
++    expect(() => requireSDKCleanupBeforeNext(lifecycleLog([entries[1]!, entries[0]!, entries[2]!], format), "old-task", "next-task")).toThrow();
++    expect(() => requireSDKCleanupBeforeNext(lifecycleLog([...entries, entries[1]!], format), "old-task", "next-task")).toThrow();
++    for (const [index, override] of [
++      [0, { run_id: "" }], [1, { run_id: "" }], [2, { run_id: "" }],
++      [1, { run_id: "unrelated-run" }], [2, { run_id: "sdk-old" }],
++      [2, { task_id: "another-task" }],
++    ] as const) {
++      const changed = cleanupEntries();
++      changed[index] = { ...changed[index], ...override };
++      expect(() => requireSDKCleanupBeforeNext(lifecycleLog(changed, format), "old-task", "next-task")).toThrow();
++    }
++  }
++});
++
++test("DB cancellation, quoted booleans, and embedded messages cannot prove SDK cleanup", () => {
++  const entries = cleanupEntries();
++  const prefix = JSON.stringify(entries[0]);
++  const suffix = JSON.stringify(entries[2]);
++  for (const middle of [
++    'task_id=old-task status=cancelled completed_at=2026-11-02T00:00:00Z',
++    JSON.stringify({ ...entries[1], cleanup_confirmed: "true" }),
++    'msg="agent-adaptor shadow execution finished" task_id=old-task run_id=sdk-old status=cancelled cleanup_confirmed="true"',
++    JSON.stringify({ msg: "unrelated", details: entries[1] }),
++    'msg="unrelated task_id=old-task run_id=sdk-old status=cancelled cleanup_confirmed=true"',
++  ]) {
++    expect(() => requireSDKCleanupBeforeNext([prefix, middle, suffix].join("\n"), "old-task", "next-task")).toThrow();
++  }
++  expect(() => requireSDKCleanupBeforeNext(lifecycleLog(entries, "json"), "old-task", "old-task")).toThrow();
++  expect(() => requireSDKCleanupBeforeNext(lifecycleLog(entries, "json"), "", "next-task")).toThrow();
++});
+diff --git a/e2e/agent-adaptor-shadow.evidence.ts b/e2e/agent-adaptor-shadow.evidence.ts
+new file mode 100644
+index 000000000..77816e5a8
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.evidence.ts
+@@ -0,0 +1,175 @@
++export interface ShadowTask {
++  id: string;
++  agent_id: string;
++  status: string;
++  started_at?: string | null;
++  completed_at?: string | null;
++  trigger_comment_id?: string;
++  chat_session_id?: string;
++  [key: string]: unknown;
++}
++
++function hasFailure(value: unknown): boolean {
++  return value !== undefined && value !== null && value !== "";
++}
++
++function timestamp(value: unknown, field: string): number {
++  if (typeof value !== "string" || value.trim() === "") {
++    throw new Error(`${field} is missing`);
++  }
++  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
++    throw new Error(`${field} is not a complete timestamp: ${value}`);
++  }
++  const parsed = Date.parse(value);
++  if (!Number.isFinite(parsed)) throw new Error(`${field} is invalid: ${value}`);
++  return parsed;
++}
++
++export function requireSuccess(task: ShadowTask): void {
++  if (task.status !== "completed") {
++    throw new Error(`Task ${task.id} did not complete successfully: ${task.status}`);
++  }
++  if (hasFailure(task.error) || hasFailure(task.failure_reason)) {
++    throw new Error(`Task ${task.id} completed with failure evidence`);
++  }
++}
++
++export function requireAfterDone(previous: ShadowTask, next: ShadowTask): void {
++  if (!previous.id || !next.id || previous.id === next.id) {
++    throw new Error("A subsequent task must have a different nonempty ID");
++  }
++  if (!["completed", "cancelled", "failed"].includes(previous.status)) {
++    throw new Error(`Previous task ${previous.id} is not terminal: ${previous.status}`);
++  }
++  const completed = timestamp(previous.completed_at, "previous.completed_at");
++  const started = timestamp(next.started_at, "next.started_at");
++  if (started < completed) {
++    throw new Error(`Task ${next.id} started before task ${previous.id} finished`);
++  }
++}
++
++export function requireExactTaskIDs(tasks: ShadowTask[], expected: string[]): void {
++  const actualIDs = tasks.map((task) => task.id);
++  const actual = new Set(actualIDs);
++  const wanted = new Set(expected);
++  if (
++    actualIDs.some((id) => !id) ||
++    expected.some((id) => !id) ||
++    actual.size !== actualIDs.length ||
++    wanted.size !== expected.length ||
++    actual.size !== wanted.size ||
++    [...actual].some((id) => !wanted.has(id))
++  ) {
++    throw new Error(`Task IDs differ: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actualIDs)}`);
++  }
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return value !== null && typeof value === "object" && !Array.isArray(value);
++}
++
++export function deliveredReceipt(comment: unknown, taskID: string, agentID: string): unknown {
++  if (!taskID || !agentID) throw new Error("Receipt task and agent IDs are required");
++  if (!isRecord(comment) || !Array.isArray(comment.supplements) || comment.supplements.length !== 1) {
++    throw new Error("Comment must contain exactly one supplement receipt");
++  }
++  const receipt: unknown = comment.supplements[0];
++  if (
++    !isRecord(receipt) ||
++    receipt.task_id !== taskID ||
++    receipt.agent_id !== agentID ||
++    receipt.status !== "delivered" ||
++    hasFailure(receipt.failure_reason)
++  ) {
++    throw new Error(`Comment has no delivered receipt for task ${taskID} and agent ${agentID}`);
++  }
++  timestamp(receipt.delivered_at, "receipt.delivered_at");
++  return receipt;
++}
++
++const shadowStarted = "agent-adaptor shadow execution started";
++const shadowFinished = "agent-adaptor shadow execution finished";
++
++function logRecord(line: string): Record<string, unknown> | undefined {
++  if (line.trimStart().startsWith("{")) {
++    try {
++      const entry: unknown = JSON.parse(line);
++      return isRecord(entry) ? entry : undefined;
++    } catch {
++      return undefined;
++    }
++  }
++  const entry: Record<string, unknown> = {};
++  const fields = /(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=("(?:\\.|[^"\\])*"|[^\s"]+)(?=\s|$)/g;
++  for (const match of line.matchAll(fields)) {
++    const name = match[1]!;
++    const value = match[2]!;
++    if (Object.hasOwn(entry, name)) return undefined;
++    if (value.startsWith('"')) {
++      try {
++        entry[name] = JSON.parse(value);
++      } catch {
++        return undefined;
++      }
++    } else {
++      entry[name] = value === "true" ? true : value === "false" ? false : value;
++    }
++  }
++  return entry;
++}
++
++function hasRunIdentity(entry: Record<string, unknown>): entry is Record<string, unknown> & { task_id: string; run_id: string } {
++  return typeof entry.task_id === "string" && entry.task_id.trim() !== "" &&
++    typeof entry.run_id === "string" && entry.run_id.trim() !== "";
++}
++
++export function sdkAuditRunIDs(log: string): string[] {
++  const ids = new Set<string>();
++  for (const line of log.split(/\r?\n/)) {
++    const entry = logRecord(line);
++    if (entry?.msg === shadowStarted && hasRunIdentity(entry)) {
++      ids.add(entry.run_id);
++      continue;
++    }
++    if (line.trimStart().startsWith("{") || entry?.msg !== undefined) continue;
++    const message = line.match(/(?:^|\s)agent-adaptor run_id=([^\s]+) backend=shadow(?:\s|$)/);
++    if (message) ids.add(message[1]!);
++  }
++  return [...ids];
++}
++
++export function requireSDKCleanupBeforeNext(log: string, previousTaskID: string, nextTaskID: string): void {
++  if (!previousTaskID || !nextTaskID || previousTaskID === nextTaskID) {
++    throw new Error("SDK cleanup requires two different nonempty task IDs");
++  }
++  const entries = log.split(/\r?\n/).flatMap((line, index) => {
++    const entry = logRecord(line);
++    return entry && hasRunIdentity(entry) ? [{
++      msg: entry.msg,
++      task_id: entry.task_id,
++      run_id: entry.run_id,
++      status: entry.status,
++      cleanup_confirmed: entry.cleanup_confirmed,
++      index,
++    }] : [];
++  });
++  const previousStarts = entries.filter((entry) => entry.msg === shadowStarted && entry.task_id === previousTaskID);
++  const previousFinishes = entries.filter((entry) => entry.msg === shadowFinished && entry.task_id === previousTaskID);
++  const nextStarts = entries.filter((entry) => entry.msg === shadowStarted && entry.task_id === nextTaskID);
++  if (previousStarts.length !== 1 || previousFinishes.length !== 1 || nextStarts.length !== 1) {
++    throw new Error("Expected one SDK start and finish for the old task and one SDK start for the new task");
++  }
++  const previousStart = previousStarts[0]!;
++  const previousFinish = previousFinishes[0]!;
++  const nextStart = nextStarts[0]!;
++  if (previousFinish.cleanup_confirmed !== true || typeof previousFinish.status !== "string" ||
++    !["completed", "cancelled", "failed", "timeout"].includes(previousFinish.status)) {
++    throw new Error(`SDK cleanup for task ${previousTaskID} is not confirmed in a terminal state`);
++  }
++  if (previousStart.run_id !== previousFinish.run_id || previousFinish.run_id === nextStart.run_id) {
++    throw new Error("SDK cleanup and startup run IDs do not identify two separate executions");
++  }
++  if (previousStart.index >= previousFinish.index || previousFinish.index >= nextStart.index) {
++    throw new Error("The old SDK execution must finish cleanup before the new SDK execution starts");
++  }
++}
+diff --git a/e2e/agent-adaptor-shadow.md b/e2e/agent-adaptor-shadow.md
+new file mode 100644
+index 000000000..dd22effa7
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.md
+@@ -0,0 +1,71 @@
++# Local Multica SDK shadow acceptance
++
++This opt-in suite exercises the actual local Multica server, daemon, Codex backend, persisted receipts, and browser. It does not start services. The default test suite skips every real-agent case before authentication or CLI access. The evidence helper and report tests are offline.
++
++The daemon backend switch is `MULTICA_CODEX_BACKEND=agent-adaptor`; an unset switch selects native Codex. The test's `MULTICA_SHADOW_BACKEND` labels the expected phase and does not change the daemon. Actual SDK startup/receipt/cleanup logs must prove the shadow phase used the SDK. Use separate daemon phases and fresh issues for the native/shadow comparison.
++
++## Preconditions and configuration
++
++Run Playwright in the same Ubuntu host/network namespace as the daemon: it reads the daemon's actual task files, and a real foreground provider shell calls the test's loopback HTTP gate. Codex must be able to reach that localhost gate. A browser, Python 3, the explicitly selected Codex CLI, and the managed environment must already be ready.
++
++Use this checkout's `make env-exec ARGS="pr30-sdk-shadow -- ..."` or the environment owner's managed wrapper. Do not copy another checkout's `.env`, use a personal workspace, or print credential values. `TestApiClient` supplies the existing E2E login/onboarding fixture; task completion and supplement delivery always use the real server/daemon path. There are no task/receipt DB updates in this suite.
++
++| Variable | Required value |
++| --- | --- |
++| `MULTICA_RUN_AGENT_ADAPTOR_SHADOW` | `1`, explicitly authorizing real model execution |
++| `MULTICA_SHADOW_BACKEND` | `native` or `agent-adaptor`, matching the running daemon |
++| `NEXT_PUBLIC_API_URL` | Actual managed localhost API URL |
++| `PLAYWRIGHT_BASE_URL` | Actual managed localhost web URL |
++| `DATABASE_URL` | Actual managed localhost database URL, used by `TestApiClient` auth/onboarding |
++| `MULTICA_SHADOW_EMAIL` | Isolated `@localhost` test account; prepared account: `pr30-shadow@localhost` |
++| `MULTICA_SHADOW_WORKSPACE_SLUG` | Exact isolated workspace slug; prepared slug: `pr30-shadow` |
++| `MULTICA_SHADOW_RUNTIME_ID` | Actual online Codex runtime registered by this phase's daemon |
++| `MULTICA_SHADOW_MODEL` | Explicit model, for example `gpt-6.1-sol` |
++| `MULTICA_SHADOW_EFFORT` | Explicit effort, for example `xhigh` |
++| `MULTICA_SHADOW_DAEMON_LOG` | Absolute path to the running daemon's append-only slog file |
++| `MULTICA_SHADOW_REPORT` | Absolute JSON report path, separate for each phase/run |
++| `MULTICA_SHADOW_RUN_ID` | Unique operator-selected run identifier; never reuse a report for another run |
++| `MULTICA_SHADOW_PROJECT_ID` | Optional isolated project ID when a prepared project resource is required |
++| `MULTICA_SHADOW_TIMEOUT_MS` | Optional per-step timeout; default `480000` |
++| `MULTICA_SHADOW_CLEANUP` | Optional `1` deletes created issues/chats/agents through APIs; default retains them for UI inspection |
++
++The suite rejects workspace fallback to any other slug. The prepared API/web ports are currently `19014` and `13934`; confirm them against the managed environment rather than assuming they are available. Runtime ID and daemon log must come from the actual launched daemon. Authentication stays in the managed profile and browser memory; reports redact the acquired token.
++
++## Execution
++
++First run only the minimal comparison against the native daemon, with `MULTICA_SHADOW_BACKEND=native` and a new report/run ID. Then have the environment operator stop that daemon, start its SDK shadow counterpart with `MULTICA_CODEX_BACKEND=agent-adaptor`, and supply its actual runtime ID/log. Set `MULTICA_SHADOW_BACKEND=agent-adaptor` and another new report/run ID. Run the same command in each phase:
++
++```sh
++pnpm exec playwright test e2e/agent-adaptor-shadow.spec.ts --workers=1 --retries=0 --reporter=line
++```
++
++The native phase executes one development task. The shadow phase executes eight provider tasks across four cases, including two deliberately cancelled tasks; one withdrawn chat task never starts. Retries are disabled. A failure remains a failure even if later cases succeed. Compare the first case in both phase reports: identical development prompt and independent host acceptance, actual source/test files and hashes, tool output, task result/usage/timing, and browser screenshot. This is a small functional comparison, not a performance benchmark.
++
++The development gate runs fixed host Python commands against the actual task workspace. It first restricts `shadow_math.py` to the requested narrow pure-function fixture, then checks positive, negative, zero, and large-integer additions and runs the generated unittest suite with at least two discovered tests. The generated unittest must really succeed. Every command receipt binds task ID, source hashes before/after, argv, working directory, exit status, stdout/stderr, and log hash. Failed commands remain in the report. An echoed `SHADOW_TEST_OK` or a failed unittest followed by a successful shell command cannot satisfy this gate. The AST check is a narrow fixture constraint, not a general Python sandbox.
++
++Safe offline checks do not set the opt-in flag:
++
++```sh
++pnpm exec playwright test e2e/agent-adaptor-shadow.evidence.spec.ts e2e/agent-adaptor-shadow.report.spec.ts e2e/agent-adaptor-shadow.acceptance.spec.ts --workers=1 --reporter=line
++pnpm exec playwright test e2e/agent-adaptor-shadow.spec.ts --list
++pnpm exec playwright test e2e/agent-adaptor-shadow.spec.ts --workers=1 --reporter=line
++```
++
++The last command must report four skips. Discovery and offline helper tests do not log in, start a browser, resolve a user CLI, or call a model.
++
++## Assertions and evidence
++
++| Case | Actual path and required evidence |
++| --- | --- |
++| Development comparison | API structured explicit `mention://agent/<id>` → addressed actual runtime → source and unittest files → independent host arithmetic and generated-unittest receipts → completed task visible in browser. Shadow requires actual SDK RunID in daemon slog; native rejects SDK logs for that task. |
++| Current comment and next run | Foreground shell reaches host gate before browser input. Browser selects **Add to current run**; original member identity/comment ID, one exact delivered supplement receipt, matching SDK delivery log, and visible **Read by** are required. Retrying the strict supplement endpoint with the same client request ID must return the same historical comment. A foreign issue cannot retarget the task. An unknown explicit target cannot create an extra task. Browser **Start after this run** creates a distinct queued task; actual SDK cleanup of the old run precedes startup of the new SDK RunID. |
++| Stop and start over | Shell gate proves the old provider ran. Browser action must retain its cancelled task, partial tool log, and `stopped.txt`, then create a different completed task with `restarted.txt=NEW_GOAL`. SDK Done/cleanup must precede the new startup. |
++| Chat | Actual API creates the initial and queued messages; browser removes a queued message and selects **Steer** for another. The active task is cancelled, priority runs before ordinary FIFO input, the withdrawn task never starts, and a separate actual chat session remains empty. SDK cleanup/start ordering and real assistant task IDs prove the sequence. |
++
++Each case writes `actual-shadow-evidence.json` and screenshots in Playwright's output directory. The aggregate report contains all task API results/messages, final comments and receipts, selected actual artifact contents/hashes, relevant SDK slog lines, configuration IDs, timestamps, and assertion outcomes. Failure paths collect available partial task/messages before requesting cancellation of any remaining active test task. A cancellation request is recorded as a request; it is not proof of provider cleanup.
++
++The aggregate report requires one native case or all four shadow cases before `complete=true`; `passed=true` also requires every case to pass. It survives Playwright worker replacement, rejects duplicate cases or another run's report, and never converts partial evidence to success. Preserve both phase reports, Playwright output, and the original daemon logs. Do not claim UI acceptance from API records alone: the real browser cases and screenshots must pass.
++
++This suite validates the selected structured mention and ordinary-reply routes, not Multica's entire mention parser. Chat Steer is the product's cancel-and-prioritize flow, not SDK `Interrupt`; **Start after this run** is a new execution after Done, not SDK `AfterTurn`. It does not prove legacy provider-session import, durable daemon restart recovery, all plugins, or deployment behavior.
++
++The mapped behavior comes from the official Multica checkout at `0d627e54e1bd4d2521359f293d04521246495ce2`: `apps/docs/content/docs/mentioning-agents.mdx` (explicit targets, plain replies, four delivery choices), `apps/docs/content/docs/chat.mdx` (FIFO/Steer), and the actual comment/chat handlers and UI in this checkout.
+diff --git a/e2e/agent-adaptor-shadow.report.spec.ts b/e2e/agent-adaptor-shadow.report.spec.ts
+new file mode 100644
+index 000000000..8c5fd6899
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.report.spec.ts
+@@ -0,0 +1,101 @@
++import { expect, test } from "@playwright/test";
++import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { appendShadowReport } from "./agent-adaptor-shadow.report";
++
++async function withReport(run: (path: string) => Promise<void>): Promise<void> {
++  const directory = await mkdtemp(join(tmpdir(), "multica-shadow-report-"));
++  try {
++    await run(join(directory, "nested", "report.json"));
++  } finally {
++    await rm(directory, { recursive: true, force: true });
++  }
++}
++
++test("native requires its one case to pass explicitly", async () => {
++  for (const passed of [true, false, undefined, null, "true", 1]) {
++    await withReport(async (path) => {
++      const report = await appendShadowReport(path, "run-1", "native", { name: "native-routing", passed, evidence: "case evidence" });
++      expect(report).toEqual({
++        runID: "run-1", phase: "native", expectedCases: 1, complete: true,
++        passed: passed === true, cases: [{ name: "native-routing", passed, evidence: "case evidence" }],
++      });
++      expect(JSON.parse(await readFile(path, "utf8"))).toEqual(JSON.parse(JSON.stringify(report)));
++      if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
++    });
++  }
++});
++
++test("shadow report becomes complete and passed only after all four cases", async () => {
++  await withReport(async (path) => {
++    for (let index = 1; index <= 4; index++) {
++      const report = await appendShadowReport(path, "run-1", "agent-adaptor", { name: `case-${index}`, passed: true });
++      expect(report.expectedCases).toBe(4);
++      expect(report.cases.map((entry) => entry.name)).toEqual(Array.from({ length: index }, (_, i) => `case-${i + 1}`));
++      expect(report.complete).toBe(index === 4);
++      expect(report.passed).toBe(index === 4);
++    }
++    const content = await readFile(path, "utf8");
++    await expect(appendShadowReport(path, "run-1", "agent-adaptor", { name: "extra", passed: true })).rejects.toThrow();
++    expect(await readFile(path, "utf8")).toBe(content);
++  });
++});
++
++test("fresh module after a worker restart preserves earlier failed evidence", async () => {
++  await withReport(async (path) => {
++    await appendShadowReport(path, "run-1", "agent-adaptor", { name: "case-1", passed: false, error: "old worker failed" });
++    const restarted = await import(`./agent-adaptor-shadow.report.ts?worker=${Date.now()}`);
++    for (let index = 2; index <= 4; index++) {
++      await restarted.appendShadowReport(path, "run-1", "agent-adaptor", { name: `case-${index}`, passed: true });
++    }
++    const report = JSON.parse(await readFile(path, "utf8"));
++    expect(report.complete).toBe(true);
++    expect(report.passed).toBe(false);
++    expect(report.cases).toHaveLength(4);
++    expect(report.cases[0]).toEqual({ name: "case-1", passed: false, error: "old worker failed" });
++  });
++});
++
++test("different runs, phases, and duplicate names cannot overwrite a report", async () => {
++  await withReport(async (path) => {
++    await appendShadowReport(path, "run-1", "agent-adaptor", { name: "case-1", passed: false });
++    const content = await readFile(path, "utf8");
++    for (const append of [
++      () => appendShadowReport(path, "run-2", "agent-adaptor", { name: "case-2", passed: true }),
++      () => appendShadowReport(path, "run-1", "native", { name: "native", passed: true }),
++      () => appendShadowReport(path, "run-1", "agent-adaptor", { name: "case-1", passed: true }),
++    ]) {
++      await expect(append()).rejects.toThrow();
++      expect(await readFile(path, "utf8")).toBe(content);
++    }
++  });
++});
++
++test("malformed existing reports and invalid new identity are rejected unchanged", async () => {
++  await withReport(async (path) => {
++    await appendShadowReport(path, "run-1", "agent-adaptor", { name: "case-1", passed: true });
++    for (const content of [
++      "not JSON", "null",
++      JSON.stringify({ runID: "run-1", phase: "agent-adaptor", expectedCases: 4, cases: [{ name: "same" }, { name: "same" }] }),
++      JSON.stringify({ runID: "run-1", phase: "agent-adaptor", expectedCases: 1, cases: [] }),
++      JSON.stringify({ runID: "run-1", phase: "agent-adaptor", expectedCases: 4, cases: [null] }),
++    ]) {
++      await writeFile(path, content);
++      await expect(appendShadowReport(path, "run-1", "agent-adaptor", { name: "case-2", passed: true })).rejects.toThrow();
++      expect(await readFile(path, "utf8")).toBe(content);
++    }
++  });
++  await withReport(async (path) => {
++    await expect(appendShadowReport(path, " ", "native", { name: "native", passed: true })).rejects.toThrow();
++    await expect(appendShadowReport(path, "run-1", "native", { name: " ", passed: true })).rejects.toThrow();
++    await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
++  });
++});
++
++test("atomic appends leave only the final report file", async () => {
++  await withReport(async (path) => {
++    await appendShadowReport(path, "run-1", "native", { name: "native", passed: true });
++    expect(await readdir(join(path, ".."))).toEqual(["report.json"]);
++  });
++});
+diff --git a/e2e/agent-adaptor-shadow.report.ts b/e2e/agent-adaptor-shadow.report.ts
+new file mode 100644
+index 000000000..d202bad9c
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.report.ts
+@@ -0,0 +1,78 @@
++import { randomUUID } from "node:crypto";
++import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
++import { dirname } from "node:path";
++
++type ShadowPhase = "native" | "agent-adaptor";
++type ShadowCase = { name: string; passed?: unknown; [key: string]: unknown };
++
++interface ShadowReport {
++  runID: string;
++  phase: ShadowPhase;
++  expectedCases: number;
++  complete: boolean;
++  passed: boolean;
++  cases: ShadowCase[];
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return value !== null && typeof value === "object" && !Array.isArray(value);
++}
++
++function isCase(value: unknown): value is ShadowCase {
++  return isRecord(value) && typeof value.name === "string" && value.name.trim() !== "";
++}
++
++export async function appendShadowReport(
++  path: string,
++  runID: string,
++  phase: ShadowPhase,
++  entry: ShadowCase,
++): Promise<ShadowReport> {
++  if (!runID.trim()) throw new Error("A shadow report run ID is required");
++  if (phase !== "native" && phase !== "agent-adaptor") throw new Error("Unknown shadow report phase");
++  if (!isCase(entry)) throw new Error("A shadow report case name is required");
++  const expectedCases = phase === "native" ? 1 : 4;
++  let cases: ShadowCase[] = [];
++  let existing: string | undefined;
++  try {
++    existing = await readFile(path, "utf8");
++  } catch (error) {
++    if (!isRecord(error) || error.code !== "ENOENT") throw error;
++  }
++  if (existing !== undefined) {
++    const report: unknown = JSON.parse(existing);
++    if (!isRecord(report) || report.runID !== runID || report.phase !== phase) {
++      throw new Error("Existing shadow report belongs to another run or phase");
++    }
++    if (report.expectedCases !== expectedCases || !Array.isArray(report.cases) || !report.cases.every(isCase)) {
++      throw new Error("Existing shadow report has invalid cases or expected count");
++    }
++    cases = report.cases;
++    if (new Set(cases.map((item) => item.name)).size !== cases.length) {
++      throw new Error("Existing shadow report contains duplicate cases");
++    }
++  }
++  if (cases.some((item) => item.name === entry.name)) throw new Error(`Duplicate shadow report case: ${entry.name}`);
++  if (cases.length >= expectedCases) throw new Error("Shadow report already has all expected cases");
++  cases = [...cases, entry];
++  const complete = cases.length === expectedCases;
++  const report: ShadowReport = {
++    runID,
++    phase,
++    expectedCases,
++    complete,
++    passed: complete && cases.every((item) => item.passed === true),
++    cases,
++  };
++  const content = `${JSON.stringify(report, null, 2)}\n`;
++  await mkdir(dirname(path), { recursive: true });
++  const temporary = `${path}.${randomUUID()}.tmp`;
++  try {
++    await writeFile(temporary, content, { mode: 0o600, flag: "wx" });
++    await rename(temporary, path);
++  } catch (error) {
++    await rm(temporary, { force: true }).catch(() => undefined);
++    throw error;
++  }
++  return report;
++}
+diff --git a/e2e/agent-adaptor-shadow.spec.ts b/e2e/agent-adaptor-shadow.spec.ts
+new file mode 100644
+index 000000000..f163ef317
+--- /dev/null
++++ b/e2e/agent-adaptor-shadow.spec.ts
+@@ -0,0 +1,426 @@
++import "./env";
++
++import { createHash, randomUUID } from "node:crypto";
++import { createServer, type ServerResponse } from "node:http";
++import { readFile, writeFile } from "node:fs/promises";
++import { join } from "node:path";
++import { expect, test, type Page, type TestInfo } from "@playwright/test";
++import { TestApiClient } from "./fixtures";
++import {
++  deliveredReceipt, requireAfterDone, requireExactTaskIDs, requireSuccess,
++  sdkAuditRunIDs, requireSDKCleanupBeforeNext, type ShadowTask,
++} from "./agent-adaptor-shadow.evidence";
++import { appendShadowReport } from "./agent-adaptor-shadow.report";
++import { inspectDevelopmentWorkspace } from "./agent-adaptor-shadow.acceptance";
++
++// Discovery and the ordinary suite never authenticate or resolve a user CLI.
++const enabled = process.env.MULTICA_RUN_AGENT_ADAPTOR_SHADOW === "1";
++const phase = process.env.MULTICA_SHADOW_BACKEND;
++const timeout = Number(process.env.MULTICA_SHADOW_TIMEOUT_MS || 480_000);
++type Json = Record<string, any>;
++type Gate = { url: string; wait: () => Promise<void>; release: () => void; close: () => Promise<void>; arrival?: string };
++
++function required(name: string): string {
++  const value = process.env[name];
++  if (!value) throw new Error(`Explicit ${name} is required for a real-agent test`);
++  return value;
++}
++function localURL(value: string): string {
++  const url = new URL(value);
++  if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) throw new Error("Shadow acceptance requires a local managed server");
++  return value.replace(/\/$/, "");
++}
++function scrub(value: unknown, secrets: string[]): unknown {
++  if (typeof value === "string") return secrets.reduce((text, secret) => secret ? text.replaceAll(secret, "[REDACTED]") : text, value);
++  if (Array.isArray(value)) return value.map((item) => scrub(item, secrets));
++  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrub(item, secrets)]));
++  return value;
++}
++
++// A real provider shell must perform the HTTP request before wait resolves.
++// Release is controlled by the browser test, never by a guessed delay.
++async function gate(): Promise<Gate> {
++  const key = randomUUID();
++  const pending = new Set<ServerResponse>();
++  let arrived!: () => void;
++  const reached = new Promise<void>((done) => { arrived = done; });
++  let released = false;
++  const server = createServer((request, response) => {
++    if (request.method !== "GET" || request.url !== `/${key}`) { response.writeHead(404).end(); return; }
++    if (!result.arrival) { result.arrival = new Date().toISOString(); arrived(); }
++    if (released) { response.end("HOST_RELEASED"); return; }
++    pending.add(response);
++    response.on("close", () => pending.delete(response));
++  });
++  await new Promise<void>((done, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", done); });
++  const address = server.address();
++  if (!address || typeof address === "string") throw new Error("Gate has no TCP address");
++  const result: Gate = {
++    url: `http://127.0.0.1:${address.port}/${key}`,
++    wait: () => Promise.race([reached, new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error("Real provider shell did not reach gate")), timeout); timer.unref(); })]),
++    release: () => { released = true; for (const response of pending) response.end("HOST_RELEASED"); pending.clear(); },
++    close: async () => { result.release(); server.closeAllConnections(); await new Promise<void>((done) => server.close(() => done())); },
++  };
++  return result;
++}
++function hold(g: Gate): string {
++  return `Before final response, execute this exact foreground shell command and wait for its response (do not background it): python3 -c 'import urllib.request; print(urllib.request.urlopen("${g.url}", timeout=420).read().decode())'. Do not run sleep, inspect environment/auth, or bypass the host gate.`;
++}
++const development = `Implement shadow_math.py with a pure add(a,b) function returning a+b. This narrow fixture file may contain only an optional module docstring and def add(a,b): with an optional function docstring and a return of pure arithmetic; no imports, annotations, decorators, defaults, global assignments, top-level execution or other definitions. Implement test_shadow_math.py using unittest with at least two actually executed positive and negative addition tests, without skips or expected failures. Run python3 -m unittest -v test_shadow_math.py and then python3 -c 'from shadow_math import add; assert add(-2,5)==3; print("SHADOW_TEST_OK")'. Keep changes inside your provided task workspace. Report the file names and actual test result. The host will independently check actual source and run both fixed acceptance cases and your generated unittest; printing a marker does not establish success. Do not inspect credentials or change Multica itself.`;
++
++class Harness {
++  api = new TestApiClient();
++  base = "";
++  workspace!: { id: string; slug: string };
++  agent!: Json;
++  createdAgents: string[] = [];
++  createdChats: string[] = [];
++  issues: Json[] = [];
++  evidence: Json = { started: new Date().toISOString(), checks: [], apiSnapshots: [], uiScreenshots: [], gates: [], tasks: [] };
++  secrets: string[] = [];
++  userID = "";
++  daemonStart = 0;
++  constructor(readonly page: Page, readonly info: TestInfo) {}
++  async init() {
++    if (phase !== "native" && phase !== "agent-adaptor") throw new Error("MULTICA_SHADOW_BACKEND must explicitly name native or agent-adaptor");
++    this.base = localURL(required("NEXT_PUBLIC_API_URL"));
++    localURL(required("PLAYWRIGHT_BASE_URL"));
++    const email = required("MULTICA_SHADOW_EMAIL");
++    if (!email.endsWith("@localhost")) throw new Error("Use the isolated localhost test account");
++    required("MULTICA_SHADOW_MODEL"); required("MULTICA_SHADOW_EFFORT");
++    required("MULTICA_SHADOW_REPORT"); required("MULTICA_SHADOW_RUN_ID");
++    localURL(required("DATABASE_URL"));
++    const log = required("MULTICA_SHADOW_DAEMON_LOG");
++    this.daemonStart = (await readFile(log)).length;
++    const login = await this.api.login(email, "PR30 Shadow");
++    this.userID = login.user?.id;
++    if (!this.userID) throw new Error("Isolated login returned no user identity");
++    const slug = required("MULTICA_SHADOW_WORKSPACE_SLUG");
++    this.workspace = await this.api.ensureWorkspace("PR30 SDK Shadow", slug);
++    expect(this.workspace.slug, "Never fall back to an unrelated workspace").toBe(slug);
++    this.api.setWorkspaceId(this.workspace.id); this.api.setWorkspaceSlug(slug);
++    await this.api.markUserOnboarded();
++    const token = this.api.getToken();
++    if (!token) throw new Error("Isolated login returned no token");
++    this.secrets = [token, process.env.OPENAI_API_KEY || ""];
++    await this.page.addInitScript((auth) => { localStorage.setItem("multica_token", auth); localStorage.setItem("multica:chat:isOpen", "false"); }, token);
++    await this.page.setViewportSize({ width: 1440, height: 1000 });
++    this.agent = await this.request("/api/agents", { method: "POST", body: {
++      name: `PR30 ${phase} ${randomUUID().slice(0, 8)}`, runtime_id: required("MULTICA_SHADOW_RUNTIME_ID"),
++      model: required("MULTICA_SHADOW_MODEL"), thinking_level: required("MULTICA_SHADOW_EFFORT"),
++      max_concurrent_tasks: 1, visibility: "private", description: "Isolated opt-in real-agent acceptance",
++      instructions: "Follow the actual human task. Use tools to perform requested code and tests. Never claim a task or test succeeded without running it. Do not read auth files or dump environment variables.",
++    } });
++    this.createdAgents.push(this.agent.id);
++    this.evidence.configuration = { backendRequested: phase, model: process.env.MULTICA_SHADOW_MODEL, effort: process.env.MULTICA_SHADOW_EFFORT, workspace: this.workspace, agent: { id: this.agent.id, name: this.agent.name, runtime_id: this.agent.runtime_id }, source: "actual-local-Multica-server-daemon" };
++  }
++  async request(path: string, options: { method?: string; body?: unknown } = {}): Promise<any> {
++    const response = await fetch(this.base + path, { method: options.method || "GET", headers: { Authorization: `Bearer ${this.api.getToken()}`, "Content-Type": "application/json", "X-Workspace-ID": this.workspace.id, "X-Client-Capabilities": "chat-draft-restore-v1" }, body: options.body === undefined ? undefined : JSON.stringify(options.body), signal: AbortSignal.timeout(30_000) });
++    const text = await response.text();
++    if (!response.ok) throw new Error(`${options.method || "GET"} ${path}: HTTP ${response.status}: ${text.slice(0, 1000)}`);
++    return text ? JSON.parse(text) : null;
++  }
++  async issue(label: string): Promise<Json> {
++    const project = process.env.MULTICA_SHADOW_PROJECT_ID;
++    const issue = await this.api.createIssue(`PR30 ${label} ${randomUUID().slice(0, 8)}`, project ? { project_id: project } : undefined);
++    if (!issue.id) throw new Error("Issue create failed");
++    this.issues.push(issue); return issue;
++  }
++  async comment(issue: Json, content: string, extra: Json = {}): Promise<Json> {
++    return this.request(`/api/issues/${issue.id}/comments`, { method: "POST", body: { content, ...extra } });
++  }
++  mention(text: string): string { return `[@${this.agent.name}](mention://agent/${this.agent.id}) ${text}`; }
++  async tasks(issue: Json): Promise<ShadowTask[]> { return this.request(`/api/issues/${issue.id}/task-runs`); }
++  async task(issue: Json, id: string): Promise<ShadowTask> {
++    const task = (await this.tasks(issue)).find((item) => item.id === id);
++    if (!task) throw new Error(`Task ${id} disappeared`); return task;
++  }
++  async taskForComment(issue: Json, comment: Json): Promise<ShadowTask> {
++    let found: ShadowTask | undefined;
++    await expect.poll(async () => { found = (await this.tasks(issue)).find((task) => task.trigger_comment_id === comment.id || (task.coalesced_comment_ids as string[] | undefined)?.includes(comment.id)); return found?.id; }, { timeout, message: "Real server must create the addressed task" }).toBeTruthy();
++    return found!;
++  }
++  async terminal(issue: Json, id: string): Promise<ShadowTask> {
++    let task!: ShadowTask;
++    await expect.poll(async () => { task = await this.task(issue, id); return ["completed", "failed", "cancelled"].includes(task.status); }, { timeout }).toBe(true);
++    await this.saveTask(task); return task;
++  }
++  async saveTask(task: ShadowTask) {
++    const messages = await this.request(`/api/tasks/${task.id}/messages`);
++    this.evidence.tasks.push({ task, messages });
++    return messages as Json[];
++  }
++  async showIssue(issue: Json, task?: ShadowTask) {
++    await this.page.goto(`/${this.workspace.slug}/issues/${issue.id}`, { waitUntil: "domcontentloaded" });
++    await expect(this.page.getByText(issue.title, { exact: true }).first()).toBeVisible({ timeout: 45_000 });
++    if (task) await expect(this.page.locator(`[data-run-id="${task.id}"]`)).toBeVisible({ timeout: 45_000 });
++  }
++  async shot(name: string) {
++    const path = this.info.outputPath(`${name}.png`);
++    await this.page.screenshot({ path, fullPage: true });
++    this.evidence.uiScreenshots.push({ name, path, url: this.page.url(), at: new Date().toISOString() });
++  }
++  async reply(issue: Json, text: string, action: "Add to current run" | "Start after this run" | "Stop and start over"): Promise<Json> {
++    const shell = this.page.getByTestId("reply-composer-shell").first();
++    if (await shell.isVisible()) await shell.click();
++    const editor = this.page.locator('.ProseMirror[data-placeholder="Leave a reply..."], .ProseMirror:has([data-placeholder="Leave a reply..."])').first();
++    await expect(editor).toBeVisible(); await editor.fill(text);
++    const chip = this.page.getByRole("button", { name: new RegExp(`^${this.agent.name} trigger:`) });
++    await expect(chip).toBeVisible({ timeout: 20_000 }); await chip.click();
++    await this.page.getByRole("menuitemradio", { name: new RegExp(`^${action}`) }).click();
++    const posted = this.page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/issues/${issue.id}/comments`);
++    await this.page.getByRole("button", { name: "Send", exact: true }).first().click();
++    const response = await posted; expect(response.status()).toBe(201);
++    const comment = await response.json();
++    this.evidence.apiSnapshots.push({ kind: "actual-UI-comment-post", action, comment });
++    return comment;
++  }
++  async sdkEvidence(task: ShadowTask, commentID?: string) {
++    const log = (await readFile(required("MULTICA_SHADOW_DAEMON_LOG"))).subarray(this.daemonStart).toString("utf8");
++    const lines = log.split(/\r?\n/).filter((line) => line.includes("agent-adaptor") && (line.includes(task.id) || (commentID && line.includes(commentID))));
++    this.evidence.apiSnapshots.push({ kind: "actual-daemon-sdk-log", taskID: task.id, lines });
++    if (phase === "agent-adaptor") {
++      const runIDs = sdkAuditRunIDs(lines.join("\n"));
++      expect(runIDs.length, "Actual daemon log must prove SDK execution, not just a requested feature flag").toBeGreaterThan(0);
++      expect(runIDs).not.toContain(task.id);
++      if (commentID) expect(lines.some((line) => line.includes("message receipt") && line.includes(commentID) && /state[=": ]+delivered/.test(line))).toBe(true);
++    } else expect(lines.filter((line) => line.includes(task.id))).toHaveLength(0);
++  }
++  async cleanupBefore(previous: ShadowTask, next: ShadowTask) {
++    const log = (await readFile(required("MULTICA_SHADOW_DAEMON_LOG"))).subarray(this.daemonStart).toString("utf8");
++    requireSDKCleanupBeforeNext(log, previous.id, next.id);
++    this.evidence.checks.push({ kind: "SDK-Done-and-cleanup-before-next-provider-start", previousTaskID: previous.id, nextTaskID: next.id });
++  }
++  artifactDirectory(task: ShadowTask): string {
++    const result = task.result as Json | null;
++    const dir = task.durable_work_dir || task.work_dir || result?.work_dir;
++    if (typeof dir !== "string" || !dir) throw new Error("Actual task omitted its artifact workspace");
++    return dir;
++  }
++  async artifacts(task: ShadowTask, names: string[]) {
++    const dir = this.artifactDirectory(task);
++    const artifacts: Json[] = [];
++    for (const name of names) {
++      const data = await readFile(join(dir, name));
++      artifacts.push({ name, sha256: createHash("sha256").update(data).digest("hex"), text: data.toString("utf8") });
++    }
++    this.evidence.apiSnapshots.push({ kind: "actual-workspace-files", taskID: task.id, artifacts });
++    return artifacts;
++  }
++  async finalAudit(failed: boolean) {
++    if (!this.agent?.id) return;
++    const tasks = new Map<string, ShadowTask>();
++    const errors: string[] = [];
++    for (const issue of this.issues) {
++      try {
++        for (const task of await this.tasks(issue)) tasks.set(task.id, task);
++        this.evidence.apiSnapshots.push({ kind: "final-issue-comments", issueID: issue.id, comments: await this.request(`/api/issues/${issue.id}/comments`) });
++      } catch (error) { errors.push(String(error)); }
++    }
++    try {
++      const history: ShadowTask[] = await this.request(`/api/agents/${this.agent.id}/tasks?limit=200&include_usage=true`);
++      for (const task of history) if (this.createdChats.includes(String(task.chat_session_id))) tasks.set(task.id, task);
++    } catch (error) { errors.push(String(error)); }
++    for (const task of tasks.values()) {
++      try {
++        // Preserve available partial output before requesting real cancellation.
++        await this.saveTask(task);
++        if (failed && !["completed", "failed", "cancelled"].includes(task.status)) {
++          const cancellation = await this.request(`/api/tasks/${task.id}/cancel`, { method: "POST" });
++          this.evidence.apiSnapshots.push({ kind: "failure-cleanup-cancellation-request", taskID: task.id, cancellation });
++        }
++      } catch (error) { errors.push(String(error)); }
++    }
++    const log = (await readFile(required("MULTICA_SHADOW_DAEMON_LOG"))).subarray(this.daemonStart).toString("utf8");
++    this.evidence.finalDaemonAudit = log.split(/\r?\n/).filter((line) => line.includes("agent-adaptor") && [...tasks.keys()].some((id) => line.includes(id)));
++    if (errors.length) throw new Error(`Final audit collection failed: ${errors.join("; ")}`);
++  }
++  async close() {
++    // Retain isolated entities by default so the operator can inspect real UI.
++    if (process.env.MULTICA_SHADOW_CLEANUP === "1") {
++      for (const session of this.createdChats) await this.request(`/api/chat/sessions/${session}`, { method: "DELETE" });
++      await this.api.cleanup();
++      for (const agent of this.createdAgents) await this.request(`/api/agents/${agent}`, { method: "DELETE" });
++    }
++  }
++}
++
++async function run(page: Page, info: TestInfo, body: (h: Harness) => Promise<void>) {
++  const h = new Harness(page, info);
++  let failure: unknown;
++  try { await h.init(); await body(h); h.evidence.passed = true; }
++  catch (error) { failure = error; h.evidence.passed = false; h.evidence.error = String(error); try { await h.shot("failure"); } catch { /* browser may already be closed */ } }
++  finally {
++    try { await h.finalAudit(!!failure); } catch (error) { h.evidence.auditError = String(error); h.evidence.passed = false; failure ||= error; }
++    try { await h.close(); } catch (error) { h.evidence.cleanupError = String(error); h.evidence.passed = false; failure ||= error; }
++    const clean = scrub({ name: info.title, phase, ...h.evidence, ended: new Date().toISOString() }, h.secrets) as Json;
++    await writeFile(info.outputPath("actual-shadow-evidence.json"), JSON.stringify(clean, null, 2));
++    await info.attach("actual-shadow-evidence", { body: JSON.stringify(clean), contentType: "application/json" });
++    if (process.env.MULTICA_SHADOW_REPORT && process.env.MULTICA_SHADOW_RUN_ID && (phase === "native" || phase === "agent-adaptor")) {
++      await appendShadowReport(process.env.MULTICA_SHADOW_REPORT, process.env.MULTICA_SHADOW_RUN_ID, phase, clean as { name: string; passed?: unknown });
++    }
++  }
++  if (failure) throw failure;
++}
++
++test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)", () => {
++  test.skip(!enabled, "Set MULTICA_RUN_AGENT_ADAPTOR_SHADOW=1 explicitly; managed server and daemon must already be running");
++  test.describe.configure({ mode: "default" });
++  test.setTimeout(timeout * 5);
++
++  test("same development task: real server to daemon to provider to UI", async ({ page }, info) => run(page, info, async (h) => {
++    const issue = await h.issue("development comparison");
++    const root = await h.comment(issue, h.mention(development));
++    const task = await h.taskForComment(issue, root);
++    expect(task.agent_id).toBe(h.agent.id);
++    const done = await h.terminal(issue, task.id); requireSuccess(done);
++    await h.sdkEvidence(done);
++    await h.saveTask(done);
++    const acceptance = await inspectDevelopmentWorkspace({ taskID: done.id, workspace: h.artifactDirectory(done) });
++    h.evidence.apiSnapshots.push({ kind: "independent-host-development-acceptance", receipt: acceptance });
++    expect(acceptance.passed, "Fixed host source, arithmetic and generated-unittest checks must all pass; see retained receipt").toBe(true);
++    await h.artifacts(done, ["shadow_math.py", "test_shadow_math.py"]);
++    await h.showIssue(issue, done); await h.shot("development-result-visible");
++    requireExactTaskIDs(await h.tasks(issue), [task.id]);
++    h.evidence.checks.push("explicit mention bound to actual agent", "actual code/test artifacts", "independent host arithmetic and generated-unittest receipt", "completed task", "result visible in browser");
++  }));
++
++  test("current comment receipt, retry identity, ordinary reply queued after Done", async ({ page }, info) => {
++    test.skip(phase !== "agent-adaptor", "Native phase runs only the minimal comparison");
++    await run(page, info, async (h) => {
++      const g = await gate();
++      try {
++        const issue = await h.issue("comment routing");
++        const root = await h.comment(issue, h.mention(`Create route-base.txt containing BASE. ${hold(g)} After release apply additional human guidance before finishing.`));
++        const task = await h.taskForComment(issue, root);
++        await g.wait(); h.evidence.gates.push({ kind: "actual-provider-shell", taskID: task.id, arrival: g.arrival });
++        await h.showIssue(issue, task);
++        const marker = `COMMENT_${randomUUID()}`;
++        const comment = await h.reply(issue, `Write route-comment.txt with exact bytes ${marker}.`, "Add to current run");
++        expect(comment.author_type).toBe("member"); expect(comment.author_id).toBe(h.userID);
++        let delivered: Json | undefined;
++        await expect.poll(async () => {
++          const comments = await h.request(`/api/issues/${issue.id}/comments`);
++          delivered = comments.find((entry: Json) => entry.id === comment.id);
++          try { deliveredReceipt(delivered, task.id, h.agent.id); return true; } catch { return false; }
++        }, { timeout }).toBe(true);
++        thisIsActualReceipt(h, delivered!);
++        await expect(page.getByText(`Read by ${h.agent.name}`, { exact: true })).toBeVisible({ timeout: 45_000 });
++        await h.shot("real-receipt-visible");
++        // Idempotency uses the real endpoint; no DB state or receipt is patched.
++        const clientID = randomUUID();
++        const supplemental = { content: "Retain the previous human guidance unchanged.", client_request_id: clientID };
++        const first = await h.request(`/api/issues/${issue.id}/tasks/${task.id}/supplements`, { method: "POST", body: supplemental });
++        const repeat = await h.request(`/api/issues/${issue.id}/tasks/${task.id}/supplements`, { method: "POST", body: supplemental });
++        expect(repeat.id).toBe(first.id);
++        h.evidence.apiSnapshots.push({ kind: "real-idempotent-supplement", clientID, first, repeat });
++        const isolated = await h.issue("separate comment thread");
++        await expect(h.request(`/api/issues/${isolated.id}/tasks/${task.id}/supplements`, { method: "POST", body: { content: "Wrong issue must not reach this running task", client_request_id: randomUUID() } })).rejects.toThrow();
++        expect(await h.tasks(isolated)).toEqual([]);
++        expect(await h.request(`/api/issues/${isolated.id}/comments`)).toEqual([]);
++        h.evidence.checks.push("foreign issue cannot retarget a live task supplement");
++        const queued = await h.reply(issue, "Reply with exact text AFTER_CURRENT_DONE. Do not modify files.", "Start after this run");
++        const next = await h.taskForComment(issue, queued);
++        expect(next.id).not.toBe(task.id); expect(next.status).toBe("queued");
++        requireExactTaskIDs(await h.tasks(issue), [task.id, next.id]);
++        const unknown = await h.comment(issue, `[@Unknown](mention://agent/${randomUUID()}) UNKNOWN_TARGET_MUST_NOT_DISPATCH`);
++        h.evidence.apiSnapshots.push({ kind: "unknown-mention-target", comment: unknown });
++        requireExactTaskIDs(await h.tasks(issue), [task.id, next.id]);
++        await h.shot("ordinary-reply-queued");
++        g.release();
++        const originalDone = await h.terminal(issue, task.id); requireSuccess(originalDone);
++        const nextDone = await h.terminal(issue, next.id); requireSuccess(nextDone); requireAfterDone(originalDone, nextDone);
++        await h.cleanupBefore(originalDone, nextDone);
++        await h.sdkEvidence(originalDone, comment.id); await h.sdkEvidence(nextDone);
++        const finalComments = await h.request(`/api/issues/${issue.id}/comments`);
++        expect(finalComments.filter((entry: Json) => entry.id === first.id)).toHaveLength(1);
++        deliveredReceipt(finalComments.find((entry: Json) => entry.id === first.id), task.id, h.agent.id);
++        const files = await h.artifacts(originalDone, ["route-base.txt", "route-comment.txt"]);
++        expect(files.find((entry) => entry.name === "route-comment.txt")?.text).toBe(marker);
++        requireExactTaskIDs(await h.tasks(issue), [task.id, next.id]);
++        await h.shot("queued-run-completed");
++        h.evidence.checks.push("real gate before input", "UI current-run routing", "server/daemon/SDK delivered receipt", "UI Read receipt", "strict endpoint same-ID retry", "ordinary reply after Done with distinct task and SDK runs");
++      } finally { await g.close(); }
++    });
++  });
++
++  test("UI stop and start over uses a cancelled task and a fresh task", async ({ page }, info) => {
++    test.skip(phase !== "agent-adaptor", "Native phase runs only the minimal comparison");
++    await run(page, info, async (h) => {
++      const g = await gate();
++      try {
++        const issue = await h.issue("stop restart");
++        const root = await h.comment(issue, h.mention(`Create stopped.txt containing STARTED. ${hold(g)}`));
++        const task = await h.taskForComment(issue, root); await g.wait();
++        h.evidence.gates.push({ kind: "actual-provider-shell", taskID: task.id, arrival: g.arrival });
++        await h.showIssue(issue, task);
++        const restarted = await h.reply(issue, "New objective: create restarted.txt containing NEW_GOAL. Do not continue the cancelled objective. Report the actual write.", "Stop and start over");
++        const oldDone = await h.terminal(issue, task.id); expect(oldDone.status).toBe("cancelled");
++        expect((await h.saveTask(oldDone)).some((message) => message.type === "tool_use" && JSON.stringify(message.input ?? null).includes(g.url))).toBe(true);
++        const next = await h.taskForComment(issue, restarted);
++        const done = await h.terminal(issue, next.id); requireSuccess(done); requireAfterDone(oldDone, done);
++        await h.cleanupBefore(oldDone, done);
++        requireExactTaskIDs(await h.tasks(issue), [task.id, next.id]);
++        await h.sdkEvidence(oldDone); await h.sdkEvidence(done);
++        expect((await h.artifacts(oldDone, ["stopped.txt"]))[0]?.text.trim()).toBe("STARTED");
++        expect((await h.artifacts(done, ["restarted.txt"]))[0]?.text).toBe("NEW_GOAL");
++        await h.shot("cancelled-and-restarted-visible");
++        h.evidence.checks.push("gate proves old provider actually ran", "actual UI Stop and start over", "cancelled audit retained", "distinct successful new task", "new artifact");
++      } finally { await g.close(); }
++    });
++  });
++
++  test("real Chat Steer, withdrawal and independent session isolation", async ({ page }, info) => {
++    test.skip(phase !== "agent-adaptor", "Native phase runs only the minimal comparison");
++    await run(page, info, async (h) => {
++      const g = await gate();
++      try {
++        const session = await h.request("/api/chat/sessions", { method: "POST", body: { agent_id: h.agent.id, title: "PR30 actual chat queue" } });
++        const isolated = await h.request("/api/chat/sessions", { method: "POST", body: { agent_id: h.agent.id, title: "PR30 isolated empty thread" } });
++        h.createdChats.push(session.id, isolated.id);
++        const active = await h.request(`/api/chat/sessions/${session.id}/messages`, { method: "POST", body: { content: `Create chat-started.txt containing STARTED. ${hold(g)}` } });
++        await g.wait(); h.evidence.gates.push({ kind: "actual-provider-shell", taskID: active.task_id, arrival: g.arrival });
++        const send = (content: string) => h.request(`/api/chat/sessions/${session.id}/messages`, { method: "POST", body: { content } });
++        const ordinary = await send("ORDINARY_LAST: reply ORDINARY_LAST, no tools.");
++        const withdrawn = await send("WITHDRAWN_NEVER_RUN: do not execute this queued input.");
++        const priority = await send("PRIORITY_FIRST: reply PRIORITY_FIRST, no tools.");
++        expect(ordinary.queued).toBe(true); expect(priority.queued).toBe(true);
++        await page.goto(`/${h.workspace.slug}/chat?session=${session.id}`, { waitUntil: "domcontentloaded" });
++        const withdrawnRow = page.locator('[data-slot="chat-queue-row"]').filter({ hasText: "WITHDRAWN_NEVER_RUN" });
++        await expect(withdrawnRow).toBeVisible({ timeout: 45_000 });
++        await withdrawnRow.getByRole("button", { name: "Remove queued message", exact: true }).click();
++        await expect(withdrawnRow).toHaveCount(0);
++        const priorityRow = page.locator('[data-slot="chat-queue-row"]').filter({ hasText: "PRIORITY_FIRST" });
++        await priorityRow.getByRole("button", { name: "Steer", exact: true }).click();
++        await h.shot("chat-steer-ui");
++        const history = async (): Promise<ShadowTask[]> => h.request(`/api/agents/${h.agent.id}/tasks?limit=200&include_usage=true`);
++        let tasks: ShadowTask[] = [];
++        await expect.poll(async () => {
++          tasks = await history();
++          return [active.task_id, ordinary.task_id, priority.task_id, withdrawn.task_id].every((id) => tasks.some((task) => task.id === id && ["completed", "failed", "cancelled"].includes(task.status)));
++        }, { timeout }).toBe(true);
++        const byID = (id: string) => tasks.find((task) => task.id === id)!;
++        expect(byID(active.task_id).status).toBe("cancelled"); expect(byID(withdrawn.task_id).status).toBe("cancelled");
++        expect(byID(withdrawn.task_id).started_at).toBeFalsy();
++        requireSuccess(byID(priority.task_id)); requireSuccess(byID(ordinary.task_id));
++        requireAfterDone(byID(active.task_id), byID(priority.task_id)); requireAfterDone(byID(priority.task_id), byID(ordinary.task_id));
++        await h.cleanupBefore(byID(active.task_id), byID(priority.task_id)); await h.cleanupBefore(byID(priority.task_id), byID(ordinary.task_id));
++        requireExactTaskIDs(tasks.filter((task) => task.chat_session_id === session.id), [active.task_id, ordinary.task_id, priority.task_id, withdrawn.task_id]);
++        expect(tasks.filter((task) => task.chat_session_id === isolated.id)).toHaveLength(0);
++        expect(await h.request(`/api/chat/sessions/${isolated.id}/messages`)).toEqual([]);
++        const messages = await h.request(`/api/chat/sessions/${session.id}/messages`);
++        expect(messages.some((message: Json) => message.role === "assistant" && message.task_id === priority.task_id && message.content.includes("PRIORITY_FIRST"))).toBe(true);
++        expect(messages.some((message: Json) => message.role === "assistant" && message.task_id === ordinary.task_id && message.content.includes("ORDINARY_LAST"))).toBe(true);
++        h.evidence.apiSnapshots.push({ kind: "real-chat-history", session, isolated, tasks, messages });
++        for (const id of [active.task_id, priority.task_id, ordinary.task_id]) { await h.saveTask(byID(id)); await h.sdkEvidence(byID(id)); }
++        expect((await h.saveTask(byID(active.task_id))).some((message) => message.type === "tool_use" && JSON.stringify(message.input ?? null).includes(g.url))).toBe(true);
++        await h.shot("chat-completed-ui");
++        h.evidence.checks.push("actual UI queue withdrawal", "actual UI Chat Steer cancels current task", "priority before ordinary", "withdrawn input never started", "different chat session untouched");
++      } finally { await g.close(); }
++    });
++  });
++});
++
++function thisIsActualReceipt(h: Harness, comment: Json) {
++  h.evidence.apiSnapshots.push({ kind: "actual-server-receipt-after-daemon-ACK", comment });
++}
+-- 
+2.45.1.windows.1
+

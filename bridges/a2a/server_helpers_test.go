@@ -10,13 +10,11 @@ import (
 // These helpers describe only the A2A JSON wire consumed by server tests.
 func postRPC(t *testing.T, handler http.Handler, body string) *http.Response {
 	t.Helper()
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	response, err := http.Post(server.URL, "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("post RPC: %v", err)
-	}
-	return response
+	request := httptest.NewRequest(http.MethodPost, "https://example.com/a2a", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder.Result()
 }
 
 type taskArtifact struct {

@@ -1,0 +1,45 @@
+{
+  "observed_at_utc": "2026-11-01T18:53:15.339340+00:00",
+  "expected_pid": 44396,
+  "process_exists": true,
+  "exe_path": "/home/buthim/.local/share/multica-pr30-shadow-tools/bin/multica-shadow-run02",
+  "binary_sha256": "65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34",
+  "environment": {
+    "CODEX_HOME": "/home/buthim/.local/share/multica-pr30-shadow-tools/shadow-home",
+    "MULTICA_CODEX_PATH": "/home/buthim/.local/share/multica-pr30-shadow-tools/codex/node_modules/.bin/codex",
+    "MULTICA_CODEX_BACKEND": "agent-adaptor",
+    "MULTICA_CODEX_MODEL": "gpt-6.1-sol",
+    "MULTICA_AGENT_TIMEOUT": "8m",
+    "MULTICA_AGENT_IDLE_WATCHDOG": "3m",
+    "MULTICA_AGENT_TOOL_WATCHDOG": "8m",
+    "MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT": "8m",
+    "MULTICA_DAEMON_AUTO_UPDATE": "false",
+    "MULTICA_DAEMON_AUTO_RELOAD": "false"
+  },
+  "selected_config": {
+    "model": "gpt-6.1-sol",
+    "model_reasoning_effort": "xhigh",
+    "sandbox_mode": "danger-full-access",
+    "approval_policy": "never"
+  },
+  "selected_launch_flags": {
+    "--max-concurrent-tasks": "1",
+    "--agent-timeout": "8m0s",
+    "--profile": "pr30-shadow-sdk",
+    "--daemon-id": "1075b8f8-988f-4143-a8dd-b0c739715386",
+    "--no-auto-update": true,
+    "--no-auto-reload": true
+  },
+  "build_provenance": {
+    "phase": "run02",
+    "built_at_utc": "2026-11-01T18:00:49.064421+00:00",
+    "multica_head": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+    "multica_backend_commit": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+    "sdk_head": "395047325c882fc90bcc08ae08c3a91f5390965a",
+    "binary": "/home/buthim/.local/share/multica-pr30-shadow-tools/bin/multica-shadow-run02",
+    "binary_sha256": "65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34",
+    "multica_server_clean_at_build": true,
+    "sdk_go_code_clean_at_build": true
+  },
+  "daemon_descendants": []
+}

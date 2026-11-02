@@ -1,0 +1,18 @@
+{
+  "CODEX_HOME": "/home/buthim/.local/share/multica-pr30-shadow-tools/native-home",
+  "MULTICA_CODEX_PATH": "/home/buthim/.local/share/multica-pr30-shadow-tools/codex/node_modules/.bin/codex",
+  "MULTICA_CODEX_BACKEND": "native",
+  "MULTICA_CODEX_MODEL": "gpt-6.1-sol",
+  "MULTICA_AGENT_TIMEOUT": "8m",
+  "MULTICA_AGENT_IDLE_WATCHDOG": "3m",
+  "MULTICA_AGENT_TOOL_WATCHDOG": "8m",
+  "MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT": "8m",
+  "MULTICA_DAEMON_AUTO_UPDATE": "false",
+  "MULTICA_DAEMON_AUTO_RELOAD": "false",
+  "selected_config": {
+    "model": "gpt-6.1-sol",
+    "model_reasoning_effort": "xhigh",
+    "sandbox_mode": "danger-full-access",
+    "approval_policy": "never"
+  }
+}

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/profile"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
 )
 
 func TestScenarioS8TenantIsolatedProfile(t *testing.T) {
@@ -29,7 +29,7 @@ func TestScenarioS8TenantIsolatedProfile(t *testing.T) {
 			Agents:       []profile.SubAgent{{Key: "tester", Instructions: "Write and run the tests."}},
 		}),
 	)
-	if _, err := agent.Run(ctx, "fix the flaky login test"); err != nil {
+	if _, err := agent.Send(ctx, "fix the flaky login test").Result(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	req := fake.lastRequest(t)

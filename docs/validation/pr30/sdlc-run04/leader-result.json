@@ -1,0 +1,21 @@
+{
+  "original_audit_sha256": "1f08d69fea171d3f0bdd9a3448b2c6ac24f7a6e653bc89b489c665fddbf16382",
+  "transcript_count": 51,
+  "result": {
+    "Metadata": {
+      "transport": "app-server"
+    },
+    "Model": "gpt-6.1-sol",
+    "Provider": "openai",
+    "RunID": "d5335af3d099db820fba773e7bc6f4184f23c354a474ee4589f220a6d35c7581",
+    "Summary": "",
+    "Text": "`router.go` was implemented and host-integrated in round 1 with no violations.\n\n- Planner defined coverage; engineer implemented; reviewer approved; verifier passed.\n- Host receipts: `check-001` tests passed; `check-002` vet passed. Both exited 0.\n- Accepted hash: `6c6a5cee100ea90f88db878a68d36c5d5660b7701c71d63524aae50d04d54944`",
+    "Turns": 6,
+    "Usage": {
+      "CachedInputTokens": 1737600,
+      "EstimatedCostMilli": 0,
+      "InputTokens": 2176954,
+      "OutputTokens": 20108
+    }
+  }
+}

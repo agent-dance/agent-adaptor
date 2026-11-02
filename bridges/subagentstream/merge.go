@@ -1,223 +1,156 @@
 package subagentstream
 
-// Merge folds delegation-bus events into an adaptor.Stream as
-// adaptor.SubagentUpdate events, so a leader's consumer sees team progress on
-// the unified event channel:
-//
-//	stream := leader.Stream(ctx, prompt)
-//	merged := subagentstream.Merge(ctx, stream, team.Bus())
-//	for ev := range merged.Events() {
-//	    switch e := ev.(type) {
-//	    case adaptor.TextDelta:      // leader's own output
-//	    case adaptor.SubagentUpdate: // team member progress
-//	    }
-//	}
-//	res, err := merged.Result()
-//
-// The bridge shares its projection with a2adelegation so direct host merging
-// and delegation service injection produce the same event vocabulary.
-
 import (
 	"context"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	"sync"
 	"time"
-
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/hosttools/a2adelegation"
 )
 
-// Merge returns a Stream that carries every event of stream plus one
-// adaptor.SubagentUpdate per delegation event published for stream.RunID()
-// on bus. Per-source ordering is preserved (parent events in stream order,
-// delegation events in bus order); the two sources interleave as they
-// arrive. RunID, Result, and Cancel delegate to the parent stream, and the
-// merged Events channel closes after the parent stream ends (terminal
-// SubagentUpdate markers are synthesized for delegations that never
-// reported one). A nil bus returns stream unchanged.
-//
-// ctx bounds the bus subscription; cancel it (or the parent run) to detach.
-// Like the parent stream, the merged channel must be drained.
-func Merge(ctx context.Context, stream adaptor.Stream, bus EventBus) adaptor.Stream {
-	if stream == nil || bus == nil {
+// Merge incorporates host-produced typed worker updates into an existing
+// execution. Team streams already include their workers and need no merge.
+// updates must close after the host's workers finish; the parent Done remains
+// last. No task lifecycle or synthetic failures are inferred by this bridge.
+// Per-source order is preserved and provider coordinates survive in Source.
+// Nil updates returns stream unchanged. Cancel cancels the parent and detaches
+// the update source; unread critical events, including the parent's Done, remain
+// available to subscribers. Unsubscribed completed streams retain their events
+// without a forwarding goroutine. Result remains identical to the parent's result.
+func Merge(ctx context.Context, stream adaptor.Stream, updates <-chan adaptor.SubagentUpdate) adaptor.Stream {
+	if stream == nil || updates == nil {
 		return stream
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	out := make(chan adaptor.Event, 64)
-	mergeCtx, cancelMerge := context.WithCancel(ctx)
-	merged := &mergedStream{parent: stream, events: out, done: make(chan struct{}), cancelMerge: cancelMerge}
-
-	go func() {
-		defer close(out)
-		defer close(merged.done)
-		parent := stream.Events()
-		subCtx, cancelSubagents := context.WithCancel(mergeCtx)
-		defer cancelSubagents()
-		subagents := bus.SubscribeRun(subCtx, stream.RunID())
-
-		tracker := newDelegationTracker()
-		var sequence uint64
-		var threadKey string
-		var parentTerminal adaptor.Event
-		stamp := func(ev adaptor.Event, source *adaptor.EventSourceMeta, observed time.Time) adaptor.Event {
-			sequence++
-			meta := ev.Meta()
-			if meta.RunID == "" {
-				meta.RunID = stream.RunID()
-			}
-			if meta.ThreadKey != "" {
-				threadKey = meta.ThreadKey
-			} else {
-				meta.ThreadKey = threadKey
-			}
-			if meta.Time.IsZero() {
-				if observed.IsZero() {
-					meta.Time = time.Now().UTC()
-				} else {
-					meta.Time = observed
-				}
-			}
-			meta.Sequence = sequence
-			if source != nil {
-				meta.Source = source
-			}
-			return adaptor.WithEventMeta(ev, meta)
-		}
-		send := func(ev adaptor.Event) bool {
-			select {
-			case <-mergeCtx.Done():
-				return false
-			case out <- ev:
-				return true
-			}
-		}
-		sendSubagent := func(ev a2adelegation.DelegationEvent) bool {
-			tracker.Track(ev)
-			source := &adaptor.EventSourceMeta{
-				RunID: ev.RunID, ThreadID: ev.RemoteContextID,
-				TurnID: ev.DelegationID, Sequence: ev.Sequence, Timestamp: ev.Time,
-			}
-			return send(stamp(SubagentEvent(ev), source, ev.Time))
-		}
-		// drainSubagents forwards every already-delivered delegation event
-		// without blocking. Delegation terminals are published before the
-		// parent driver returns, so draining after the parent channel closes
-		// deterministically flushes the tail.
-		drainSubagents := func() bool {
-			for subagents != nil {
-				select {
-				case ev, ok := <-subagents:
-					if !ok {
-						subagents = nil
-						return true
-					}
-					if !sendSubagent(ev) {
-						return false
-					}
-				default:
-					return true
-				}
-			}
-			return true
-		}
-		stopSubagents := func() {
-			cancelSubagents()
-			subagents = nil
-		}
-
-		for parent != nil || subagents != nil {
-			select {
-			case <-mergeCtx.Done():
-				tracker.FlushSynthetic(
-					a2adelegation.DelegationCancelled,
-					"cancelled",
-					&a2adelegation.DelegationError{Code: "parent_cancelled", Message: "parent run context cancelled"},
-					func(ev a2adelegation.DelegationEvent) bool {
-						tracker.Track(ev)
-						projected := stamp(SubagentEvent(ev), &adaptor.EventSourceMeta{
-							RunID: ev.RunID, ThreadID: ev.RemoteContextID, TurnID: ev.DelegationID,
-							Sequence: ev.Sequence, Timestamp: ev.Time,
-						}, ev.Time)
-						select {
-						case out <- projected:
-							return true
-						default:
-							return false
-						}
-					},
-				)
-				stopSubagents()
-				stream.Cancel()
-				return
-			case ev, ok := <-parent:
-				if !ok {
-					parent = nil
-					if !drainSubagents() {
-						return
-					}
-					if !tracker.FlushSynthetic(a2adelegation.DelegationFailed, "failed", parentFinishedError(), sendSubagent) {
-						return
-					}
-					stopSubagents()
-					if parentTerminal != nil && !send(stamp(parentTerminal, nil, time.Time{})) {
-						return
-					}
-					continue
-				}
-				if _, terminal := ev.(adaptor.RunFinished); terminal {
-					parentTerminal = ev
-					continue
-				}
-				if !send(stamp(ev, nil, time.Time{})) {
-					return
-				}
-			case ev, ok := <-subagents:
-				if !ok {
-					subagents = nil
-					continue
-				}
-				if !sendSubagent(ev) {
-					return
-				}
-			}
-		}
-	}()
+	ctx, cancel := context.WithCancel(ctx)
+	merged := &mergedStream{parent: stream, cancel: cancel, events: make(chan adaptor.Event), ready: make(chan struct{}), subscribe: make(chan struct{})}
+	go merged.pump(ctx, updates)
 	return merged
 }
 
-// mergedStream decorates the parent stream with the merged event channel.
 type mergedStream struct {
-	parent      adaptor.Stream
-	events      chan adaptor.Event
-	done        chan struct{}
-	cancelMerge context.CancelFunc
-	cancelOnce  sync.Once
+	parent     adaptor.Stream
+	cancel     context.CancelFunc
+	once       sync.Once
+	events     chan adaptor.Event
+	ready      chan struct{}
+	mu         sync.Mutex
+	subscribed bool
+	subscribe  chan struct{}
 }
 
-var _ adaptor.Stream = (*mergedStream)(nil)
-
-func (s *mergedStream) Events() <-chan adaptor.Event { return s.events }
-func (s *mergedStream) Result() (*adaptor.Result, error) {
-	<-s.done
-	return s.parent.Result()
+func (s *mergedStream) Events() <-chan adaptor.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.subscribed {
+		s.subscribed = true
+		close(s.subscribe)
+	}
+	return s.events
 }
 func (s *mergedStream) RunID() string { return s.parent.RunID() }
-func (s *mergedStream) Cancel() {
-	s.cancelOnce.Do(func() {
-		s.cancelMerge()
-		s.parent.Cancel()
-	})
+func (s *mergedStream) Send(ctx context.Context, text string, opts ...adaptor.MessageOption) error {
+	return s.parent.Send(ctx, text, opts...)
 }
+func (s *mergedStream) Cancel()                          { s.once.Do(func() { s.cancel(); s.parent.Cancel() }) }
+func (s *mergedStream) Result() (*adaptor.Result, error) { <-s.ready; return s.parent.Result() }
 
-// SubagentEvent projects one DelegationEvent onto the adaptor event
-// vocabulary. The 19 DelegationEventKinds collapse onto the three
-// SubagentUpdate kinds (started / delta / finished); the full detail —
-// original kind, status, remote identifiers, tool payloads, errors — is
-// preserved in Data so nothing is lost in the projection.
-//
-// The canonical projection lives in a2adelegation so host-side merging and
-// delegation service injection produce identical SubagentUpdate values.
-func SubagentEvent(ev a2adelegation.DelegationEvent) adaptor.SubagentUpdate {
-	return a2adelegation.SubagentEvent(ev)
+func (s *mergedStream) pump(ctx context.Context, updates <-chan adaptor.SubagentUpdate) {
+	defer func() { close(s.events) }()
+	defer s.cancel()
+	parent := s.parent.Events()
+	var queue, terminals []adaptor.Event
+	var seq uint64
+	var ready bool
+	cancelled := ctx.Done()
+	subscribe := s.subscribe
+	var subscribed bool
+	stamp := func(event adaptor.Event) adaptor.Event {
+		meta := event.Meta()
+		if meta.Source == nil && meta.RunID != "" {
+			meta.Source = &adaptor.EventSourceMeta{RunID: meta.RunID, ThreadID: meta.ThreadKey, TurnID: meta.TurnID, Sequence: meta.Sequence, Timestamp: meta.Time}
+		}
+		seq++
+		meta.RunID = s.RunID()
+		meta.Sequence = seq
+		meta.Time = time.Now().UTC()
+		return adaptor.WithEventMeta(event, meta)
+	}
+	enqueue := func(event adaptor.Event) {
+		// Retain critical events; aggregate only incremental worker text.
+		if update, ok := event.(adaptor.SubagentUpdate); ok && update.Kind == adaptor.SubagentDelta && len(queue) >= 256 {
+			if last, ok := queue[len(queue)-1].(adaptor.Dropped); ok && last.Source == "subagentstream" {
+				seq++
+				last.Count++
+				last.ByKind["subagent.delta"]++
+				last.LastSequence = seq
+				queue[len(queue)-1] = last
+				return
+			}
+			event = adaptor.Dropped{Count: 1, ByKind: map[string]int{"subagent.delta": 1}, FirstSequence: seq + 1, LastSequence: seq + 1, Reason: "backpressure", Source: "subagentstream"}
+		}
+		queue = append(queue, stamp(event))
+	}
+	for {
+		if parent == nil && updates == nil && !ready {
+			for _, e := range terminals {
+				enqueue(e)
+			}
+			s.mu.Lock()
+			subscribed = s.subscribed
+			if !subscribed {
+				// No public channel has escaped. Preserve the complete tail in
+				// a closed buffer, as core does for an unsubscribed stream.
+				s.events = make(chan adaptor.Event, len(queue))
+				for _, event := range queue {
+					s.events <- event
+				}
+			}
+			s.mu.Unlock()
+			close(s.ready)
+			if !subscribed {
+				return
+			}
+			ready = true
+		}
+		if ready && len(queue) == 0 {
+			return
+		}
+		var out chan adaptor.Event
+		var next adaptor.Event
+		if subscribed && len(queue) > 0 {
+			out = s.events
+			next = queue[0]
+		}
+		select {
+		case <-subscribe:
+			subscribe = nil
+			subscribed = true
+		case <-cancelled:
+			s.Cancel()
+			cancelled = nil
+			updates = nil
+		case e, ok := <-parent:
+			if !ok {
+				parent = nil
+				continue
+			}
+			switch e.(type) {
+			case adaptor.Done, adaptor.RunFinished:
+				terminals = append(terminals, e)
+			default:
+				enqueue(e)
+			}
+		case e, ok := <-updates:
+			if !ok {
+				updates = nil
+				continue
+			}
+			enqueue(e)
+		case out <- next:
+			queue[0] = nil
+			queue = queue[1:]
+		}
+	}
 }

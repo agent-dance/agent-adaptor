@@ -3,8 +3,8 @@ package profile
 import (
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // Resources is the host-facing desired-state bundle for an effective

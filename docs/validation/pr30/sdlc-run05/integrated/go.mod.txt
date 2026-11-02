@@ -1,0 +1,3 @@
+module example.test/mentionroute
+
+go 1.23

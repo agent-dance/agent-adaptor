@@ -1,0 +1,38 @@
+{
+  "at": "2026-11-01T18:31:05.895Z",
+  "purpose": "Read-only diagnostic; original run remains failed/interrupted",
+  "issueID": "01a1984b-0a81-716c-a611-e9a81c5a650c",
+  "taskID": "01a1984b-0a96-7d1f-a10c-b0847eed18cd",
+  "commentID": "01a1984b-fc94-78d4-ba31-222bbe5d5284",
+  "agentID": "2baf1a0a-4480-4d5f-b5e8-d9e330871978",
+  "comment": {
+    "type": "comment",
+    "id": "01a1984b-fc94-78d4-ba31-222bbe5d5284",
+    "actor_type": "member",
+    "actor_id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+    "created_at": "2026-11-02T02:07:59+08:00",
+    "actor_name": "PR30 Shadow",
+    "content": "Write route-comment.txt with exact bytes COMMENT\\_da16fba4-30f8-4da5-93ae-5cd91915ebe6.",
+    "parent_id": "01a1984b-0a8c-72cd-98ac-9297d30a8929",
+    "updated_at": "2026-11-02T02:07:59+08:00",
+    "revision": 1,
+    "comment_type": "comment",
+    "supplements": [
+      {
+        "task_id": "01a1984b-0a96-7d1f-a10c-b0847eed18cd",
+        "agent_id": "2baf1a0a-4480-4d5f-b5e8-d9e330871978",
+        "status": "delivered",
+        "delivered_at": "2026-11-02T02:07:59+08:00"
+      }
+    ],
+    "supplement_task_id": "01a1984b-0a96-7d1f-a10c-b0847eed18cd",
+    "supplement_status": "delivered",
+    "supplement_delivered_at": "2026-11-02T02:07:59+08:00"
+  },
+  "log": [
+    "02:07:59.147 INF agent-adaptor message receipt component=daemon task_id=01a1984b-0a96-7d1f-a10c-b0847eed18cd run_id=run_e268f9d7a245f809 message_id=01a1984b-fc94-78d4-ba31-222bbe5d5284 state=accepted boundary=\"\" reason=\"\"",
+    "02:07:59.152 INF agent-adaptor message receipt component=daemon task_id=01a1984b-0a96-7d1f-a10c-b0847eed18cd run_id=run_e268f9d7a245f809 message_id=01a1984b-fc94-78d4-ba31-222bbe5d5284 state=delivered boundary=immediate reason=\"\""
+  ],
+  "uiReadVisible": true,
+  "url": "http://localhost:13934/pr30-shadow/issues/PR30-6"
+}

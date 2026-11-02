@@ -1,3 +1,5 @@
+const AfterTurn Timing = 2
+
 type Agent struct {
 	// no exported fields
 }
@@ -10,29 +12,30 @@ type AgentSettings struct {
 
 methodset AgentSettings {
 	pointer AddRunServiceProvider(p RunServiceProvider)
-	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/skill.Ref)
-	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/driver.AgentSpec)
+	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/v2/skill.Ref)
+	pointer CapMessageTurns(remaining int)
+	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/v2/driver.AgentSpec)
 	pointer SetApprovalHandler(h ApprovalHandler)
 	pointer SetBlockingEvents()
-	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/driver.ProfileConfigPatch)
+	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/v2/driver.ProfileConfigPatch)
 	pointer SetEventBuffer(n int)
-	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/driver.HookSpec)
+	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/v2/driver.HookSpec)
 	pointer SetIdentity(id Identity)
 	pointer SetInstructions(text string)
-	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/driver.InstructionsBundleRef)
-	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/mcp.Server)
+	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/v2/driver.InstructionsBundleRef)
+	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/v2/mcp.Server)
 	pointer SetMetadata(k string, v string)
 	pointer SetModel(m string)
-	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/driver.OutputSchema)
+	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/v2/driver.OutputSchema)
 	pointer SetOutputSchemaError(err error)
 	pointer SetPolicy(p Policy)
-	pointer SetProfile(sel github.com/agent-dance/agent-adaptor/profile.Selection)
+	pointer SetProfile(sel github.com/agent-dance/agent-adaptor/v2/profile.Selection)
 	pointer SetServiceManager(m ServiceManager)
 	pointer SetServices(specs []ServiceSpec)
 	pointer SetSkillMaterializer(m SkillMaterializer)
 	pointer SetSkillProvider(p SkillProvider)
 	pointer SetSpawn()
-	pointer SetThreadStore(store github.com/agent-dance/agent-adaptor/threadstore.Store)
+	pointer SetThreadStore(store github.com/agent-dance/agent-adaptor/v2/threadstore.Store)
 	pointer SetTimeout(d time.Duration)
 	pointer SetWorkspace(dir string)
 	pointer SetWorkspaceManager(m WorkspaceManager)
@@ -43,9 +46,8 @@ methodset Agent {
 	pointer Close(ctx context.Context) error
 	pointer Inspect() Inspector
 	pointer ProfileState(ctx context.Context) (ProfileSnapshot, error)
-	pointer Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
 	pointer SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
-	pointer Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+	pointer Send(ctx context.Context, prompt string, opts ...CallOption) Stream
 	pointer SyncProfile(ctx context.Context) (ProfileSnapshot, error)
 	pointer Thread(key string, opts ...ThreadOption) *Thread
 }
@@ -91,12 +93,28 @@ methodset ApprovalRequest {
 	pointer Answer(_ context.Context, option string) error
 	pointer Approve(_ context.Context) error
 	pointer Deny(_ context.Context, reason string) error
+	pointer Forward(o Origin) *ApprovalRequest
 	pointer Meta() EventMeta
+	pointer Origin() Origin
 }
 
 var ApprovalsAutoDeny ApprovalPolicy
 
 func ApproveAll() ApprovalHandler
+
+type Author struct {
+	Kind AuthorKind
+	ID string
+	Name string
+}
+
+const AuthorAgent AuthorKind = 2
+
+const AuthorHuman AuthorKind = 1
+
+type AuthorKind uint8
+
+const AuthorSystem AuthorKind = 3
 
 type CallOption interface {
 	ApplyRun(*RunSettings)
@@ -110,9 +128,21 @@ type Checkpoint = driver.Checkpoint
 
 type Choice = driver.DecisionChoice
 
+func ComposeResults(runID string, parts ...*Result) *Result
+
 type ConfigSchema = driver.ConfigSchema
 
 func DenyAll(reason string) ApprovalHandler
+
+type Done struct {
+	Result *Result
+	Err error
+}
+
+methodset Done {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
 
 type Driver = driver.Driver
 
@@ -121,8 +151,8 @@ type DriverManagedWorkspace struct {
 }
 
 methodset Driver {
-	value Descriptor() github.com/agent-dance/agent-adaptor/driver.Descriptor
-	value Run(ctx context.Context, req github.com/agent-dance/agent-adaptor/driver.Request, sink github.com/agent-dance/agent-adaptor/driver.EventSink) (github.com/agent-dance/agent-adaptor/driver.Response, error)
+	value Descriptor() github.com/agent-dance/agent-adaptor/v2/driver.Descriptor
+	value Run(ctx context.Context, req github.com/agent-dance/agent-adaptor/v2/driver.Request, sink github.com/agent-dance/agent-adaptor/v2/driver.EventSink) (github.com/agent-dance/agent-adaptor/v2/driver.Response, error)
 	value ValidateConfig(cfg any) error
 }
 
@@ -175,6 +205,8 @@ var ErrMCPTransportUnsupported error
 
 var ErrMCPUnsupported error
 
+var ErrMessageUnsupported error
+
 var ErrPolicyCapabilityUnsupported error
 
 var ErrPolicyViolation error
@@ -182,6 +214,8 @@ var ErrPolicyViolation error
 var ErrResumeRejected error
 
 var ErrRunCancelled error
+
+var ErrRunFinished error
 
 var ErrSkillKeyConflict error
 
@@ -206,8 +240,6 @@ var ErrThreadIncompatible error
 var ErrThreadLeaseLost error
 
 var ErrThreadNotFound error
-
-var ErrThreadStoreRequired error
 
 type Event interface {
 	Meta() EventMeta
@@ -256,6 +288,8 @@ const FeatureInherit FeatureLevel = ""
 
 type FeatureLevel = driver.FeatureLevel
 
+func From(a Author) MessageOption
+
 type GitWorktreeWorkspace struct {
 	BaseRef string
 	BranchTemplate string
@@ -295,6 +329,8 @@ methodset Inspector {
 	pointer Skills(ctx context.Context) (SkillSnapshot, error)
 }
 
+const Interrupt Timing = 1
+
 type InvalidDriverConfigError = driver.InvalidDriverConfigError
 
 methodset InvalidDriverConfigError {
@@ -314,6 +350,93 @@ type InvalidPolicyError = driver.InvalidPolicyError
 methodset InvalidPolicyError {
 	pointer Error() string
 	pointer Unwrap() error
+}
+
+const MessageAccepted MessageState = 1
+
+func MessageAttributes(opts ...CallOption) MessageContext
+
+const MessageCancelled MessageFailure = "cancelled"
+
+type MessageContext struct {
+	ID string
+	Text string
+	From Author
+	Timing Timing
+}
+
+const MessageDelivered MessageState = 2
+
+type MessageError struct {
+	ID string
+	Text string
+	Reason MessageFailure
+	Err error
+}
+
+methodset MessageError {
+	pointer Error() string
+	pointer Unwrap() error
+}
+
+const MessageFailed MessageState = 3
+
+type MessageFailure string
+
+func MessageID(id string) MessageOption
+
+const MessageLimitExceeded MessageFailure = "limit_exceeded"
+
+type MessageOption interface {
+	CallOption
+	messageOption()
+}
+
+methodset MessageOption {
+	value ApplyRun(*RunSettings)
+	value private messageOption()
+}
+
+type MessageOutcome struct {
+	ID string
+	Text string
+	From Author
+	Timing Timing
+	State MessageState
+	Turn int
+	Boundary string
+	Mechanism string
+	Reason MessageFailure
+}
+
+type MessagePolicy struct {
+	Disabled bool
+	Format func(MessageContext) string
+	MaxPending int
+	MaxTurns int
+}
+
+const MessageProviderRejected MessageFailure = "provider_rejected"
+
+const MessageRunFailed MessageFailure = "run_failed"
+
+type MessageState uint8
+
+const MessageTimeout MessageFailure = "timeout"
+
+type MessageUpdate struct {
+	ID string
+	State MessageState
+	Turn int
+	Boundary string
+	Mechanism string
+	Reason MessageFailure
+	Text string
+}
+
+methodset MessageUpdate {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
 }
 
 type ModelInfo = driver.ModelInfo
@@ -357,6 +480,11 @@ methodset Option {
 	value ApplyNew(*AgentSettings)
 }
 
+type Origin struct {
+	Member string
+	Task string
+}
+
 type Phase string
 
 const PhaseContent Phase = ""
@@ -366,6 +494,7 @@ const PhaseEnd Phase = "end"
 const PhaseStart Phase = "start"
 
 type Policy struct {
+	Messages MessagePolicy
 	Sandbox SandboxLevel
 	WebSearch FeatureLevel
 	Browser FeatureLevel
@@ -479,6 +608,8 @@ const ReasonApprovalTimeout FailureReason = "approval_timeout"
 
 const ReasonCancelled FailureReason = "cancelled"
 
+const ReasonLimitExceeded FailureReason = "limit_exceeded"
+
 const ReasonPolicyViolation FailureReason = "policy_violation"
 
 type ResourceSnapshot struct {
@@ -493,6 +624,7 @@ type ResourceSnapshot struct {
 }
 
 type Result struct {
+	Turns int
 	RunID string
 	Model string
 	Provider string
@@ -504,9 +636,13 @@ type Result struct {
 
 methodset Result {
 	pointer Decode(v any) error
+	pointer Messages() []MessageOutcome
 	pointer Raw() RawStreams
 	pointer Services() []ServiceReport
+	pointer Subagents() []SubagentResult
 	pointer Transcript() []TranscriptItem
+	pointer Undelivered() []MessageOutcome
+	pointer WithSubagents(subagents []SubagentResult) *Result
 }
 
 func ResumeOnly() ThreadOption
@@ -520,6 +656,8 @@ const RoleUser Role = "user"
 func RunAs[T any](ctx context.Context, r Runner, prompt string, opts ...CallOption) (T, *Result, error)
 
 type RunAttachment struct {
+	Preamble string
+	Results func() []SubagentResult
 	Services []ServiceRef
 	Events RunEventSource
 }
@@ -568,18 +706,19 @@ type RunSettings struct {
 
 methodset RunSettings {
 	pointer AddRunServiceProvider(p RunServiceProvider)
-	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/skill.Ref)
-	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/driver.AgentSpec)
+	pointer AddSkills(refs ...github.com/agent-dance/agent-adaptor/v2/skill.Ref)
+	pointer CapMessageTurns(remaining int)
+	pointer SetAgents(specs []github.com/agent-dance/agent-adaptor/v2/driver.AgentSpec)
 	pointer SetApprovalHandler(h ApprovalHandler)
-	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/driver.ProfileConfigPatch)
-	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/driver.HookSpec)
+	pointer SetConfigPatches(patches []github.com/agent-dance/agent-adaptor/v2/driver.ProfileConfigPatch)
+	pointer SetHooks(specs []github.com/agent-dance/agent-adaptor/v2/driver.HookSpec)
 	pointer SetIdentity(id Identity)
 	pointer SetInstructions(text string)
-	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/driver.InstructionsBundleRef)
-	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/mcp.Server)
+	pointer SetInstructionsBundle(ref *github.com/agent-dance/agent-adaptor/v2/driver.InstructionsBundleRef)
+	pointer SetMCPServers(servers []github.com/agent-dance/agent-adaptor/v2/mcp.Server)
 	pointer SetMetadata(k string, v string)
 	pointer SetModel(m string)
-	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/driver.OutputSchema)
+	pointer SetOutputSchema(schema github.com/agent-dance/agent-adaptor/v2/driver.OutputSchema)
 	pointer SetOutputSchemaError(err error)
 	pointer SetPolicy(p Policy)
 	pointer SetServices(specs []ServiceSpec)
@@ -600,13 +739,11 @@ methodset RunStarted {
 }
 
 type Runner interface {
-	Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
-	Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+	Send(ctx context.Context, text string, opts ...CallOption) Stream
 }
 
 methodset Runner {
-	value Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
-	value Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+	value Send(ctx context.Context, text string, opts ...CallOption) Stream
 }
 
 const SandboxInherit SandboxLevel = ""
@@ -689,28 +826,43 @@ methodset SkillMaterializationError {
 type SkillMaterializer = skill.Materializer
 
 methodset SkillMaterializer {
-	value Materialize(ctx context.Context, s github.com/agent-dance/agent-adaptor/skill.Skill) (sourcePath string, err error)
+	value Materialize(ctx context.Context, s github.com/agent-dance/agent-adaptor/v2/skill.Skill) (sourcePath string, err error)
 }
 
 type SkillProvider = skill.Provider
 
 methodset SkillProvider {
-	value GetSkills(ctx context.Context, keys []string) (map[string]github.com/agent-dance/agent-adaptor/skill.Skill, error)
+	value GetSkills(ctx context.Context, keys []string) (map[string]github.com/agent-dance/agent-adaptor/v2/skill.Skill, error)
 }
 
 type SkillRef = skill.Ref
 
 methodset SkillRef {
-	value private github.com/agent-dance/agent-adaptor/driver.isSkillRef()
+	value private github.com/agent-dance/agent-adaptor/v2/driver.isSkillRef()
 }
 
 type SkillSnapshot = driver.SkillSnapshot
+
+const Soon Timing = 0
+
+type Standby interface {
+	Cancel()
+	Events() <-chan Event
+	Send(ctx context.Context, text string, opts ...CallOption) error
+}
+
+methodset Standby {
+	value Cancel()
+	value Events() <-chan Event
+	value Send(ctx context.Context, text string, opts ...CallOption) error
+}
 
 type Stream interface {
 	Cancel()
 	Events() <-chan Event
 	Result() (*Result, error)
 	RunID() string
+	Send(ctx context.Context, text string, opts ...MessageOption) error
 }
 
 methodset Stream {
@@ -718,6 +870,7 @@ methodset Stream {
 	value Events() <-chan Event
 	value Result() (*Result, error)
 	value RunID() string
+	value Send(ctx context.Context, text string, opts ...MessageOption) error
 }
 
 type StructuredOutputUnsupportedError = driver.StructuredOutputUnsupportedError
@@ -733,10 +886,26 @@ type SubagentEventKind string
 
 const SubagentFinished SubagentEventKind = "finished"
 
+const SubagentMessage SubagentEventKind = "message"
+
+type SubagentResult struct {
+	Member string
+	Task string
+	State string
+	Summary string
+	Usage *Usage
+	Unread []string
+}
+
 const SubagentStarted SubagentEventKind = "started"
 
+const SubagentState SubagentEventKind = "state"
+
 type SubagentUpdate struct {
-	Agent string
+	Task string
+	Member string
+	State string
+	Summary string
 	Kind SubagentEventKind
 	Delta string
 	Data map[string]any
@@ -784,13 +953,29 @@ methodset ThreadOption {
 	value private applyThread(*Thread)
 }
 
+type ThreadRunner interface {
+	Checkpoint(ctx context.Context) (*Checkpoint, error)
+	Key() string
+	Runner
+	Standby(ctx context.Context) (Standby, error)
+}
+
+methodset ThreadRunner {
+	value Checkpoint(ctx context.Context) (*Checkpoint, error)
+	value Key() string
+	value Send(ctx context.Context, text string, opts ...CallOption) Stream
+	value Standby(ctx context.Context) (Standby, error)
+}
+
 methodset Thread {
 	pointer Checkpoint(ctx context.Context) (*Checkpoint, error)
 	pointer Fork(newKey string) *Thread
 	pointer Key() string
-	pointer Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
-	pointer Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+	pointer Send(ctx context.Context, prompt string, opts ...CallOption) Stream
+	pointer Standby(ctx context.Context) (Standby, error)
 }
+
+type Timing uint8
 
 type ToolCall struct {
 	ID string
@@ -816,11 +1001,50 @@ methodset ToolResult {
 	pointer Meta() EventMeta
 }
 
-type TranscriptItem = driver.TranscriptItem
+type TranscriptItem struct {
+	Kind driver.TranscriptKind
+	Text string
+	Delta bool
+	ToolUseID string
+	ToolName string
+	Input any
+	IsError bool
+	Model string
+	SessionID string
+	Usage *Usage
+	CostUSD *float64
+	Subtype string
+	Errors []string
+	Metadata map[string]string
+	Data map[string]any
+	Message *TranscriptMessage
+}
+
+type TranscriptMessage struct {
+	ID string
+	From Author
+	Mechanism string
+	Boundary string
+	Text string
+}
+
+type TurnEnd struct {
+	Turn int
+	Result *Result
+	Err error
+	MessageIDs []string
+}
+
+methodset TurnEnd {
+	value Meta() EventMeta
+	pointer Meta() EventMeta
+}
 
 const Unrestricted SandboxLevel = "unrestricted"
 
 type Usage = driver.Usage
+
+func When(t Timing) MessageOption
 
 func WithBlockingEvents() Option
 
@@ -914,11 +1138,9 @@ func (*Agent).Inspect() Inspector
 
 func (*Agent).ProfileState(ctx context.Context) (ProfileSnapshot, error)
 
-func (*Agent).Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
-
 func (*Agent).SelectSkills(ctx context.Context, keys []string) (SkillSnapshot, error)
 
-func (*Agent).Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+func (*Agent).Send(ctx context.Context, prompt string, opts ...CallOption) Stream
 
 func (*Agent).SyncProfile(ctx context.Context) (ProfileSnapshot, error)
 
@@ -946,6 +1168,10 @@ func (*ApprovalRequest).Approve(_ context.Context) error
 
 func (*ApprovalRequest).Deny(_ context.Context, reason string) error
 
+func (*ApprovalRequest).Forward(o Origin) *ApprovalRequest
+
+func (*ApprovalRequest).Origin() Origin
+
 func (Inspector).ConfigSchema(ctx context.Context) (*ConfigSchema, error)
 
 func (Inspector).Environment(ctx context.Context) (EnvironmentReport, error)
@@ -956,13 +1182,25 @@ func (Inspector).Quota(ctx context.Context) (QuotaReport, error)
 
 func (Inspector).Skills(ctx context.Context) (SkillSnapshot, error)
 
+func (*MessageError).Error() string
+
+func (*MessageError).Unwrap() error
+
 func (*Result).Decode(v any) error
+
+func (*Result).Messages() []MessageOutcome
 
 func (*Result).Raw() RawStreams
 
 func (*Result).Services() []ServiceReport
 
+func (*Result).Subagents() []SubagentResult
+
 func (*Result).Transcript() []TranscriptItem
+
+func (*Result).Undelivered() []MessageOutcome
+
+func (*Result).WithSubagents(subagents []SubagentResult) *Result
 
 func (*RunError).Error() string
 
@@ -971,6 +1209,8 @@ func (*RunError).Unwrap() error
 func (*RunSettings).AddRunServiceProvider(p RunServiceProvider)
 
 func (*RunSettings).AddSkills(refs ...skill.Ref)
+
+func (*RunSettings).CapMessageTurns(remaining int)
 
 func (*RunSettings).SetAgents(specs []driver.AgentSpec)
 
@@ -1014,6 +1254,6 @@ func (*Thread).Fork(newKey string) *Thread
 
 func (*Thread).Key() string
 
-func (*Thread).Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
+func (*Thread).Send(ctx context.Context, prompt string, opts ...CallOption) Stream
 
-func (*Thread).Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+func (*Thread).Standby(ctx context.Context) (Standby, error)

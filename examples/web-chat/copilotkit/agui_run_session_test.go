@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
 )
 
 // TestAGUIRunSessionRecordsUserTurnBeforeAssistant is the canonical "user
@@ -319,6 +320,80 @@ func rawJSONString(s string) []byte {
 	return []byte(`"` + s + `"`)
 }
 
+type disconnectedResponse struct {
+	*httptest.ResponseRecorder
+	err error
+}
+
+func (w *disconnectedResponse) Write([]byte) (int, error) { return 0, w.err }
+
+func TestAGUIRunSessionRecordsCancellationAfterClientDisconnect(t *testing.T) {
+	store := mustNewThreadStore(t)
+	events := make(chan adaptor.Event, 4)
+	events <- adaptor.RunStarted{RunID: "run-disconnected", ThreadID: "thread-disconnected"}
+	events <- adaptor.MessageUpdate{ID: "queued", State: adaptor.MessageFailed, Reason: adaptor.MessageCancelled, Text: "preserve original input"}
+	events <- adaptor.TurnEnd{Turn: 1, Err: context.Canceled}
+	events <- adaptor.Done{Err: context.Canceled}
+	close(events)
+	stream := &fakeStream{runID: "run-disconnected", events: events, err: context.Canceled}
+	writeErr := errors.New("browser disconnected")
+	response := &disconnectedResponse{ResponseRecorder: httptest.NewRecorder(), err: writeErr}
+	if err := newAGUIRunSession(t.Context(), stream, store, "thread-disconnected", nil, response).Serve(); !errors.Is(err, writeErr) {
+		t.Fatalf("Serve = %v, want output error", err)
+	}
+	if !stream.cancelled {
+		t.Fatal("client disconnect did not cancel the execution")
+	}
+	records := store.historyAfter("thread-disconnected", 0)
+	if len(records) != 4 {
+		t.Fatalf("recorded %d events, want all four including cancellation receipts", len(records))
+	}
+	receipt, ok := records[1].Event.(adaptor.MessageUpdate)
+	if !ok || receipt.ID != "queued" || receipt.Text != "preserve original input" || receipt.Reason != adaptor.MessageCancelled {
+		t.Fatalf("receipt = %#v", records[1].Event)
+	}
+	if done, ok := records[3].Event.(adaptor.Done); !ok || !errors.Is(done.Err, context.Canceled) {
+		t.Fatalf("final event = %#v, want cancelled Done", records[3].Event)
+	}
+}
+
+type failedRunStore struct {
+	runStateStore
+	err      error
+	attempts int
+}
+
+func (s *failedRunStore) appendHistory(string, adaptor.Event) error {
+	s.attempts++
+	return s.err
+}
+
+func TestAGUIRunSessionInitialHistoryFailureCancelsAndDrains(t *testing.T) {
+	store := &failedRunStore{runStateStore: mustNewThreadStore(t), err: errors.New("disk full")}
+	events := make(chan adaptor.Event)
+	stream := &fakeStream{runID: "run-persistence", events: events, err: context.Canceled}
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		defer close(events)
+		events <- adaptor.RunStarted{RunID: stream.runID}
+		events <- adaptor.MessageUpdate{ID: "initial", State: adaptor.MessageFailed, Reason: adaptor.MessageCancelled}
+		events <- adaptor.Done{Err: context.Canceled}
+	}()
+	userTurn := userTurnEvents("initial", "initial input")
+	if err := newAGUIRunSession(t.Context(), stream, store, "thread-persistence", userTurn, httptest.NewRecorder()).Serve(); !errors.Is(err, store.err) {
+		t.Fatalf("Serve = %v, want persistence error", err)
+	}
+	<-finished
+	if !stream.cancelled || store.attempts != 1 {
+		t.Fatalf("cancelled = %v, append attempts = %d; want cancellation and one bounded failed append", stream.cancelled, store.attempts)
+	}
+}
+
 // _ keeps the AG-UI events import live for future assertions that need the
 // typed event helpers (currently the test inspects the raw SSE body).
 var _ = aguievents.EventTypeTextMessageStart
+
+func (s *fakeStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
+}

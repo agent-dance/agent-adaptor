@@ -1,0 +1,8 @@
+{
+  "run": "03",
+  "status": "externally_interrupted",
+  "original_directory": "C:\\Users\\buthim\\AppData\\Local\\Temp\\agent-adaptor-pr30-sdlc-run03",
+  "accepted": false,
+  "note": "The active turn was interrupted and its processes stopped. Existing partial files remain local; no final Result is invented and the attempt is not counted as pass or SDK failure.",
+  "final_result_available": false
+}

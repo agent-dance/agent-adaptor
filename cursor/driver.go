@@ -7,18 +7,19 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/clihelper"
-	"github.com/agent-dance/agent-adaptor/internal/configprobe"
-	"github.com/agent-dance/agent-adaptor/internal/driverutil"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
-	"github.com/agent-dance/agent-adaptor/internal/profileagents"
-	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
-	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
-	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
-	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/clihelper"
+	"github.com/agent-dance/agent-adaptor/v2/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/v2/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileagents"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileconfig"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilehooks"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilesnapshot"
 )
 
 // DriverType is the stable descriptor type for the built-in Cursor driver.
@@ -46,6 +47,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: false},
+		Messages:     cursorMessageCapability(),
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: false,
 			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
@@ -80,7 +82,7 @@ func (adapter) ValidateConfig(cfg any) error {
 	}
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -90,7 +92,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	bindings, err := effectiveCursorBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "cursor_profile_error", Level: "fail", Message: "Cursor profile resolution failed.", Detail: err.Error()})
-		return driverutil.SummarizeEnvironment(DriverType, checks), nil
+		return cursorVersion(ctx, config).Environment(DriverType, cursorMessageCapability(), checks), nil
 	}
 	cursorHome := resolveCursorHome(bindings)
 	if _, err := os.Stat(cursorHome); err == nil {
@@ -111,7 +113,7 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	}
 	checks = append(checks, cursorAuthChecks(bindings)...)
 	checks = append(checks, cursorConfigChecks(bindings)...)
-	return driverutil.SummarizeEnvironment(DriverType, checks), nil
+	return cursorVersion(ctx, config).Environment(DriverType, cursorMessageCapability(), checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
@@ -316,11 +318,18 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 	return snapshot, nil
 }
 
-func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (response driver.Response, runErr error) {
 	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		return driver.Response{}, &driver.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Cursor CLI does not expose native JSON Schema output"}
 	}
 	cfg := readConfig(req.Config)
+	if req.Messages != nil {
+		var err error
+		req, err = cursorVersion(ctx, cfg).PrepareRun(ctx, req, sink, DriverType, cursorMessageCapability())
+		if err != nil {
+			return driver.Response{}, err
+		}
+	}
 	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
 		cfg.Model = m
@@ -406,7 +415,17 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		prompt = prefix + "\n\n" + prompt
 	}
 
+	hooks, err := prepareCursorHooks(ctx, req, cfg, effectiveCWD, effectiveEnv, sink)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	if hooks != nil {
+		defer func() { runErr = errors.Join(runErr, hooks.close()) }()
+		effectiveEnv = append(effectiveEnv, hooks.env()...)
+		prompt += hooks.promptNote()
+	}
 	parser := newCursorParser(sink)
+	parser.hooks = hooks
 	result, err := clihelper.Run(ctx, clihelper.CommandRequest{
 		Command: command,
 		Args:    args,
@@ -419,6 +438,20 @@ func (adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSin
 		return driver.Response{}, err
 	}
 	parser.finalize()
+	if hooks != nil {
+		hooks.end()
+	}
+	completedAt := parser.completedAt
+	if completedAt.IsZero() {
+		completedAt = time.Now().UTC()
+	}
+	if sink != nil {
+		if err := sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{
+			Text: parser.buildOutput(), Usage: parser.usage, CompletedAt: completedAt,
+		}}); err != nil {
+			return driver.Response{}, err
+		}
+	}
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" &&
 		result.ExitCode != 0 && isCursorUnknownSessionError(raw.Stdout, raw.Stderr) {

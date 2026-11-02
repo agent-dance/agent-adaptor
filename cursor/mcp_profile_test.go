@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	agentadaptor "github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 )
 
 func TestSyncProfileResourcesReportsManagedAndExternalMCP(t *testing.T) {

@@ -10,6 +10,7 @@ import {
 import { SessionPanel } from "./components/session-panel";
 import { LiveSubagentPanel } from "./components/live-subagent-panel";
 import { TeamWorkflowInput } from "./components/team-workflow-input";
+import { SupplementInput } from "./components/supplement-input";
 import { renderDecisionCard, ToolCallCard } from "./components/cards";
 
 // -----------------------------------------------------------------------------
@@ -164,6 +165,7 @@ export default function HomePage() {
                 : "Type a message…",
             }}
           />
+          <SupplementInput key={threadId} threadId={threadId} />
         </section>
 
         {TEAM_WORKFLOW_MODE ? (

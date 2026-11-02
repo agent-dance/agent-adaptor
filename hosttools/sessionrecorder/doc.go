@@ -3,11 +3,16 @@
 // a cursor that stays monotonic across runs. EventRecorder,
 // NewMemoryEventBackend, and NewJSONLEventBackend form the typed Event API.
 //
+// Done and TurnEnd retain only safe result/error fields by default. WithExposure
+// explicitly enables diagnostics; private audit fields replay through
+// EventRecord.Diagnostics. MessageUpdate, TurnEnd and Done preserve EventMeta.
+// Other event kinds remain subject to host-owned redaction.
+//
 // # Placement
 //
 // This package lives under hosttools because:
 //
-//   - the core SDK (github.com/agent-dance/agent-adaptor) does not import it,
+//   - the core SDK (github.com/agent-dance/agent-adaptor/v2) does not import it,
 //     preserving the boundary between execution and host persistence;
 //   - it is one concrete answer to UI session-history recovery while leaving
 //     storage policy under host control;

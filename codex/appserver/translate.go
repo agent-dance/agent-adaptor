@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Translator converts codex app-server notifications into StreamPayload
@@ -299,6 +299,23 @@ func (t *Translator) FinishFailure(failure *driver.RunFailure, raw *driver.RawSt
 	t.emit(payload)
 }
 
+func (t *Translator) finishSuccess(terminal *driver.TerminalPayload, usage *driver.Usage) {
+	t.start()
+	t.mu.Lock()
+	if t.terminal {
+		t.mu.Unlock()
+		return
+	}
+	t.terminal = true
+	t.mu.Unlock()
+	payload := t.basePayload()
+	payload.Kind = driver.StreamRunFinished
+	payload.Usage = cloneUsage(usage)
+	// Keep the exact provider terminal available on the final lifecycle event.
+	payload.Raw = rawToMap(terminal.JSON, terminal.Event)
+	t.emit(payload)
+}
+
 func (t *Translator) handleItemStarted(params json.RawMessage) {
 	var body ItemStartedNotificationBody
 	if err := json.Unmarshal(params, &body); err != nil {
@@ -364,8 +381,8 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = toolName
-		if item.McpToolCall != nil && len(item.McpToolCall.Arguments) > 0 {
-			payload.Args = map[string]any{"arguments": string(item.McpToolCall.Arguments)}
+		if item.McpToolCall != nil {
+			payload.Args = toolArguments(item.McpToolCall.Arguments)
 		}
 		t.emit(payload)
 	case ThreadItemWebSearch:
@@ -392,8 +409,8 @@ func (t *Translator) handleItemStarted(params json.RawMessage) {
 		payload.Kind = driver.StreamToolCallStart
 		payload.ToolCallID = item.ID
 		payload.Name = toolName
-		if item.DynamicToolCall != nil && len(item.DynamicToolCall.Arguments) > 0 {
-			payload.Args = map[string]any{"arguments": string(item.DynamicToolCall.Arguments)}
+		if item.DynamicToolCall != nil {
+			payload.Args = toolArguments(item.DynamicToolCall.Arguments)
 		}
 		t.emit(payload)
 	default:
@@ -663,6 +680,20 @@ func rawToMap(raw json.RawMessage, name string) map[string]any {
 	return out
 }
 
+// toolArguments decodes only the official arguments field. Object arguments
+// already are the complete initial snapshot. Other JSON values retain an
+// explicit wrapper; JSON-looking strings remain strings.
+func toolArguments(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	value := decodeJSONValue(raw)
+	if args, ok := value.(map[string]any); ok {
+		return args
+	}
+	return map[string]any{"arguments": value}
+}
+
 func toolResultFromCommand(body *ThreadItemCommandExecutionBody) map[string]any {
 	if body == nil {
 		return nil
@@ -711,7 +742,7 @@ func toolResultFromMcp(body *ThreadItemMcpToolCallBody) map[string]any {
 	if len(body.Result) > 0 {
 		out["result"] = string(body.Result)
 	}
-	if len(body.Error) > 0 {
+	if decodeJSONValue(body.Error) != nil {
 		out["error"] = string(body.Error)
 	}
 	if body.DurationMs != nil {

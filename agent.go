@@ -8,7 +8,8 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 // Driver is the provider integration SPI implemented by built-in and
@@ -21,10 +22,8 @@ type Driver = driver.Driver
 // and Thread (stateful conversations). Bridges, RunAs[T], and host
 // decorators accept a Runner so both are interchangeable.
 type Runner interface {
-	// Run executes one prompt to completion through the unified event pipeline.
-	Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error)
-	// Stream starts one prompt and returns its live typed event stream.
-	Stream(ctx context.Context, prompt string, opts ...CallOption) Stream
+	// Send starts an independent execution and returns its result and event handle.
+	Send(ctx context.Context, text string, opts ...CallOption) Stream
 }
 
 // Agent is a configured, ready-to-talk agent: one driver plus agent-level
@@ -61,6 +60,8 @@ type Agent struct {
 	// every subsequent resolution.
 	mu             sync.Mutex
 	skillSelection []string
+	threadMu       sync.Mutex
+	threads        map[string]*threadRuntime
 }
 
 var _ Runner = (*Agent)(nil)
@@ -70,7 +71,7 @@ var _ Runner = (*Agent)(nil)
 // drivers alike.
 //
 // New panics when d is nil: a nil driver is a programmer error best caught
-// at startup, not on the first Run.
+// at startup, not on the first Send.
 func New(d driver.Driver, opts ...Option) *Agent {
 	if d == nil {
 		panic("adaptor.New: driver must not be nil")
@@ -82,34 +83,11 @@ func New(d driver.Driver, opts ...Option) *Agent {
 		}
 		o.ApplyNew(&a.defaults)
 	}
+	if a.defaults.threadStore == nil {
+		a.defaults.threadStore = memory.NewStore()
+	}
 	a.configureTools()
 	return a
-}
-
-// Run executes one prompt to completion and returns the Result. It is
-// Stream + drain + Result() — there is no separate batch execution path.
-// Run consumes the same unified event pipeline and discards the events.
-// Approvals still work through the OnApproval callback;
-// without a handler, an "ask" approval times out into the Policy.Approvals
-// fallback, since Run has no event consumer to answer it.
-//
-// Per-call options override the agent defaults for this invocation only
-// ("nearer scope wins; skills append, everything else replaces"); the agent
-// defaults are never mutated, so concurrent and successive runs do not
-// pollute each other.
-//
-// Business failures return *RunError carrying
-// the full Result; infrastructure failures (context cancellation/deadline,
-// process crash, protocol breakage) return plain wrapped errors. Both travel
-// the single err path.
-func (a *Agent) Run(ctx context.Context, prompt string, opts ...CallOption) (*Result, error) {
-	st := a.Stream(ctx, prompt, opts...)
-	for range st.Events() {
-		// Drain: Run has no event consumer. Default drop-mode
-		// backpressure means an unread buffer never blocks the driver;
-		// draining keeps blocking mode (WithBlockingEvents) live too.
-	}
-	return st.Result()
 }
 
 // Close prevents new runs, cancels and drains admitted runs, closes every

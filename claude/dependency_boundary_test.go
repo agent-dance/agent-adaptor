@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const rootAPIImport = "github.com/agent-dance/agent-adaptor"
+const rootAPIImport = "github.com/agent-dance/agent-adaptor/v2"
 
 // TestPackageRootImportBoundary keeps production code on the Driver SPI and
 // leaf contracts. Tests may import the final root API for integration coverage.

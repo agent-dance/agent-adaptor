@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/cursor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/tool"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/cursor"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -108,11 +108,11 @@ func TestHostDefinedToolsEndToEndThroughRealProviderProcess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	thread := agent.Thread("host-tools-e2e")
-	first, err := thread.Run(ctx, "first")
+	first, err := thread.Send(ctx, "first").Result()
 	if err != nil {
 		t.Fatalf("first Thread run: %v", err)
 	}
-	second, err := thread.Run(ctx, "second")
+	second, err := thread.Send(ctx, "second").Result()
 	if err != nil {
 		t.Fatalf("second Thread run: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestHostDefinedToolsEndToEndThroughRealProviderProcess(t *testing.T) {
 			_ = secondAgent.Close(context.Background())
 		}
 	})
-	third, err := secondAgent.Thread("host-tools-e2e").Run(ctx, "third")
+	third, err := secondAgent.Thread("host-tools-e2e").Send(ctx, "third").Result()
 	if err != nil {
 		t.Fatalf("cross-Agent Thread resume: %v", err)
 	}

@@ -1,0 +1,157 @@
+From 25c0ff1b27702f0b5f25b62d67bb0f56b8452699 Mon Sep 17 00:00:00 2001
+From: buthim <me@blurooo.com>
+Date: Mon, 2 Nov 2026 02:46:02 +0800
+Subject: [PATCH] fix(e2e): collect cancelled task artifacts from observed
+ daemon workspaces
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+由 Codex 接续补做（审查标识：便便）。
+
+Bind cancelled-task file collection to the unique formal daemon startup record for that exact task. Preserve strict artifact checks and reject missing, ambiguous or relative workspace evidence.
+---
+ e2e/agent-adaptor-shadow.evidence.spec.ts | 22 ++++++++++++++++++++++
+ e2e/agent-adaptor-shadow.evidence.ts      | 17 ++++++++++++++++-
+ e2e/agent-adaptor-shadow.md               |  2 ++
+ e2e/agent-adaptor-shadow.spec.ts          | 18 ++++++++++++------
+ 4 files changed, 52 insertions(+), 7 deletions(-)
+
+diff --git a/e2e/agent-adaptor-shadow.evidence.spec.ts b/e2e/agent-adaptor-shadow.evidence.spec.ts
+index b889df07d..f861191b3 100644
+--- a/e2e/agent-adaptor-shadow.evidence.spec.ts
++++ b/e2e/agent-adaptor-shadow.evidence.spec.ts
+@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
+ import {
+   deliveredReceipt,
+   readDeliveredComment,
++  cancelledTaskWorkspace,
+   requireAfterDone,
+   requireExactTaskIDs,
+   requireSDKCleanupBeforeNext,
+@@ -101,6 +102,27 @@ test("timeline coverage, a foreign comment, pending, or failed receipts never es
+   }
+ });
+ 
++test("cancelled workspace comes from the unique exact-task formal daemon startup", () => {
++  const fields = { component: "daemon", task: "old-task", workdir: "/tmp/isolated/old-task/workdir" };
++  for (const line of [
++    JSON.stringify({ msg: "starting agent", ...fields }),
++    'msg="starting agent" component=daemon task=old-task workdir=/tmp/isolated/old-task/workdir',
++    '02:38:29.723 INF starting agent component=daemon task=old-task provider=codex workdir=/tmp/isolated/old-task/workdir model=gpt-6.1-sol resume_reachable=false',
++  ]) {
++    expect(cancelledTaskWorkspace(line, "old-task")).toEqual({ path: fields.workdir, line });
++    expect(() => cancelledTaskWorkspace(line, "new-task")).toThrow();
++    expect(() => cancelledTaskWorkspace(line + "\n" + line, "old-task")).toThrow();
++  }
++});
++
++test("missing, guessed, foreign, relative, or ambiguous cancelled workspaces fail", () => {
++  const line = '02:38:29.723 INF starting agent component=daemon task=old-task workdir=/tmp/isolated/old-task/workdir';
++  for (const log of ["", line.replace("old-task workdir", "new-task workdir"), line.replace("component=daemon", "component=model"), line.replace("starting agent", "agent output starting agent"), line.replace("workdir=/tmp/isolated/old-task/workdir", ""), ...["relative/workdir", "", "/tmp/../other", "/tmp/./old-task", "//other/workdir", "/tmp/\0bad"].map((workdir) => JSON.stringify({ msg: "starting agent", component: "daemon", task: "old-task", workdir })), line + ' task=foreign', line + '\n' + line.replace('workdir=/tmp/isolated/old-task/workdir', 'workdir=/tmp/other')]) {
++    expect(() => cancelledTaskWorkspace(log, "old-task")).toThrow();
++  }
++  expect(() => cancelledTaskWorkspace(line, "")).toThrow();
++});
++
+ test("delivery evidence is the sole exact task and agent receipt", () => {
+   const delivered = receipt();
+   expect(deliveredReceipt({ supplements: [delivered] }, "task-1", "agent-1")).toBe(delivered);
+diff --git a/e2e/agent-adaptor-shadow.evidence.ts b/e2e/agent-adaptor-shadow.evidence.ts
+index 2ef1dcc9d..21f8f6ad7 100644
+--- a/e2e/agent-adaptor-shadow.evidence.ts
++++ b/e2e/agent-adaptor-shadow.evidence.ts
+@@ -111,7 +111,7 @@ function logRecord(line: string): Record<string, unknown> | undefined {
+     }
+   }
+   // Multica's configured tint handler puts the formal message before its attrs.
+-  const tint = line.match(/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}\s+(?:DBG|INF|WRN|ERR)\s+(agent-adaptor shadow execution (?:started|finished))(?=\s+[A-Za-z_][A-Za-z0-9_]*=)/);
++  const tint = line.match(/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}\s+(?:DBG|INF|WRN|ERR)\s+(agent-adaptor shadow execution (?:started|finished)|starting agent)(?=\s+[A-Za-z_][A-Za-z0-9_]*=)/);
+   const entry: Record<string, unknown> = {};
+   const fields = /(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=("(?:\\.|[^"\\])*"|[^\s"]+)(?=\s|$)/g;
+   for (const match of line.matchAll(fields)) {
+@@ -135,6 +135,21 @@ function logRecord(line: string): Record<string, unknown> | undefined {
+   return entry;
+ }
+ 
++export function cancelledTaskWorkspace(log: string, taskID: string): { path: string; line: string } {
++  if (!taskID) throw new Error("Cancelled task ID is required");
++  const matches = log.split(/\r?\n/).flatMap((line) => {
++    const entry = logRecord(line);
++    return entry?.msg === "starting agent" && entry.component === "daemon" && entry.task === taskID ? [{ entry, line }] : [];
++  });
++  if (matches.length !== 1) throw new Error(`Cancelled task ${taskID} needs exactly one formal daemon startup workspace`);
++  const match = matches[0]!;
++  const path = match.entry.workdir;
++  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || path.includes("\0") || path.split("/").some((part) => part === ".." || part === ".")) {
++    throw new Error(`Cancelled task ${taskID} has no absolute host-observed workspace`);
++  }
++  return { path, line: match.line };
++}
++
+ function hasRunIdentity(entry: Record<string, unknown>): entry is Record<string, unknown> & { task_id: string; run_id: string } {
+   return typeof entry.task_id === "string" && entry.task_id.trim() !== "" &&
+     typeof entry.run_id === "string" && entry.run_id.trim() !== "";
+diff --git a/e2e/agent-adaptor-shadow.md b/e2e/agent-adaptor-shadow.md
+index 41d4249cf..114cd40b1 100644
+--- a/e2e/agent-adaptor-shadow.md
++++ b/e2e/agent-adaptor-shadow.md
+@@ -68,6 +68,8 @@ Each case writes `actual-shadow-evidence.json` and screenshots in Playwright's o
+ 
+ The aggregate report requires one native case or all four shadow cases before `complete=true`; `passed=true` also requires every case to pass. It survives Playwright worker replacement, rejects duplicate cases or another run's report, and never converts partial evidence to success. Preserve both phase reports, Playwright output, and the original daemon logs. Do not claim UI acceptance from API records alone: the real browser cases and screenshots must pass.
+ 
++For a cancelled task whose API result omits the workspace, artifact collection uses only the unique formal daemon `starting agent` record for that exact task after the case's log offset. The receipt retains the original line and absolute path. Missing or ambiguous records fail; no path is guessed from a new task or directory naming conventions. Successful tasks still require their normal API workspace.
++
+ This suite validates the selected structured mention and ordinary-reply routes, not Multica's entire mention parser. Chat Steer is the product's cancel-and-prioritize flow, not SDK `Interrupt`; **Start after this run** is a new execution after Done, not SDK `AfterTurn`. It does not prove legacy provider-session import, durable daemon restart recovery, all plugins, or deployment behavior.
+ 
+ The mapped behavior comes from the official Multica checkout at `0d627e54e1bd4d2521359f293d04521246495ce2`: `apps/docs/content/docs/mentioning-agents.mdx` (explicit targets, plain replies, four delivery choices), `apps/docs/content/docs/chat.mdx` (FIFO/Steer), and the actual comment/chat handlers and UI in this checkout.
+diff --git a/e2e/agent-adaptor-shadow.spec.ts b/e2e/agent-adaptor-shadow.spec.ts
+index b612b611c..7ba180509 100644
+--- a/e2e/agent-adaptor-shadow.spec.ts
++++ b/e2e/agent-adaptor-shadow.spec.ts
+@@ -7,7 +7,7 @@ import { join } from "node:path";
+ import { expect, test, type Page, type TestInfo } from "@playwright/test";
+ import { TestApiClient } from "./fixtures";
+ import {
+-  deliveredReceipt, readDeliveredComment, requireAfterDone, requireExactTaskIDs, requireSuccess,
++  cancelledTaskWorkspace, deliveredReceipt, readDeliveredComment, requireAfterDone, requireExactTaskIDs, requireSuccess,
+   sdkAuditRunIDs, requireSDKCleanupBeforeNext, type ShadowTask,
+ } from "./agent-adaptor-shadow.evidence";
+ import { appendShadowReport } from "./agent-adaptor-shadow.report";
+@@ -216,14 +216,20 @@ class Harness {
+     requireSDKCleanupBeforeNext(log, previous.id, next.id);
+     this.evidence.checks.push({ kind: "SDK-Done-and-cleanup-before-next-provider-start", previousTaskID: previous.id, nextTaskID: next.id });
+   }
+-  artifactDirectory(task: ShadowTask): string {
++  async artifactDirectory(task: ShadowTask): Promise<string> {
+     const result = task.result as Json | null;
+     const dir = task.durable_work_dir || task.work_dir || result?.work_dir;
+-    if (typeof dir !== "string" || !dir) throw new Error("Actual task omitted its artifact workspace");
+-    return dir;
++    if (typeof dir === "string" && dir) return dir;
++    if (task.status !== "cancelled") throw new Error("Actual task omitted its artifact workspace");
++    // Multica discards a cancelled provider result; its daemon startup still
++    // records the actual task workspace before the provider can execute.
++    const log = (await readFile(required("MULTICA_SHADOW_DAEMON_LOG"))).subarray(this.daemonStart).toString("utf8");
++    const observed = cancelledTaskWorkspace(log, task.id);
++    this.evidence.apiSnapshots.push({ kind: "cancelled-task-host-workspace", taskID: task.id, ...observed });
++    return observed.path;
+   }
+   async artifacts(task: ShadowTask, names: string[]) {
+-    const dir = this.artifactDirectory(task);
++    const dir = await this.artifactDirectory(task);
+     const artifacts: Json[] = [];
+     for (const name of names) {
+       const data = await readFile(join(dir, name));
+@@ -301,7 +307,7 @@ test.describe("actual local Multica agent-adaptor shadow (explicit paid opt-in)"
+     const done = await h.terminal(issue, task.id); requireSuccess(done);
+     await h.sdkEvidence(done);
+     await h.saveTask(done);
+-    const acceptance = await inspectDevelopmentWorkspace({ taskID: done.id, workspace: h.artifactDirectory(done) });
++    const acceptance = await inspectDevelopmentWorkspace({ taskID: done.id, workspace: await h.artifactDirectory(done) });
+     h.evidence.apiSnapshots.push({ kind: "independent-host-development-acceptance", receipt: acceptance });
+     expect(acceptance.passed, "Fixed host source, arithmetic and generated-unittest checks must all pass; see retained receipt").toBe(true);
+     await h.artifacts(done, ["shadow_math.py", "test_shadow_math.py"]);
+-- 
+2.45.1.windows.1
+

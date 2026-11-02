@@ -6,10 +6,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/clihelper"
-	"github.com/agent-dance/agent-adaptor/internal/driverutil"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/clihelper"
+	"github.com/agent-dance/agent-adaptor/v2/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 )
 
 var errControlSinkRequired = errors.New("codebuddy control transport requires a decision-capable sink")
@@ -59,11 +59,13 @@ func (adapter) runControl(ctx context.Context, cfg Config, command string, req d
 		if reason == "" {
 			reason = "codebuddy resume session is unavailable"
 		}
-		p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
-		return driver.Response{}, &engine.ResumeRejectedError{Reason: reason}
+		emitErr := p.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: reason}, result.ExitCode, result.Signal, result.TimedOut)
+		return driver.Response{}, errors.Join(&engine.ResumeRejectedError{Reason: reason}, emitErr)
 	}
 	failure := p.failureForOutcome(result.ExitCode)
-	p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut)
+	if err := p.completeStream(failure, result.ExitCode, result.Signal, result.TimedOut); err != nil {
+		return driver.Response{}, err
+	}
 	checkpoint := p.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{

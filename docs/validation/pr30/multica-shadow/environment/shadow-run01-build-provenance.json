@@ -1,0 +1,10 @@
+{
+  "built_at": "2026-11-01T17:39:20.167304+00:00",
+  "multica_head": "1bab70fa1fb9a6f1a742da78d1162e1e72dce883",
+  "multica_backend_commit": "dfdb8023ecfda28a30a2e3155ee09510c2f2180a",
+  "sdk_head": "7421430bdca9c5bff9c4589116374fb650fc6809",
+  "binary": "/home/buthim/.local/share/multica-pr30-shadow-tools/bin/multica-shadow",
+  "binary_sha256": "2b5fb8d8027e44bed39381f7cadf961bf55df6f21e66829d04a69a5d7e993fba",
+  "multica_server_matches_backend_commit": true,
+  "sdk_code_changes_at_build": false
+}

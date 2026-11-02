@@ -3,7 +3,7 @@ package adaptor
 import (
 	"strconv"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // SandboxLevel controls filesystem and process boundary strength. It aliases
@@ -44,6 +44,8 @@ const (
 // agent-default Policy entirely. Zero fields mean "inherit" at the driver
 // boundary, so an all-zero Policy defers every dimension to the driver.
 type Policy struct {
+	// Messages bounds and formats supplemental messages in this execution.
+	Messages MessagePolicy
 	// Sandbox is the filesystem / process boundary strength.
 	Sandbox SandboxLevel
 	// WebSearch gates the provider's web-search capability.
@@ -114,6 +116,9 @@ func validatePolicy(desc driver.Descriptor, p *Policy) error {
 		return err
 	}
 
+	if p.Messages.MaxPending < 0 || p.Messages.MaxTurns < 0 {
+		return invalid("Policy.Messages", "negative limit")
+	}
 	approvals := p.Approvals
 	validateBinaryMode := func(field string, mode driver.HumanDecisionMode) error {
 		switch mode {

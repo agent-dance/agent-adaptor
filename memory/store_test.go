@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
 func TestStoreAcquireLeaseFailsClosedWhenEntropyUnavailable(t *testing.T) {
@@ -55,6 +55,41 @@ func TestStoreAcquireLeaseFailsClosedWhenEntropyUnavailable(t *testing.T) {
 	}
 	if lease.Token == "" {
 		t.Fatal("AcquireLease returned an empty token after restoring entropy source")
+	}
+}
+
+func TestStoreCopiesContinuityHistoryAtomically(t *testing.T) {
+	store := NewStore()
+	ctx := context.Background()
+	lease, err := store.AcquireLease(ctx, "history", "writer", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := threadstore.Record{ID: "history", Key: "key", Status: threadstore.StatusActive, EarlierGuidance: []string{"guidance"}, RecentTurns: []string{"turn"}}
+	request := threadstore.FinalizeRequest{Record: record, Key: "key", RebindActive: true, HeldLeases: []threadstore.Lease{lease}}
+	if err := store.Finalize(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	record.EarlierGuidance[0], record.RecentTurns[0] = "mutated", "mutated"
+	resolved, err := store.Resolve(ctx, threadstore.Query{Key: "key"})
+	if err != nil || resolved.EarlierGuidance[0] != "guidance" || resolved.RecentTurns[0] != "turn" {
+		t.Fatalf("Finalize retained caller-owned history: %+v / %v", resolved, err)
+	}
+	resolved.EarlierGuidance[0], resolved.RecentTurns[0] = "changed", "changed"
+	again, err := store.Resolve(ctx, threadstore.Query{Key: "key"})
+	if err != nil || again.EarlierGuidance[0] != "guidance" || again.RecentTurns[0] != "turn" {
+		t.Fatalf("Resolve leaked stored history: %+v / %v", again, err)
+	}
+	if err := store.ReleaseLease(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	request.Record.EarlierGuidance = []string{"stale"}
+	if err := store.Finalize(ctx, request); !errors.Is(err, threadstore.ErrLeaseLost) {
+		t.Fatalf("stale history write=%v", err)
+	}
+	final, err := store.Resolve(ctx, threadstore.Query{Key: "key"})
+	if err != nil || final.EarlierGuidance[0] != "guidance" {
+		t.Fatalf("stale writer changed continuity: %+v / %v", final, err)
 	}
 }
 
@@ -283,5 +318,24 @@ func TestStoreFinalizeRequireKeyAbsentIsAtomicAndPreservesRawKey(t *testing.T) {
 	}
 	if leaked, err := store.Resolve(ctx, threadstore.Query{ID: "second", IncludeArchived: true}); err != nil || leaked != nil {
 		t.Fatalf("rejected child was partially saved: record=%#v err=%v", leaked, err)
+	}
+}
+
+func TestDeliveredMessageReceiptsAreCopiedWithCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore()
+	record := threadstore.Record{ID: "receipts", Key: "thread", Status: threadstore.StatusActive, DeliveredMessages: []threadstore.DeliveredMessage{{ID: "message", At: time.Now().UTC()}}}
+	if err := s.Finalize(ctx, threadstore.FinalizeRequest{Record: record, Key: record.Key, RebindActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	record.DeliveredMessages[0].ID = "mutated input"
+	got, err := s.Resolve(ctx, threadstore.Query{Key: "thread"})
+	if err != nil || got.DeliveredMessages[0].ID != "message" {
+		t.Fatalf("record=%+v err=%v", got, err)
+	}
+	got.DeliveredMessages[0].ID = "mutated output"
+	again, err := s.Resolve(ctx, threadstore.Query{Key: "thread"})
+	if err != nil || again.DeliveredMessages[0].ID != "message" {
+		t.Fatalf("record=%+v err=%v", again, err)
 	}
 }

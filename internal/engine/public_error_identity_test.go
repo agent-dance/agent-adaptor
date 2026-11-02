@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 type failingSkillMaterializer struct{ err error }

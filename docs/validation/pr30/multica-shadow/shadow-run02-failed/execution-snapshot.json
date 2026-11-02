@@ -1,0 +1,12 @@
+{
+  "capturedAt": "2026-11-01T18:04:57.5877837Z",
+  "e2eCommit": "61daadbae4cdefb03890dbe69f311b741e83e71c",
+  "productionCommit": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+  "sdkCommit": "395047325c882fc90bcc08ae08c3a91f5390965a",
+  "daemonPID": 44396,
+  "binarySHA256": "65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34",
+  "runtimeID": "8e39cfb9-0068-4d8a-9e41-b42caf20f0dd",
+  "model": "gpt-6.1-sol",
+  "effort": "xhigh",
+  "provenance": "Builder verified actual /proc binary and backend flag; independent build/start receipts retained by bridges_b1"
+}

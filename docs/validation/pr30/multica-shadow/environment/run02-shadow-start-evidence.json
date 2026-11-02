@@ -1,0 +1,78 @@
+{
+  "confirmed_at_utc": "2026-11-01T18:01:23.410023+00:00",
+  "health_port": 19898,
+  "health": {
+    "status": "running",
+    "pid": 44396,
+    "os": "linux",
+    "profile": "pr30-shadow-sdk",
+    "daemon_id": "1075b8f8-988f-4143-a8dd-b0c739715386",
+    "cli_commit": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+    "active_task_count": 0,
+    "running_task_count": 0,
+    "resource_wait_task_count": 0,
+    "agents": [
+      "codex"
+    ],
+    "workspaces": [
+      {
+        "id": "a25b1ca8-15be-4485-9ab2-0abf04a09ad8",
+        "runtimes": [
+          "8e39cfb9-0068-4d8a-9e41-b42caf20f0dd"
+        ]
+      }
+    ]
+  },
+  "runtime": {
+    "id": "8e39cfb9-0068-4d8a-9e41-b42caf20f0dd",
+    "name": "Codex (PR30 WSL shadow)",
+    "provider": "codex",
+    "status": "online",
+    "daemon_id": "1075b8f8-988f-4143-a8dd-b0c739715386",
+    "workspace_id": "a25b1ca8-15be-4485-9ab2-0abf04a09ad8",
+    "last_seen_at": "2026-11-02T02:01:04+08:00"
+  },
+  "environment": {
+    "CODEX_HOME": "/home/buthim/.local/share/multica-pr30-shadow-tools/shadow-home",
+    "MULTICA_CODEX_PATH": "/home/buthim/.local/share/multica-pr30-shadow-tools/codex/node_modules/.bin/codex",
+    "MULTICA_CODEX_BACKEND": "agent-adaptor",
+    "MULTICA_CODEX_MODEL": "gpt-6.1-sol",
+    "MULTICA_AGENT_TIMEOUT": "8m",
+    "MULTICA_AGENT_IDLE_WATCHDOG": "3m",
+    "MULTICA_AGENT_TOOL_WATCHDOG": "8m",
+    "MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT": "8m",
+    "MULTICA_DAEMON_AUTO_UPDATE": "false",
+    "MULTICA_DAEMON_AUTO_RELOAD": "false"
+  },
+  "selected_config": {
+    "model": "gpt-6.1-sol",
+    "model_reasoning_effort": "xhigh",
+    "sandbox_mode": "danger-full-access",
+    "approval_policy": "never"
+  },
+  "binary_sha256": "65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34",
+  "source": {
+    "phase": "run02",
+    "built_at_utc": "2026-11-01T18:00:49.064421+00:00",
+    "multica_head": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+    "multica_backend_commit": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+    "sdk_head": "395047325c882fc90bcc08ae08c3a91f5390965a",
+    "binary": "/home/buthim/.local/share/multica-pr30-shadow-tools/bin/multica-shadow-run02",
+    "binary_sha256": "65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34",
+    "multica_server_clean_at_build": true,
+    "sdk_go_code_clean_at_build": true
+  },
+  "log_path": "/home/buthim/.multica/profiles/pr30-shadow-sdk/daemon.log",
+  "phase": "run02",
+  "log_append_offset_bytes": 67229,
+  "clock": {
+    "phase": "run02",
+    "previous_shadow_pid": 38092,
+    "previous_shadow_stop_confirmed_at_utc": "2026-11-01T18:00:28.536322+00:00",
+    "new_shadow_pid": 44396,
+    "new_shadow_starting_at_utc": "2026-11-01T18:01:04.525000+00:00",
+    "new_shadow_after_previous_exit": true,
+    "log_append_offset_bytes": 67229,
+    "log_path": "/home/buthim/.multica/profiles/pr30-shadow-sdk/daemon.log"
+  }
+}

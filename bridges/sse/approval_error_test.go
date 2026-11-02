@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/sse"
 )
 
 func TestApprovalErrorHTTPMapping(t *testing.T) {

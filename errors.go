@@ -3,9 +3,9 @@ package adaptor
 import (
 	"errors"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // Business failures are typed errors. A run that completed but
@@ -14,7 +14,7 @@ import (
 // breakage) travel the same err path as plain wrapped errors. Hosts have one
 // verdict point:
 //
-//	res, err := agent.Run(ctx, prompt)
+//	res, err := agent.Send(ctx, prompt).Result()
 //	if err != nil {
 //	    var runErr *adaptor.RunError
 //	    if errors.As(err, &runErr) {
@@ -27,6 +27,8 @@ import (
 type FailureReason string
 
 const (
+	// ReasonLimitExceeded means unfinished work was aborted by an execution limit.
+	ReasonLimitExceeded FailureReason = "limit_exceeded"
 	// ReasonApprovalDenied means an approval was denied, including an
 	// automatically denied request.
 	ReasonApprovalDenied FailureReason = "approval_denied"

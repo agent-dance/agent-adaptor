@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // makeSkillTree builds a small directory hierarchy with a mix of

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // This file intentionally imports only the skill package and the standard

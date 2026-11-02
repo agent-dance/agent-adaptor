@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/skillruntime"
 )
 
 func listCodexSkills(payload driver.ResolvedSkills, selected []string, resolved []driver.Skill, codexHome string) (driver.SkillSnapshot, error) {
@@ -61,10 +61,14 @@ func effectiveCodexBindingsNoInitialize(config driver.CommonConfig, selection *d
 
 func resolveCodexProfileWithOptions(config driver.CommonConfig, selection *driver.ProfileSelection, agent driver.AgentIdentity, skipInitialize bool) (driver.AgentProfile, error) {
 	if selection == nil && skillruntime.ResolveBinding(config.Env, "CODEX_HOME") == "" && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
-		bindings := config.Env
-		if home := skillruntime.ResolveBinding(bindings, "HOME"); strings.TrimSpace(home) != "" {
-			sharedHome := resolveSharedCodexHome(bindings)
-			if _, err := os.Stat(sharedHome); err == nil {
+		// Without an explicit profile or tenant, the CLI's own home (~/.codex,
+		// or the HOME/USERPROFILE binding) carries the user's login and provider
+		// configuration, exactly as running codex directly would. A tenant gets
+		// its own managed home so credentials never cross tenants; a machine
+		// with no Codex home also falls back to the managed directory.
+		if strings.TrimSpace(agent.TenantID) == "" {
+			sharedHome := resolveSharedCodexHome(config.Env)
+			if info, err := os.Stat(sharedHome); err == nil && info.IsDir() {
 				return driver.AgentProfile{DriverType: DriverType, Supported: true, Dir: sharedHome, EnvVar: "CODEX_HOME", Source: driver.AgentProfileSourceDefault}, nil
 			}
 		}

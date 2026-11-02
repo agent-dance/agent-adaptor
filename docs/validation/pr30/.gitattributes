@@ -1,0 +1,13 @@
+# Captured artifacts must retain their original bytes for manifest/receipt hashes.
+sdlc-run*/integrated/* -text
+sdlc-run*/checks/* -text
+sdlc-run*/prompts/* -text
+sdlc-run*/spec.md -text
+sdlc-run*/report.json -text
+sdlc-attempts/* -text
+multica-shadow/*.patch -text
+multica-shadow/native-run*/** -text
+multica-shadow/shadow-run*/** -text
+multica-shadow/environment/* -text
+multica-shadow/acceptance.json -text
+sdk-checks/* -text

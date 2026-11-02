@@ -1,0 +1,16 @@
+{
+  "at": "2026-11-01T18:32:55.479Z",
+  "e2eSourceCommit": "0250bea3da997fd47fb71549231ae67812229871",
+  "productionMulticaCommit": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+  "sdkBuildCommit": "395047325c882fc90bcc08ae08c3a91f5390965a",
+  "binarySHA256": "65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34",
+  "daemonPID": 44396,
+  "runtimeID": "8e39cfb9-0068-4d8a-9e41-b42caf20f0dd",
+  "daemonLog": "/home/buthim/.multica/profiles/pr30-shadow-sdk/daemon.log",
+  "daemonLogOffset": 193861,
+  "model": "gpt-6.1-sol",
+  "effort": "xhigh",
+  "featureFlag": "agent-adaptor",
+  "api": "http://localhost:19014",
+  "web": "http://localhost:13934"
+}

@@ -9,17 +9,17 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/clihelper"
-	"github.com/agent-dance/agent-adaptor/internal/configprobe"
-	"github.com/agent-dance/agent-adaptor/internal/driverutil"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
-	"github.com/agent-dance/agent-adaptor/internal/profileagents"
-	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
-	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
-	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
-	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/clihelper"
+	"github.com/agent-dance/agent-adaptor/v2/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/v2/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileagents"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileconfig"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilehooks"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilesnapshot"
 )
 
 // DriverType is the stable descriptor type for the built-in Codex driver.
@@ -57,9 +57,10 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},
+		Messages:     codexMessageCapability(),
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: true, WebSearch: true, Browser: false,
-			Permission: driver.HumanDecisionSupport{Ask: false, AutoApprove: true, AutoReject: false, Retry: false},
+			Permission: driver.HumanDecisionSupport{Ask: true, AutoApprove: true, AutoReject: true, Retry: false},
 			PlanReview: driver.HumanDecisionSupport{},
 			Question:   driver.QuestionSupport{Ask: false, AutoReject: false, Retry: false},
 		},
@@ -69,8 +70,8 @@ func (adapter) Descriptor() driver.Descriptor {
 			JSONSchemaPromptValidate: true,
 			WorksWithRun:             true,
 			WorksWithStreaming:       true,
-			WorksWithHITL:            false,
-			Notes:                    "Native JSON Schema output is supported by codex exec --output-schema and app-server turn/start.",
+			WorksWithHITL:            true,
+			Notes:                    "Native JSON Schema output uses app-server turn/start.outputSchema.",
 		},
 	}
 }
@@ -92,7 +93,7 @@ func (adapter) ValidateConfig(cfg any) error {
 	}
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -102,11 +103,11 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	bindings, err := effectiveCodexBindings(config.CommonConfig, nil, driver.AgentIdentity{})
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "codex_profile_error", Level: "fail", Message: "Codex profile resolution failed.", Detail: err.Error()})
-		return driverutil.SummarizeEnvironment(DriverType, checks), nil
+		return codexVersion(ctx, config).Environment(DriverType, codexMessageCapability(), checks), nil
 	}
 	checks = append(checks, codexAuthChecks(bindings)...)
 	checks = append(checks, codexConfigChecks(bindings)...)
-	return driverutil.SummarizeEnvironment(DriverType, checks), nil
+	return codexVersion(ctx, config).Environment(DriverType, codexMessageCapability(), checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, _ any) ([]driver.ModelInfo, error) {
@@ -334,20 +335,27 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, agent driver.A
 }
 
 // StreamCapability advertises the Codex app-server transport's fidelity.
-// Core selects that provider transport from the resolved invocation; the
-// public choice between Runner.Run and Runner.Stream does not select it.
+// Core selects that provider transport from the resolved invocation;
+// choosing Result or Events on the returned Stream does not select it.
 func (adapter) StreamCapability() driver.StreamCapability {
 	return driver.StreamCapability{
 		Native:       true,
 		TokenLevel:   true,
 		Reasoning:    true,
 		ToolCallArgs: true,
-		HITL:         false, // The app-server transport does not expose host decision requests.
+		HITL:         true, // App-server permission requests use the core decision sink.
 	}
 }
 
 func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
+	if req.Messages != nil {
+		var err error
+		req, err = codexVersion(ctx, cfg).PrepareRun(ctx, req, sink, DriverType, codexMessageCapability())
+		if err != nil {
+			return driver.Response{}, err
+		}
+	}
 	// Per-run WithModel overrides the configured model for this invocation only.
 	if m := strings.TrimSpace(req.ModelOverride); m != "" {
 		cfg.Model = m
@@ -375,8 +383,8 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		return driver.Response{}, err
 	}
 
-	// Streaming runs switch the transport to `codex app-server`. The
-	// exec --json path remains the default for batch or scripted usage.
+	// Transport selection follows the resolved invocation. Native schemas use
+	// app-server even when the invocation does not request provider streaming.
 	effectiveBindings, err = effectiveCodexBindings(cfg.CommonConfig, req.Profile, req.Agent)
 	if err != nil {
 		return driver.Response{}, err
@@ -386,7 +394,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if err := injectCodexSkills(ctx, req.Skills, effectiveCodexHome, sink); err != nil {
 		return driver.Response{}, err
 	}
-	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveCodexHome, profileKind, req.MCP); err != nil {
+	if _, err := mcpruntime.SyncResource(ctx, DriverType, effectiveCodexHome, profileKind, req.MCP, req.Policy); err != nil {
 		return driver.Response{}, err
 	}
 	if req.ProfilePayload.Declared.Config {
@@ -441,7 +449,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			extraArgs: append([]string(nil), appOpts.ExtraArgs...),
 			resumeID:  resumeID, engineID: persistentSessionKey(req), previousID: persistentPreviousSessionKey(req),
 			prompt: appOpts.Prompt, runID: req.RunID,
-			approval: appOpts.Approval, sandbox: appOpts.Sandbox, outputSchema: outputSchema,
+			approval: appOpts.Approval, sandbox: appOpts.Sandbox, outputSchema: outputSchema, messages: req.Messages,
 			profileFingerprint:  profileFingerprint,
 			settingsFingerprint: codexSettingsFingerprint(effectiveCodexHome, effectiveCWD),
 			commandFingerprint:  commandFileFingerprint(command),
@@ -454,7 +462,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			return finishAppServerResult(req, result, effectiveCWD), nil
 		}
 		if !errors.Is(persistentErr, errPersistentFallback) {
-			return result, persistentErr
+			return finishAppServerResult(req, result, effectiveCWD), persistentErr
 		}
 	} else if writer != nil {
 		if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
@@ -480,22 +488,6 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	}
 
 	args := append(codexPolicyArgs(req.Policy), "exec", "--json")
-	var schemaTempDir string
-	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
-		if hasAnyArg(cfg.ExtraArgs, "--output-schema") {
-			return driver.Response{}, &engine.InvalidOutputSchemaError{Reason: "Codex ExtraArgs must not include --output-schema when SDK structured output is enabled"}
-		}
-		schemaTempDir, err = os.MkdirTemp("", "agentadaptor-codex-output-schema-*")
-		if err != nil {
-			return driver.Response{}, err
-		}
-		defer os.RemoveAll(schemaTempDir)
-		schemaPath := filepath.Join(schemaTempDir, "schema.json")
-		if err := os.WriteFile(schemaPath, req.OutputSchema.SchemaJSON, 0o600); err != nil {
-			return driver.Response{}, err
-		}
-		args = append(args, "--output-schema", schemaPath)
-	}
 	if cfg.Model != "" {
 		args = append(args, "--model", cfg.Model)
 	}
@@ -505,6 +497,11 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if cfg.FastMode {
 		args = append(args, "-c", `service_tier="fast"`, "-c", "features.fast_mode=true")
 	}
+	mcpArgs, err := codexMCPPolicyArgs(req.MCP, req.Policy)
+	if err != nil {
+		return driver.Response{}, err
+	}
+	args = append(args, mcpArgs...)
 	args = append(args, filterCodexPolicyExtraArgs(cfg.ExtraArgs, req.Policy)...)
 	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
 		args = append(args, "resume", req.Session.State.ResumeID, "-")
@@ -579,21 +576,6 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			),
 		}
 	}
-	var structuredOutput *driver.StructuredOutput
-	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
-		structuredOutput = parser.nativeStructuredOutputForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
-		// Keep parser protocol responsibilities separate from schema validation.
-		// Finalize even when the provider omitted a completed agent_message: the
-		// missing native value is itself an invalid structured result and must gate
-		// checkpoint persistence for direct Driver.Run callers as well as core.
-		structuredOutput, failure = engine.FinalizeStructuredOutput(
-			req.OutputSchema,
-			driver.StructuredOutputSourceNative,
-			parser.buildOutput(),
-			structuredOutput,
-			failure,
-		)
-	}
 	checkpoint := parser.checkpointForOutcome(result.ExitCode, result.Signal, result.TimedOut, failure)
 	if checkpoint != nil && checkpoint.State != nil {
 		checkpoint.State.Data = map[string]string{
@@ -604,20 +586,19 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	}
 
 	driverResult := driver.Response{
-		Output:           parser.buildOutput(),
-		RawStreams:       &raw,
-		Transcript:       parser.transcript,
-		ExitCode:         result.ExitCode,
-		Signal:           result.Signal,
-		TimedOut:         result.TimedOut,
-		Usage:            parser.usage,
-		Checkpoint:       checkpoint,
-		Provider:         provider,
-		Model:            cfg.Model,
-		Summary:          parser.finalSummary(),
-		StructuredOutput: structuredOutput,
-		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
-		Failure:          failure,
+		Output:          parser.buildOutput(),
+		RawStreams:      &raw,
+		Transcript:      parser.transcript,
+		ExitCode:        result.ExitCode,
+		Signal:          result.Signal,
+		TimedOut:        result.TimedOut,
+		Usage:           parser.usage,
+		Checkpoint:      checkpoint,
+		Provider:        provider,
+		Model:           cfg.Model,
+		Summary:         parser.finalSummary(),
+		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+		Failure:         failure,
 	}
 	if writer != nil && !req.Spawn && persistentPreWarmEligible(cfg, req) &&
 		driverResult.ExitCode == 0 && driverResult.Failure == nil &&
@@ -633,10 +614,17 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 }
 
 // usesCodexAppServer selects the provider transport from invocation semantics.
-// Fork is implemented only by the official app-server thread/fork method;
+// Native schema output is enforced only by turn/start.outputSchema. Fork is
+// implemented only by the official app-server thread/fork method;
 // routing it through `codex exec resume` would continue and mutate the parent.
 func usesCodexAppServer(req driver.Request) bool {
-	return req.Streaming || (req.Session != nil && req.Session.Mode == driver.SessionFork)
+	return req.Streaming || codexNativeSchema(req) || req.Policy.HumanDecision.Permission == driver.HumanDecisionAsk ||
+		req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoReject ||
+		(req.Session != nil && req.Session.Mode == driver.SessionFork)
+}
+
+func codexNativeSchema(req driver.Request) bool {
+	return req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative
 }
 
 func validateCodexForkRequest(req driver.Request) error {
@@ -654,17 +642,6 @@ func codexExpectedResumeID(session *driver.SessionContext) string {
 		return ""
 	}
 	return strings.TrimSpace(session.State.ResumeID)
-}
-
-func hasAnyArg(args []string, names ...string) bool {
-	for _, arg := range args {
-		for _, name := range names {
-			if arg == name || strings.HasPrefix(arg, name+"=") {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func validateCodexSessionGuard(req driver.Request, effectiveCWD, profileFingerprint string) error {

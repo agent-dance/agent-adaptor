@@ -4,7 +4,7 @@ import (
 	"maps"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // One run produces one ordered stream of typed events. Semantic streaming
@@ -185,7 +185,7 @@ type RunStarted struct {
 // run.error (Failed == true with the classified Reason / Message).
 //
 // RunFinished is informational: the authoritative outcome — including the
-// full Result and the typed *RunError — always comes from Stream.Result().
+// full Result and the typed *RunError — comes from Done and Stream.Result().
 type RunFinished struct {
 	eventMetaCarrier
 	// RunID is the run identifier reported by the Driver event.
@@ -306,6 +306,10 @@ const (
 	SubagentStarted SubagentEventKind = "started"
 	// SubagentDelta carries incremental subagent output.
 	SubagentDelta SubagentEventKind = "delta"
+	// SubagentMessage carries a peer message.
+	SubagentMessage SubagentEventKind = "message"
+	// SubagentState reports a task state change.
+	SubagentState SubagentEventKind = "state"
 	// SubagentFinished marks a delegated subagent completing.
 	SubagentFinished SubagentEventKind = "finished"
 )
@@ -315,8 +319,14 @@ const (
 // publish it through a RunServiceProvider attachment.
 type SubagentUpdate struct {
 	eventMetaCarrier
-	// Agent is the delegation key of the subagent.
-	Agent string
+	// Task is the delegation identifier.
+	Task string
+	// Member is the delegated agent key.
+	Member string
+	// State is the task lifecycle status.
+	State string
+	// Summary is the task result summary.
+	Summary string
 	// Kind classifies the update.
 	Kind SubagentEventKind
 	// Delta is the incremental output chunk (SubagentDelta).
@@ -326,6 +336,9 @@ type SubagentUpdate struct {
 }
 
 // isEvent implementations seal the Event interface.
+func (Done) isEvent()             {}
+func (TurnEnd) isEvent()          {}
+func (MessageUpdate) isEvent()    {}
 func (TextDelta) isEvent()        {}
 func (Thinking) isEvent()         {}
 func (ToolCall) isEvent()         {}
@@ -356,6 +369,16 @@ func WithEventMeta(ev Event, meta EventMeta) Event {
 func stampEvent(ev Event, meta EventMeta) Event {
 	c := eventMetaCarrier{meta: meta}
 	switch e := ev.(type) {
+	case Done:
+		e.eventMetaCarrier = c
+		return e
+	case TurnEnd:
+		e.eventMetaCarrier = c
+		e.MessageIDs = append([]string(nil), e.MessageIDs...)
+		return e
+	case MessageUpdate:
+		e.eventMetaCarrier = c
+		return e
 	case TextDelta:
 		e.eventMetaCarrier = c
 		return e
@@ -402,6 +425,12 @@ func stampEvent(ev Event, meta EventMeta) Event {
 
 func eventKind(ev Event) string {
 	switch e := ev.(type) {
+	case Done:
+		return "done"
+	case TurnEnd:
+		return "turn.end"
+	case MessageUpdate:
+		return "message.update"
 	case TextDelta:
 		return "text." + phaseKind(e.Phase)
 	case Thinking:
@@ -436,12 +465,24 @@ func phaseKind(p Phase) string {
 	return string(p)
 }
 
+// eventCritical identifies events that never wait for capacity, including
+// events published while holding the message hub lock. Dropped reports remain
+// reliable independently of whether they originated in core or a provider.
+func eventCritical(ev Event) bool {
+	switch ev.(type) {
+	case RunStarted, *RunStarted, RunFinished, *RunFinished, MessageUpdate, *MessageUpdate, TurnEnd, *TurnEnd, Done, *Done, *ApprovalRequest, Notice, *Notice, Dropped, *Dropped:
+		return true
+	default:
+		return false
+	}
+}
+
 // eventMayDrop is deliberately narrow. Only replayable, high-frequency
 // deltas may be discarded. Lifecycle, approvals, terminal events, provider
 // Dropped reports, transcript items, and tool results are reliable during
-// normal execution. Cancellation may abandon ordinary pending events to
-// unblock teardown; the authoritative terminal has a dedicated broker reserve
-// and remains deliverable.
+// normal event consumption. Result-only consumption discards ordinary events
+// into a loss summary; cancellation can abandon deltas to unblock teardown.
+// The authoritative terminal remains deliverable.
 func eventMayDrop(ev Event) bool {
 	switch e := ev.(type) {
 	case TextDelta:
@@ -484,7 +525,7 @@ func eventFromRunEvent(ev driver.RunEvent) Event {
 		if ev.Item != nil {
 			text = ev.Item.Text
 		}
-		return Notice{Kind: NoticeTranscriptItem, Text: text, Item: ev.Item, Metadata: ev.Metadata, Data: ev.Data}
+		return Notice{Kind: NoticeTranscriptItem, Text: text, Item: publicTranscriptItem(ev.Item), Metadata: ev.Metadata, Data: ev.Data}
 	case driver.RunEventInvocation:
 		return Notice{Kind: NoticeInvocation, Text: ev.Text, Metadata: ev.Metadata, Data: ev.Data}
 	case driver.RunEventRuntime:

@@ -1,0 +1,71 @@
+ok  	github.com/agent-dance/agent-adaptor/v2	4.573s
+ok  	github.com/agent-dance/agent-adaptor/v2/adaptertest	2.639s
+ok  	github.com/agent-dance/agent-adaptor/v2/bridges/a2a	0.534s
+ok  	github.com/agent-dance/agent-adaptor/v2/bridges/agui	0.171s
+ok  	github.com/agent-dance/agent-adaptor/v2/bridges/internal/bridgekey	0.292s
+ok  	github.com/agent-dance/agent-adaptor/v2/bridges/sse	0.245s
+ok  	github.com/agent-dance/agent-adaptor/v2/bridges/subagentstream	0.742s
+ok  	github.com/agent-dance/agent-adaptor/v2/claude	22.528s
+ok  	github.com/agent-dance/agent-adaptor/v2/clients/a2a	0.739s
+ok  	github.com/agent-dance/agent-adaptor/v2/codebuddy	5.305s
+ok  	github.com/agent-dance/agent-adaptor/v2/codex	25.764s
+ok  	github.com/agent-dance/agent-adaptor/v2/codex/appserver	3.192s
+ok  	github.com/agent-dance/agent-adaptor/v2/cursor	3.230s
+ok  	github.com/agent-dance/agent-adaptor/v2/driver	0.323s
+ok  	github.com/agent-dance/agent-adaptor/v2/e2e	0.904s
+?   	github.com/agent-dance/agent-adaptor/v2/examples/a2a-server	[no test files]
+?   	github.com/agent-dance/agent-adaptor/v2/examples/inspect	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil	0.552s
+?   	github.com/agent-dance/agent-adaptor/v2/examples/profiles	[no test files]
+?   	github.com/agent-dance/agent-adaptor/v2/examples/profiles/hook	[no test files]
+?   	github.com/agent-dance/agent-adaptor/v2/examples/profiles/mcpserver	[no test files]
+?   	github.com/agent-dance/agent-adaptor/v2/examples/profiles/resources	[no test files]
+?   	github.com/agent-dance/agent-adaptor/v2/examples/quickstart	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/showcases/issue-daemon	0.502s
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/showcases/multica-routing	0.268s
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/showcases/sdlc-team	2.188s
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/showcases/team-agent-workflow	0.559s
+?   	github.com/agent-dance/agent-adaptor/v2/examples/skills	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/streaming	0.466s
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/streaming/chat	0.606s
+?   	github.com/agent-dance/agent-adaptor/v2/examples/structured-output	[no test files]
+?   	github.com/agent-dance/agent-adaptor/v2/examples/threads	[no test files]
+?   	github.com/agent-dance/agent-adaptor/v2/examples/threads/codec	[no test files]
+?   	github.com/agent-dance/agent-adaptor/v2/examples/tools	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/web-chat	0.602s
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/web-chat/aguiclient	0.537s
+ok  	github.com/agent-dance/agent-adaptor/v2/examples/web-chat/copilotkit	0.191s
+?   	github.com/agent-dance/agent-adaptor/v2/examples/web-chat/copilotkit/web/node_modules/flatted/golang/pkg/flatted	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder	0.295s
+ok  	github.com/agent-dance/agent-adaptor/v2/hosttools/team	0.328s
+?   	github.com/agent-dance/agent-adaptor/v2/hosttools/team/teamstoretest	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/aguiversion	0.254s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/clihelper	0.378s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/cliversion	1.037s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/configprobe	0.280s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/driverutil	0.383s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/engine	0.710s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/keycodec	0.258s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/mcpruntime	1.350s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/processx	0.862s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/profileagents	0.590s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/profileconfig	0.617s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/profilehooks	0.631s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions	0.857s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/profilekind	0.432s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/profilereconcile	0.435s
+?   	github.com/agent-dance/agent-adaptor/v2/internal/profilesnapshot	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/profilestate	0.413s
+?   	github.com/agent-dance/agent-adaptor/v2/internal/skillmaterializer	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/skillonlytest	0.398s
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/skillruntime	0.646s
+?   	github.com/agent-dance/agent-adaptor/v2/internal/testutil	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/testutil/apifreeze	1.205s
+?   	github.com/agent-dance/agent-adaptor/v2/internal/toolidentity	[no test files]
+ok  	github.com/agent-dance/agent-adaptor/v2/internal/toolruntime	0.854s
+ok  	github.com/agent-dance/agent-adaptor/v2/mcp	0.279s
+ok  	github.com/agent-dance/agent-adaptor/v2/memory	0.281s
+ok  	github.com/agent-dance/agent-adaptor/v2/profile	0.391s
+ok  	github.com/agent-dance/agent-adaptor/v2/skill	0.736s
+ok  	github.com/agent-dance/agent-adaptor/v2/threadstore	0.280s
+ok  	github.com/agent-dance/agent-adaptor/v2/tool	0.393s

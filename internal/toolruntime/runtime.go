@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
-	"github.com/agent-dance/agent-adaptor/tool"
+	"github.com/agent-dance/agent-adaptor/v2/internal/toolidentity"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -44,7 +44,7 @@ const (
 	defaultShutdownTimeout     = 10 * time.Second
 	defaultMaxHeaderBytes      = 16 << 10
 	serverVersion              = "1"
-	fingerprintDomain          = "github.com/agent-dance/agent-adaptor/internal/toolruntime/catalog/v1"
+	fingerprintDomain          = "github.com/agent-dance/agent-adaptor/v2/internal/toolruntime/catalog/v1"
 )
 
 var (

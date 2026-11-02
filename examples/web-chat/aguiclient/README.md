@@ -39,6 +39,11 @@ Go backend (agent-adaptor + bridges/sse)
 - Node.js 20+ 与 npm / pnpm
 - 任选其一：**Codex**、**Claude Code**、**Cursor Agent** 本机 CLI，且已登录；Cursor 没有 token-level assistant delta 时会显示一次终局 `Result.Text`
 
+前端固定使用 `@ag-ui/client` 1.0.3，并将传递依赖 `zod` 提升至 4.6.7，修复
+GHSA-mrhx-c7xc-m3w5。工具结果通过 `contentToText` 兼容 AG-UI 1.0 的多模态
+content。CI 使用 lockfile 执行 `npm ci`、构建与
+`npm audit --omit=dev --audit-level=high`；生产依赖审计没有已知漏洞。
+
 ## 跑起来
 
 ### 一键脚本（仓库根目录相对路径）

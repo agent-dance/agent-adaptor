@@ -27,11 +27,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 func TestProfileResourcesResolveIntoProfilePayload(t *testing.T) {
@@ -68,7 +68,7 @@ func TestProfileResourcesResolveIntoProfilePayload(t *testing.T) {
 		}},
 	}))
 
-	if _, err := agent.Run(context.Background(), "hello"); err != nil {
+	if _, err := agent.Send(context.Background(), "hello").Result(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	payload := fake.lastRequest(t).ProfilePayload
@@ -97,7 +97,7 @@ func TestProfileResourcesResolveIntoProfilePayload(t *testing.T) {
 
 func TestRunWithoutProfileResourcesLeavesOptionalKindsUndeclared(t *testing.T) {
 	fake := newFakeDriver()
-	if _, err := adaptor.New(fake).Run(context.Background(), "hello"); err != nil {
+	if _, err := adaptor.New(fake).Send(context.Background(), "hello").Result(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	declared := fake.lastRequest(t).ProfilePayload.Declared
@@ -115,14 +115,14 @@ func TestExplicitEmptyResourceKindsAreDeclared(t *testing.T) {
 	fake := newFakeDriver()
 	agent := adaptor.New(fake)
 
-	if _, err := agent.Run(context.Background(), "hello",
+	if _, err := agent.Send(context.Background(), "hello",
 		adaptor.WithProfileResources(profile.Resources{
 			Agents: []profile.SubAgent{},
 			Hooks:  []profile.Hook{},
 			Config: []profile.ConfigPatch{},
 		}),
 		adaptor.WithInstructions(""),
-	); err != nil {
+	).Result(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	req := fake.lastRequest(t)
@@ -150,7 +150,7 @@ func TestProfileResourcesRejectAmbiguousInstructionSources(t *testing.T) {
 		Instructions: &profile.Instructions{Path: "AGENTS.md", Content: "inline"},
 	}))
 
-	if _, err := agent.Run(context.Background(), "hello"); err == nil {
+	if _, err := agent.Send(context.Background(), "hello").Result(); err == nil {
 		t.Fatal("expected instructions path/content conflict to fail")
 	}
 	if fake.runCount() != 0 {
@@ -169,7 +169,7 @@ func TestInstructionPathFingerprintChangesWithFileContent(t *testing.T) {
 		Instructions: &profile.Instructions{ID: "team", Path: path},
 	}))
 
-	if _, err := agent.Run(ctx, "hello"); err != nil {
+	if _, err := agent.Send(ctx, "hello").Result(); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	firstPayload := fake.request(t, 0).ProfilePayload
@@ -181,7 +181,7 @@ func TestInstructionPathFingerprintChangesWithFileContent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("version two"), 0o644); err != nil {
 		t.Fatalf("write instructions v2: %v", err)
 	}
-	if _, err := agent.Run(ctx, "hello"); err != nil {
+	if _, err := agent.Send(ctx, "hello").Result(); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	secondPayload := fake.request(t, 1).ProfilePayload
@@ -204,7 +204,7 @@ func TestAgentSourcePathFingerprintChangesWithFileContent(t *testing.T) {
 		Agents: []profile.SubAgent{{Key: "reviewer", SourcePath: path}},
 	}))
 
-	if _, err := agent.Run(ctx, "hello"); err != nil {
+	if _, err := agent.Send(ctx, "hello").Result(); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	firstPayload := fake.request(t, 0).ProfilePayload
@@ -217,7 +217,7 @@ func TestAgentSourcePathFingerprintChangesWithFileContent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("review version two"), 0o644); err != nil {
 		t.Fatalf("write agent v2: %v", err)
 	}
-	if _, err := agent.Run(ctx, "hello"); err != nil {
+	if _, err := agent.Send(ctx, "hello").Result(); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	secondPayload := fake.request(t, 1).ProfilePayload
@@ -244,7 +244,7 @@ func TestAgentSourcePathFingerprintChangesWithDirectoryContent(t *testing.T) {
 		Agents: []profile.SubAgent{{Key: "reviewer", SourcePath: sourceDir}},
 	}))
 
-	if _, err := agent.Run(ctx, "hello"); err != nil {
+	if _, err := agent.Send(ctx, "hello").Result(); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	firstPayload := fake.request(t, 0).ProfilePayload
@@ -257,7 +257,7 @@ func TestAgentSourcePathFingerprintChangesWithDirectoryContent(t *testing.T) {
 	if err := os.WriteFile(path, []byte("review version two"), 0o644); err != nil {
 		t.Fatalf("write agent v2: %v", err)
 	}
-	if _, err := agent.Run(ctx, "hello"); err != nil {
+	if _, err := agent.Send(ctx, "hello").Result(); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	secondPayload := fake.request(t, 1).ProfilePayload
@@ -285,7 +285,7 @@ func TestProfileResourcesRejectConfigCapabilityAndNativeTarget(t *testing.T) {
 		}},
 	}))
 
-	if _, err := agent.Run(context.Background(), "hello"); err == nil {
+	if _, err := agent.Send(context.Background(), "hello").Result(); err == nil {
 		t.Fatal("expected config capability/native conflict to fail")
 	}
 	if fake.runCount() != 0 {

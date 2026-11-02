@@ -37,7 +37,7 @@ type TerminalPayload struct {
 //   - Stdout / Stderr hold the full untruncated bytes the child process wrote.
 //   - No redaction, no semantic parsing, no line-wise transformation is applied.
 //   - Terminal is nil when no official terminal event was observed.
-//   - Both consumer Run and Stream.Result must return equivalent values.
+//   - Stream.Result and Done from the same Send expose the same audit data.
 type RawStreams struct {
 	Stdout   string
 	Stderr   string
@@ -96,8 +96,8 @@ type Request struct {
 
 	// Streaming selects a provider-native streaming transport after the core
 	// has resolved the invocation. It is not derived from whether the consumer
-	// called Agent.Run or Agent.Stream: both consumer methods share one Event
-	// pipeline, and either may use a batch or streaming provider transport.
+	// calls Result or consumes Events: both use one Send execution pipeline,
+	// which may use a batch or streaming provider transport.
 	// Drivers that implement StreamSupport should use their declared native
 	// transport when this field is true.
 	//
@@ -105,6 +105,11 @@ type Request struct {
 	// this field. The public Event stream remains available, but it will not
 	// contain provider-native normalized deltas from that capability.
 	Streaming bool
+
+	// Messages is the run-scoped message port. It is non-nil only when core
+	// enabled in-run message delivery for this invocation; Drivers that
+	// declare no MessageCapability may ignore it. See MessagePort.
+	Messages MessagePort
 }
 
 // Response is the driver-facing execution result.
@@ -144,8 +149,8 @@ type Response struct {
 }
 
 // SessionMode controls how the SDK coordinates an invocation with a Thread
-// store. Without a Thread store, runs are stateless and stateful modes return
-// an error rather than silently pretending to resume.
+// store. Agent.Send uses an anonymous, stateless invocation; named Threads use
+// the Agent's default memory store or a store explicitly supplied by the host.
 type SessionMode string
 
 const (
@@ -232,7 +237,7 @@ func (f *RunFailure) IsRejected() bool {
 
 // IsTimedOut reports whether the failure is a HITL decision timeout
 // (OnTimeout=FailureAbort path). It is distinct from context.DeadlineExceeded
-// on the outer context, which is returned by Run or Stream.Result. nil-safe.
+// on the outer context, which is returned by Driver.Run and Stream.Result. nil-safe.
 func (f *RunFailure) IsTimedOut() bool {
 	return f != nil && f.Code == FailureTimeout
 }

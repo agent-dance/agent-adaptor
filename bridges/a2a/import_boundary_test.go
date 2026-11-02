@@ -22,13 +22,13 @@ func TestBridgeProductionImportBoundary(t *testing.T) {
 	}
 	bridgesRoot := filepath.Dir(filepath.Dir(thisFile))
 	forbiddenExact := map[string]struct{}{
-		"github.com/agent-dance/agent-adaptor/clients/a2a": {},
+		"github.com/agent-dance/agent-adaptor/v2/clients/a2a": {},
 	}
 	forbiddenPrefixes := []string{
-		"github.com/agent-dance/agent-adaptor/claude",
-		"github.com/agent-dance/agent-adaptor/codebuddy",
-		"github.com/agent-dance/agent-adaptor/codex",
-		"github.com/agent-dance/agent-adaptor/cursor",
+		"github.com/agent-dance/agent-adaptor/v2/claude",
+		"github.com/agent-dance/agent-adaptor/v2/codebuddy",
+		"github.com/agent-dance/agent-adaptor/v2/codex",
+		"github.com/agent-dance/agent-adaptor/v2/cursor",
 	}
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(bridgesRoot, func(path string, entry fs.DirEntry, walkErr error) error {

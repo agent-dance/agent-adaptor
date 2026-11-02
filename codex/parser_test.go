@@ -10,8 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 type recordingSink struct {
@@ -388,65 +387,6 @@ func TestCodexParserOfficialToolItemPhasesAndResults(t *testing.T) {
 	}
 	if tools[6].ToolName != "web_search" || tools[7].Kind != driver.TranscriptToolResult {
 		t.Fatalf("web_search lifecycle mismatch: call=%#v result=%#v", tools[6], tools[7])
-	}
-}
-
-func TestCodexNativeStructuredOutputRequiresOfficialTerminalAndCleanOutcome(t *testing.T) {
-	message := `{"type":"item.completed","item":{"id":"msg","type":"agent_message","text":"{\"ok\":true}"}}`
-	official := "{\"type\":\"thread.started\",\"thread_id\":\"t\"}\n" + message + "\n{\"type\":\"turn.completed\"}\n"
-
-	tests := []struct {
-		name     string
-		stdout   string
-		exitCode int
-		signal   string
-		timedOut bool
-		failure  *driver.RunFailure
-	}{
-		{name: "clean", stdout: official},
-		{name: "missing terminal", stdout: message + "\n", exitCode: 0},
-		{name: "synthetic top-level result", stdout: message + "\n{\"type\":\"result\",\"result\":{\"ok\":true}}\n"},
-		{name: "failed terminal", stdout: message + "\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"failed\"}}\n"},
-		{name: "malformed protocol", stdout: "{broken\n" + official},
-		{name: "event after terminal", stdout: official + message + "\n"},
-		{name: "nonzero exit", stdout: official, exitCode: 2},
-		{name: "signal", stdout: official, signal: "SIGTERM"},
-		{name: "timeout", stdout: official, timedOut: true},
-		{name: "business failure", stdout: official, failure: &driver.RunFailure{Code: driver.FailureAgentError}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := snapshotCodexStdout(tc.stdout).nativeStructuredOutputForOutcome(tc.exitCode, tc.signal, tc.timedOut, tc.failure)
-			if tc.name == "clean" {
-				if got == nil || string(got.RawJSON) != `{"ok":true}` {
-					t.Fatalf("clean official outcome = %#v", got)
-				}
-				return
-			}
-			if got != nil {
-				t.Fatalf("unsafe outcome exposed structured output %#v", got)
-			}
-		})
-	}
-}
-
-func TestCodexInvalidNativeJSONIsRejectedByCoreSchemaValidator(t *testing.T) {
-	parsed := snapshotCodexStdout("{\"type\":\"thread.started\",\"thread_id\":\"t-invalid\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"not json\"}}\n{\"type\":\"turn.completed\"}\n")
-	candidate := parsed.nativeStructuredOutputForOutcome(0, "", false, nil)
-	if candidate == nil || string(candidate.RawJSON) != "not json" {
-		t.Fatalf("parser must preserve invalid candidate for core diagnostics, got %#v", candidate)
-	}
-	schema := &driver.OutputSchema{
-		Format:     driver.OutputFormatJSONSchema,
-		SchemaJSON: json.RawMessage(`{"type":"object"}`),
-		OnInvalid:  driver.StructuredOutputFailRun,
-	}
-	validated, failure := engine.FinalizeStructuredOutput(schema, driver.StructuredOutputSourceNative, parsed.buildOutput(), candidate, nil)
-	if validated == nil || validated.Valid || len(validated.ValidationErrors) == 0 || failure == nil || failure.Code != driver.FailurePolicyError {
-		t.Fatalf("invalid native JSON escaped core validation: value=%#v failure=%#v", validated, failure)
-	}
-	if checkpoint := parsed.checkpointForOutcome(0, "", false, failure); checkpoint != nil {
-		t.Fatalf("structured-output policy failure produced a checkpoint: %#v", checkpoint)
 	}
 }
 

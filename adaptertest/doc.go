@@ -11,6 +11,7 @@
 //			adaptertest.WithConfig(mydriver.Config{Model: "m-1"}),
 //			adaptertest.WithSessionState(&driver.SessionState{...}),
 //			adaptertest.WithGuardKeys("cwd"),
+//			adaptertest.WithMessageFixture("streaming", myMessageFixture),
 //		)
 //	}
 //
@@ -68,7 +69,7 @@
 // driver/output.go; engine resolution in internal/engine/structured.go):
 //
 //	SO-01  WorksWith* flags require a declared JSONSchema* mechanism, and a
-//	       declared mechanism requires WorksWithRun for v1's one execution
+//	       declared mechanism requires WorksWithRun for v2's one Send execution
 //	       pipeline. Core selects native enforcement first and Prompt
 //	       validation as the fallback. Provider streaming and effective HITL
 //	       Ask additionally require WorksWithStreaming and WorksWithHITL.
@@ -76,6 +77,72 @@
 //	       Source=native, Valid=true and parseable RawJSON.
 //	SO-03  Suite guarantee: no probe requests a mechanism or transport shape
 //	       the descriptor does not declare.
+//
+// Message delivery (driver/messages.go; hermetic WithMessageFixture):
+//
+// MSG-01  Boundaries, ContinueMode and size units are valid; Interrupt implies
+//
+//	immediate; persisted guidance implies resume support.
+//
+// MSG-02  The resolved capability is deterministic and contained in Descriptor;
+//
+//	every declared boundary/Interrupt is exercised by a request fixture;
+//	no claim at a resolved-away boundary. Nil Request.Messages works.
+//
+// MSG-03  Provider-confirmed windows precede claims and are closed at Run return.
+//
+//	Turn-end claims may follow a closed active-turn window. An initial
+//	Window(false) is permitted; subsequent window changes alternate.
+//
+// MSG-04  Each claim is acked exactly once before Run returns, on success,
+//
+//	delivery-write failure, process exit, cancellation and timeout; no
+//	unknown Ack, double claim or use of a finished port. Requeue settles an
+//	attempt and permits another claim of that ID at turn_end; each attempt
+//	needs its own Ack. Provider receipts preserve claim order, within and
+//	across batches, independently of Ack order.
+//
+// MSG-05  Delivered requires verbatim provider input and a concrete mechanism;
+//
+//	failed requires Err. Requeue of possibly received input requires
+//	MaybeDelivered; only proven rejection/non-receipt permits plain retry.
+//	The next attempt after MaybeDelivered carries MaybeDuplicate. Provider
+//	evidence is scoped per attempt so a later receipt cannot prove an
+//	earlier delivery or turn a safe rejection into ambiguous acceptance.
+//
+// MSG-06  ConfirmedDelivery requires an official echo; the missing-echo script
+//
+//	must not acknowledge delivery merely because an HTTP/pipe write worked.
+//
+// MSG-07  Exactly one TurnCompleted per observed provider turn, including in-run
+//
+//	continuations, contiguous zero-based Index, nonzero CompletedAt, and
+//	preserved text, observed Usage (including nil vs zero), Interrupted.
+//
+// MSG-08  ContinueInRun claims turn_end and starts subsequent provider turns in
+//
+//	the same Run. ContinueResume leaves items to core; the kit models a
+//	core dispatch with the healthy checkpoint and verbatim pending prompt,
+//	and checks the fake actually observed resume/reused conversation.
+//
+// MSG-09  Framed admission uses bytes (including the empty-unit default) or
+//
+//	UTF-16 correctly. Exact-limit input fits; limit+1 is deferred. Batches
+//	of individually fitting inputs are settled without truncation or false
+//	delivery; an aggregate transport limit may defer later inputs.
+//
+// MSG-10  PersistsDelivered requires independently observed retained guidance
+//
+//	after checkpoint resume, for both boundary and core-resumed inputs.
+//
+// A message fixture supplies a configured real Driver, a resolved request shape,
+// and observations from its scripted fake CLI. The kit supplies the port and
+// chooses all scenarios implied by that shape's resolved capability. See
+// NewReferenceMessageFixture and ScriptedMessagePort. Supply multiple fixtures
+// for transport/workspace-dependent resolution; fixtures collectively cover the
+// static declaration. Only MSG-01 runs without a fixture; execution is explicitly
+// skipped, so a fixture-free suite is not message-conformance evidence. These
+// hermetic clauses do not verify actual CLI versions or replace gated live runs.
 //
 // Session codec (driver/session_codec.go; driver/run.go SessionState):
 //

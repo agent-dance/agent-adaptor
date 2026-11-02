@@ -1,0 +1,133 @@
+package mentionroute
+
+import (
+	"fmt"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+)
+
+func checkKeys(t *testing.T, text string, keys, want []string) {
+	t.Helper()
+	before := append([]string(nil), keys...)
+	got := Extract(text, keys)
+	if len(got) != len(want) || len(want) != 0 && !reflect.DeepEqual(got, want) {
+		t.Fatalf("Extract(%q, %q) = %q; want %q", text, keys, got, want)
+	}
+	if len(keys) != len(before) || len(keys) != 0 && !reflect.DeepEqual(keys, before) {
+		t.Fatalf("Extract changed input keys: before %q, after %q", before, keys)
+	}
+}
+
+func TestAcceptanceR1LiteralUTF8(t *testing.T) {
+	keys := []string{"Dev", "dev", "dev.ops+", "工程師", "🧪", "café", "cafe\u0301", "", "bad key", "a@b", "bad\\key", string([]byte{255})}
+	checkKeys(t, "@工程師 @Dev @dev.ops+ @🧪 @cafe\u0301 @café @dev @DEV", keys,
+		[]string{"工程師", "Dev", "dev.ops+", "🧪", "cafe\u0301", "café", "dev"})
+	checkKeys(t, "@bad key @a@b @bad\\key", keys, nil)
+	checkKeys(t, "@dev "+string([]byte{255})+" @Dev", keys, nil)
+	checkKeys(t, "@dev", nil, nil)
+}
+
+func TestAcceptanceR2BoundariesAndLongest(t *testing.T) {
+	keys := []string{"dev", "dev.ops", "dev.ops+", "工程", "工程師", "é", "alice"}
+	checkKeys(t, "(@dev), @dev.ops+! @工程師 @é?", keys, []string{"dev", "dev.ops+", "工程師", "é"})
+	checkKeys(t, "x@alice 7@alice _@alice -@alice .@alice +@alice @@alice 字@alice \u0301@alice", keys, nil)
+	checkKeys(t, "@alice2 @alice-x @alice_ @alice字 @alice\u0301 @工程師字", keys, nil)
+	checkKeys(t, "@alice. @é+", keys, []string{"alice", "é"})
+	checkKeys(t, "@devX @dev-ops @dev_ops @dev.ops+", keys, []string{"dev.ops+"})
+}
+
+func TestAcceptanceR3DeduplicationOrder(t *testing.T) {
+	checkKeys(t, "@c @b @c @a @b", []string{"a", "b", "c", "b"}, []string{"c", "b", "a"})
+	checkKeys(t, "no explicit target", []string{"a", "b"}, nil)
+	checkKeys(t, "", []string{"a"}, nil)
+}
+
+func TestAcceptanceR4InlineCode(t *testing.T) {
+	bt := "\x60"
+	keys := []string{"a", "b", "c"}
+	checkKeys(t, "@a "+bt+"@b"+bt+" @c", keys, []string{"a", "c"})
+	checkKeys(t, bt+bt+"@b "+bt+"@c"+bt+" "+bt+bt+" @a", keys, []string{"a"})
+	checkKeys(t, "@a "+bt+"@b\n@c", keys, []string{"a", "c"})
+	checkKeys(t, bt+"@a"+bt+bt+" @b"+bt+" @c", keys, []string{"c"})
+}
+
+func TestAcceptanceR5FencedCode(t *testing.T) {
+	bt := "\x60"
+	keys := []string{"a", "b", "c"}
+	text := strings.Join([]string{
+		"@a", bt+bt+bt+"go @b", "@b", "  "+bt+bt+bt+"  ", "@c",
+	}, "\n")
+	checkKeys(t, text, keys, []string{"a", "c"})
+	checkKeys(t, "~~~txt\r\n@b\r\n   ~~~~\t\r\n@a", keys, []string{"a"})
+	text = strings.Join([]string{
+		bt+bt+bt+bt, "@b", bt+bt+bt, "@c", bt+bt+bt+bt+" trailing", "@a", bt+bt+bt+bt+bt, "@c",
+	}, "\n")
+	checkKeys(t, text, keys, []string{"c"})
+	checkKeys(t, "@a\n~~~\n@b\n"+bt+bt+bt+"\n@c", keys, []string{"a"})
+}
+
+func TestAcceptanceR6QuotesEmailEscapes(t *testing.T) {
+	keys := []string{"a", "b", "example", "dev"}
+	checkKeys(t, "> @a\n \t> @b\n@dev\n'@a'", keys, []string{"dev", "a"})
+	checkKeys(t, "alice@example alice+tag@example x.y@example @dev", keys, []string{"dev"})
+	checkKeys(t, "\\@a \\\\@b \\\\\\@dev", keys, []string{"b"})
+	bt := "\x60"
+	checkKeys(t, "> "+bt+bt+bt+"\n@a", keys, []string{"a"})
+	checkKeys(t, bt+bt+bt+"\n> "+bt+bt+bt+"\n@b\n"+bt+bt+bt+"\n@a", keys, []string{"a"})
+}
+
+func checkDeliveries(t *testing.T, state State, author Author, text string, keys []string, want []Delivery) {
+	t.Helper()
+	got := Route(state, author, text, keys)
+	if len(got) != len(want) || len(want) != 0 && !reflect.DeepEqual(got, want) {
+		t.Fatalf("Route(%q,%q,%q) = %+v; want %+v", state, author, text, got, want)
+	}
+}
+
+func TestAcceptanceR7HumanRouting(t *testing.T) {
+	keys := []string{"a", "b"}
+	for _, tt := range []struct { state State; when string }{
+		{Pending, "start"}, {Busy, "soon"}, {Finished, "new"},
+	} {
+		t.Run(string(tt.state), func(t *testing.T) {
+			checkDeliveries(t, tt.state, Human, "@b @a @b", keys,
+				[]Delivery{{Key: "b", When: tt.when}, {Key: "a", When: tt.when}})
+			checkDeliveries(t, tt.state, Human, "plain comment", keys, nil)
+			checkDeliveries(t, tt.state, Human, "alice@a", keys, nil)
+		})
+	}
+}
+
+func TestAcceptanceR8AgentAuthority(t *testing.T) {
+	keys := []string{"a", "b"}
+	checkDeliveries(t, Busy, Agent, "@b @a", keys, []Delivery{{Key: "b", When: "soon"}, {Key: "a", When: "soon"}})
+	for _, tt := range []struct { state State; author Author }{
+		{Pending, Agent}, {Finished, Agent}, {State("unknown"), Human},
+		{State(""), Human}, {Busy, Author("unknown")}, {Busy, Author("")},
+		{State("unknown"), Agent},
+	} {
+		checkDeliveries(t, tt.state, tt.author, "@a", keys, nil)
+	}
+	checkKeys(t, "@a", keys, []string{"a"})
+}
+
+func TestAcceptanceConcurrentIndependentCalls(t *testing.T) {
+	var workers sync.WaitGroup
+	for i := 0; i < 24; i++ {
+		workers.Add(1)
+		go func(i int) {
+			defer workers.Done()
+			key := fmt.Sprintf("worker%d", i)
+			for n := 0; n < 20; n++ {
+				got := Route(Busy, Agent, "@"+key+" @other", []string{key})
+				if len(got) != 1 || got[0] != (Delivery{Key: key, When: "soon"}) {
+					t.Errorf("independent call %d produced %+v", i, got)
+					return
+				}
+			}
+		}(i)
+	}
+	workers.Wait()
+}

@@ -3,10 +3,10 @@ package cursor
 import (
 	"path/filepath"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
-	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/v2/internal/skillruntime"
 )
 
 func canonicalSharedCursorHome(bindings []driver.EnvBinding) string {
