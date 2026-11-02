@@ -104,10 +104,7 @@ jobs:
       with:
         node-version: 22
         cache: npm
-        cache-dependency-path: |
-          examples/web-chat/aguiclient/web/package-lock.json
-          examples/web-chat/copilotkit/web/package-lock.json
-          examples/web-chat/assistant-ui/web/package-lock.json
+        cache-dependency-path: examples/web-chat/assistant-ui/web/package-lock.json
 
     - name: Install assistant-ui dependencies
       run: npm ci
@@ -125,32 +122,6 @@ jobs:
         AGENT_ADAPTOR_LIVE_CONFORMANCE: "0"
         AGUI_TEST_NO_SOCKETS: "0"
 
-    - name: Install AG-UI client dependencies
-      run: npm ci
-      working-directory: examples/web-chat/aguiclient/web
-
-    - name: Build AG-UI client
-      run: npm run build
-      working-directory: examples/web-chat/aguiclient/web
-
-    - name: Audit AG-UI production dependencies
+    - name: Audit assistant-ui production dependencies
       run: npm audit --omit=dev --audit-level=high
-      working-directory: examples/web-chat/aguiclient/web
-
-    - name: Install CopilotKit dependencies
-      run: npm ci
-      working-directory: examples/web-chat/copilotkit/web
-
-    - name: Lint CopilotKit frontend
-      run: npm run lint
-      working-directory: examples/web-chat/copilotkit/web
-
-    - name: Build CopilotKit frontend
-      run: npm run build
-      working-directory: examples/web-chat/copilotkit/web
-      env:
-        COPILOTKIT_TELEMETRY_DISABLED: "true"
-
-    - name: Audit CopilotKit production dependencies
-      run: npm audit --omit=dev --audit-level=high
-      working-directory: examples/web-chat/copilotkit/web
+      working-directory: examples/web-chat/assistant-ui/web

@@ -476,3 +476,42 @@ func dropSubmittedUser(sig []string, id string) []string {
 	}
 	return out
 }
+
+// approvalDriver asks for a decision before emitting anything, so the request
+// can race the drain's boundary and user-turn recording.
+type approvalDriver struct{ steerDriver }
+
+func (d *approvalDriver) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+	resp, err := sink.(driver.DecisionCapableSink).RequestDecision(ctx, driver.DecisionRequest{
+		RequestID: "fast", RunID: req.RunID, Kind: driver.HumanDecisionPermission, Source: "shell", Prompt: "allow?"})
+	if err != nil {
+		return driver.Response{}, err
+	}
+	text := string(resp.Result)
+	_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Text: text, CompletedAt: time.Now()}})
+	return driver.Response{Output: text, Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "approval"}}}, nil
+}
+
+// slowRecorder models durable storage latency during boundary recording.
+type slowRecorder struct{ sessionrecorder.EventRecorder }
+
+func (r slowRecorder) Record(ctx context.Context, key string, ev adaptor.Event) (sessionrecorder.EventRecord, error) {
+	time.Sleep(10 * time.Millisecond)
+	return r.EventRecorder.Record(ctx, key, ev)
+}
+
+func TestImmediateApprovalReachesTheHost(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		agent := adaptor.New(&approvalDriver{})
+		s := New(agent, Options{Recorder: slowRecorder{recorder(t)}, Observe: func(_ string, ev adaptor.Event) {
+			if req, ok := ev.(*adaptor.ApprovalRequest); ok {
+				go func() { _ = req.Approve(context.Background()) }()
+			}
+		}})
+		w := request(s, "t", "r1", []Message{user("u1", "start")})
+		_ = agent.Close(context.Background())
+		if !strings.Contains(w.Body.String(), `"delta":"approved"`) || strings.Contains(w.Body.String(), "timeout fallback") {
+			t.Fatalf("approval was not routed to the host:\n%s", w.Body)
+		}
+	}
+}

@@ -80,11 +80,18 @@ func newApplication(ctx context.Context, c config) (*application, error) {
 	if health.Mode == "fake" {
 		projection = []agui.EventTranslatorOption{agui.WithProjectionHook(scriptedActivity)}
 	}
-	session := aguisession.New(ai, aguisession.Options{Recorder: rec, Resolve: resolve, Events: projection, Unattended: c.unattended, BaseContext: ctx, KeepAlivePing: 10 * time.Second})
+	decisions := newApprovals(resolve)
+	session := aguisession.New(ai, aguisession.Options{Recorder: rec, Resolve: resolve, Events: projection,
+		Unattended: c.unattended, BaseContext: ctx, KeepAlivePing: 10 * time.Second,
+		Observe: decisions.observe, OnRunEnd: decisions.end})
 	mux := http.NewServeMux()
 	mux.Handle("/agent", session.Handler())
 	// In-run guidance for the active run; delivery receipts stay on its stream.
 	mux.Handle("/message", session.MessageHandler())
+	// Human-in-the-loop: decisions appear as "dec.*" tool calls on the wire and
+	// are answered through this host-owned companion endpoint.
+	mux.Handle("/decision/pending", decisions.pendingHandler())
+	mux.Handle("/decision/resolve", decisions.resolveHandler())
 	mux.Handle("/history", session.MessagesHandler())
 	mux.Handle("/events", session.EventsHandler())
 	if c.observation {

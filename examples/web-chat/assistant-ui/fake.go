@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
@@ -73,6 +74,9 @@ func (d scriptedDriver) Run(ctx context.Context, req driver.Request, sink driver
 		p.ThreadID = providerID
 		return sink.EmitStream(p)
 	}
+	if strings.Contains(strings.ToLower(req.Prompt), "approval") {
+		return d.approvalTurn(ctx, req, sink, emit, turn, providerID)
+	}
 	text := "**Turn 1:** I will check 13 commands."
 	if turn > 1 {
 		text = fmt.Sprintf("Turn %d continues turn 1 on the same Thread using checkpoint %d. Command 13 failed with exit code 1.", turn, turn-1)
@@ -105,6 +109,42 @@ func (d scriptedDriver) Run(ctx context.Context, req driver.Request, sink driver
 	// is delivered at its end by resuming the checkpoint in the same execution.
 	_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Text: text, CompletedAt: time.Now().UTC()}})
 	return driver.Response{Output: text, Summary: fmt.Sprintf("Scripted turn %d", turn), Provider: "script", Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: providerID, Data: map[string]string{"turn": strconv.Itoa(turn)}}}}, nil
+}
+
+// approvalTurn demonstrates human-in-the-loop: it asks the host to approve a
+// simulated deploy and reports the decision. Nothing is executed.
+func (d scriptedDriver) approvalTurn(ctx context.Context, req driver.Request, sink driver.EventSink, emit func(driver.StreamPayload) error, turn int, providerID string) (driver.Response, error) {
+	decider, ok := sink.(driver.DecisionCapableSink)
+	if !ok {
+		return driver.Response{}, fmt.Errorf("scripted approval requires a decision-capable sink")
+	}
+	for _, p := range []driver.StreamPayload{{Kind: driver.StreamRunStarted},
+		{Kind: driver.StreamTextStart, MessageID: "answer"}, {Kind: driver.StreamTextContent, MessageID: "answer", Delta: "I need your approval before the simulated deploy."}, {Kind: driver.StreamTextEnd, MessageID: "answer"},
+		{Kind: driver.StreamToolCallStart, ToolCallID: "deploy", Name: "shell", Args: map[string]any{"command": "deploy --demo"}}, {Kind: driver.StreamToolCallEnd, ToolCallID: "deploy", Name: "shell"}} {
+		if err := emit(p); err != nil {
+			return driver.Response{}, err
+		}
+	}
+	response, err := decider.RequestDecision(ctx, driver.DecisionRequest{RequestID: "deploy-" + req.RunID, RunID: req.RunID,
+		Kind: driver.HumanDecisionPermission, Source: "shell", ToolCallID: "deploy", Prompt: "Run the simulated deploy?",
+		Payload: map[string]any{"command": "deploy --demo"}})
+	if err != nil {
+		return driver.Response{}, err
+	}
+	approved := response.Result == driver.DecisionApproved
+	output, exit, text := "deployed (simulated)", 0, "Approved: the simulated deploy finished."
+	if !approved {
+		output, exit, text = "deploy skipped", 1, fmt.Sprintf("Not approved (%s); nothing was deployed.", response.Result)
+	}
+	for _, p := range []driver.StreamPayload{{Kind: driver.StreamToolCallResult, ToolCallID: "deploy", Name: "shell", Result: map[string]any{"output": output, "exitCode": exit}},
+		{Kind: driver.StreamTextStart, MessageID: "outcome"}, {Kind: driver.StreamTextContent, MessageID: "outcome", Delta: text}, {Kind: driver.StreamTextEnd, MessageID: "outcome"},
+		{Kind: driver.StreamRunFinished}} {
+		if err := emit(p); err != nil {
+			return driver.Response{}, err
+		}
+	}
+	_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Text: text, CompletedAt: time.Now().UTC()}})
+	return driver.Response{Output: text, Provider: "script", Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: providerID, Data: map[string]string{"turn": strconv.Itoa(turn)}}}}, nil
 }
 
 type scriptCodec struct{}

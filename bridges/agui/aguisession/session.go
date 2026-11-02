@@ -571,6 +571,11 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 		defer s.opts.OnRunEnd(key)
 	}
 	defer s.closeLive(key, live)
+	// Subscribe before any recorder I/O. v2 resolves an approval through its
+	// timeout fallback, and summarizes ordinary events as Dropped, when nobody
+	// has called Events yet; a fast Driver can reach either during boundary
+	// and user-turn recording.
+	source := stream.Events()
 	p := newProjector(s.opts.Events)
 	send := func(es []events.Event) {
 		if out == nil {
@@ -641,7 +646,6 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 			adaptor.EventMeta{RunID: stream.RunID(), ThreadKey: key},
 		), false)
 	}
-	source := stream.Events()
 	for source != nil {
 		select {
 		case sup := <-live.inbox:

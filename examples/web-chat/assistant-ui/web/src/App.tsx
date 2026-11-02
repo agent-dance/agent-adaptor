@@ -6,8 +6,35 @@ import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import { checkedFetch, createHistory, messageUpdate, repository, runNotice, sendGuidance, toolOutcome, withoutUserEchoes, type Guidance, type RunNotice, type ToolOutcome } from "./session";
 
 export const Outcomes = createContext<ReadonlyMap<string, ToolOutcome>>(new Map());
+export const ThreadId = createContext("");
+// A human decision is projected as a "dec.<kind>.<source>" tool call whose
+// result arrives once it is resolved. Pending ones answer through the host's
+// companion endpoint; the run continues on its own SSE stream.
+export function Decision({ argsText, result }: Pick<ToolCallMessagePartProps, "argsText" | "result">) {
+  const threadId = useContext(ThreadId);
+  const [state, setState] = useState<string>();
+  let args: Record<string, unknown> = {};
+  try { args = JSON.parse(argsText) as Record<string, unknown>; } catch { /* streaming args */ }
+  const requestId = typeof args.request_id === "string" ? args.request_id : "";
+  async function decide(decision: "approve" | "deny") {
+    setState("sending");
+    try {
+      const response = await fetch("/decision/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ threadId, requestId, result: decision }) });
+      setState(response.ok ? `${decision === "approve" ? "Approved" : "Denied"} · waiting for the run` : `Not accepted: HTTP ${response.status} ${await response.text()}`);
+    } catch (e) { setState(`Not accepted: ${String(e)}`); }
+  }
+  const pending = result === undefined && requestId !== "";
+  return <section className="tool decision" data-status={pending ? "pending" : "resolved"}>
+    <strong>Approval needed · {typeof args.kind === "string" ? args.kind : "decision"}</strong>
+    <p>{typeof args.prompt === "string" ? args.prompt : "The agent is waiting for a decision."}</p>
+    {pending && !state && <div className="actions"><button onClick={() => void decide("approve")}>Approve</button><button onClick={() => void decide("deny")}>Deny</button></div>}
+    {state && <p role="status">{state}</p>}
+    {result !== undefined && <pre>{typeof result === "string" ? result : JSON.stringify(result, null, 2)}</pre>}
+  </section>;
+}
 export function Shell({ toolCallId, toolName, argsText, result, isError, status }: ToolCallMessagePartProps) {
   const live = useContext(Outcomes).get(toolCallId);
+  if (toolName.startsWith("dec.")) return <Decision argsText={argsText} result={result} />;
   const failed = isError || live?.status === "failed" || status.type === "incomplete";
   const label = failed ? "Failed" : live?.status === "cancelled" ? "Cancelled" : result !== undefined ? "Succeeded" : "Running";
   return <section className={`tool ${failed ? "failed" : ""}`} data-status={label.toLowerCase()}>
@@ -75,12 +102,14 @@ function ChatMessage() {
   const content = useAuiState((s) => s.message.content);
   const outcomes = useContext(Outcomes);
   const failed = content.some((p) => p.type === "tool-call" && (p.isError || outcomes.get(p.toolCallId)?.status === "failed"));
+  // A pending human decision must stay visible, not folded into the tool group.
+  const deciding = content.some((p) => p.type === "tool-call" && p.toolName.startsWith("dec.") && p.result === undefined);
   return <MessagePrimitive.Root className={`message ${role}`}>
     <div className="role">{role}</div>
     <MessagePrimitive.GroupedParts groupBy={groupBy}>
       {({ part, children }) => {
         switch (part.type) {
-          case "group-tools": return <details className="tool-group"><summary>{part.indices.length} commands{failed ? " · failed command" : ""} · expand for results</summary>{children}</details>;
+          case "group-tools": return <details className="tool-group" open={deciding || undefined}><summary>{part.indices.length} commands{failed ? " · failed command" : ""}{deciding ? " · approval needed" : " · expand for results"}</summary>{children}</details>;
           case "group-reasoning": return <details className="reasoning"><summary>Reasoning</summary>{children}</details>;
           case "text": return <MarkdownTextPrimitive />;
           case "reasoning": return <p>{part.text}</p>;
@@ -156,7 +185,7 @@ export function App({ threadId }: { threadId: string }) {
     catch (e) { showError(String(e)); }
   }
   function newThread() { const url = new URL(location.href); url.searchParams.set("thread", crypto.randomUUID()); location.assign(url); }
-  return <AssistantRuntimeProvider runtime={runtime}><Outcomes.Provider value={outcomes}>
+  return <AssistantRuntimeProvider runtime={runtime}><ThreadId.Provider value={threadId}><Outcomes.Provider value={outcomes}>
     <main><header><div><p className="eyebrow">agent-adaptor · assistant-ui</p><h1>A conversation that stays.</h1><p className="muted">Thread <code>{threadId}</code> · reload to restore history{unattended ? " or join the active run" : ""}.</p></div><button onClick={newThread}>New thread</button></header>
       {notice && <RunNoticeView notice={notice} dismiss={() => setNotice(undefined)} />}
       <ThreadPrimitive.Root><ThreadPrimitive.Viewport>
@@ -168,5 +197,5 @@ export function App({ threadId }: { threadId: string }) {
       </ThreadPrimitive.Root>
       <footer>{copy.footer}</footer>
     </main>
-  </Outcomes.Provider></AssistantRuntimeProvider>;
+  </Outcomes.Provider></ThreadId.Provider></AssistantRuntimeProvider>;
 }

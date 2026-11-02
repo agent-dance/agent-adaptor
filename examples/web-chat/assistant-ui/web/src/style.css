@@ -42,3 +42,5 @@ footer { margin-top: 1rem; text-align: center; }
 .guidance li button { margin-left: .5rem; padding: .2rem .6rem; }
 .subagent summary { font-weight: 600; }
 .subagent-text { white-space: pre-wrap; margin: .5rem 0; }
+.decision { border-left-color: #a7802e; background: #fffaf0; }
+.decision p { margin: .4rem 0; }

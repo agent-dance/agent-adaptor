@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     proxy: Object.fromEntries(
-      ["/agent", "/message", "/history", "/events", "/snapshot", "/observe", "/cancel", "/health"]
+      ["/agent", "/message", "/decision", "/history", "/events", "/snapshot", "/observe", "/cancel", "/health"]
         .map((path) => [path, backend]),
     ),
   },
