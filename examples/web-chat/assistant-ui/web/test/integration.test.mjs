@@ -175,3 +175,53 @@ test("HTTP official client: turns, durable restart, validation, observation and 
   const terminal = cancelHistory.flatMap((r) => r.events ?? []).at(-1);
   assert.equal(terminal.type, "RUN_ERROR"); assert.equal(terminal.code, "run.cancelled");
 });
+
+test("HTTP official client: in-run guidance is delivered, echoed live and recorded in history", { skip: process.env.AGUI_TEST_NO_SOCKETS === "1", timeout: 120000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "agui-assistant-ui-guidance-"));
+  let child;
+  t.after(async () => { try { if (child) await stop(child); } finally { await rm(dir, { recursive: true, force: true }); } });
+  const binary = join(dir, "server");
+  const built = spawnSync("go", ["build", "-o", binary, "./examples/web-chat/assistant-ui"], { cwd: root, encoding: "utf8" });
+  assert.equal(built.status, 0, built.stderr || built.error?.message);
+  const port = await freePort(); const base = `http://127.0.0.1:${port}`;
+  child = spawn(binary, ["-addr", `127.0.0.1:${port}`, "-data-dir", join(dir, "data"), "-agent", "fake", "-pace", "20ms"], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
+  let logs = ""; child.stderr.on("data", (d) => { logs += d; });
+  await eventually(async () => { if (child.exitCode !== null) assert.fail(logs); try { return await fetch(`${base}/health`); } catch { return null; } }, (r) => r?.ok, "server did not start");
+  const guide = (messageId, text) => fetch(`${base}/message`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ threadId: "guided", messageId, text }) });
+
+  const inactive = await guide("early", "too early");
+  assert.equal(inactive.status, 409); assert.match(await inactive.text(), /agui\.run_inactive/);
+
+  const events = []; const client = new HttpAgent({ url: `${base}/agent`, threadId: "guided", fetch: validatingFetch(events) });
+  client.addMessage({ id: "guided-u1", role: "user", content: "check commands" });
+  let accepted;
+  await client.runAgent({ runId: "guided-run-1" }, {
+    onRunStartedEvent() { accepted = guide("guide-1", "also report the exit code"); },
+  });
+  const response = await accepted;
+  assert.equal(response.status, 202, await response.clone().text());
+  assert.deepEqual(await response.json(), { threadId: "guided", runId: "guided-run-1", messageId: "guide-1", state: "accepted" });
+  assertIdentity(events, "guided", "guided-run-1");
+  const updates = events.filter((e) => e.type === "CUSTOM" && e.name === "message.update" && e.value.id === "guide-1").map((e) => e.value.state);
+  assert.deepEqual(updates, [1, 2], "accepted then delivered");
+  const echoed = events.findIndex((e) => e.type === "TEXT_MESSAGE_START" && e.messageId === "guide-1");
+  assert.ok(echoed > 0 && events[echoed].role === "user", "guidance is a user message on the live wire");
+
+  const stored = await (await fetch(`${base}/history?thread_id=guided`)).json();
+  assert.deepEqual(withoutSeq(client.messages), withoutHistoryErrors(stored));
+  const ids = stored.filter((m) => m.role === "user").map((m) => [m.id, m.content]);
+  assert.deepEqual(ids, [["guided-u1", "check commands"], ["guide-1", "also report the exit code"]]);
+  const afterGuidance = stored.slice(stored.findIndex((m) => m.id === "guide-1") + 1);
+  assert.match(afterGuidance.filter((m) => m.role === "assistant").at(-1).content, /Turn 2 continues turn 1/);
+  assert.deepEqual(fromAgUiMessages(withoutSeq(client.messages)).map((m) => m.id), fromAgUiMessages(withoutHistoryErrors(stored)).map((m) => m.id));
+
+  // The recorded guidance is part of the verified history for the next turn.
+  const next = []; const continued = new HttpAgent({ url: `${base}/agent`, threadId: "guided", initialMessages: stored, fetch: validatingFetch(next) });
+  continued.addMessage({ id: "guided-u2", role: "user", content: "summarize" });
+  await continued.runAgent({ runId: "guided-run-2" });
+  assertIdentity(next, "guided", "guided-run-2");
+  const late = await guide("late", "after the run");
+  assert.equal(late.status, 409);
+  const reused = await guide("guide-1", "duplicate id");
+  assert.equal(reused.status, 409);
+});

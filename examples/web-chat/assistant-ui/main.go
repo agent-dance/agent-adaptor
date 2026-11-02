@@ -83,6 +83,8 @@ func newApplication(ctx context.Context, c config) (*application, error) {
 	session := aguisession.New(ai, aguisession.Options{Recorder: rec, Resolve: resolve, Events: projection, Unattended: c.unattended, BaseContext: ctx, KeepAlivePing: 10 * time.Second})
 	mux := http.NewServeMux()
 	mux.Handle("/agent", session.Handler())
+	// In-run guidance for the active run; delivery receipts stay on its stream.
+	mux.Handle("/message", session.MessageHandler())
 	mux.Handle("/history", session.MessagesHandler())
 	mux.Handle("/events", session.EventsHandler())
 	if c.observation {

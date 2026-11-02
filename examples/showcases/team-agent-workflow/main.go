@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,8 +17,9 @@ import (
 
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/v2/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui/aguisession"
 	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 	teamruntime "github.com/agent-dance/agent-adaptor/v2/hosttools/team"
 	"github.com/agent-dance/agent-adaptor/v2/memory"
 	"github.com/agent-dance/agent-adaptor/v2/profile"
@@ -25,9 +27,10 @@ import (
 
 const (
 	defaultWebListenAddr = "127.0.0.1:8080"
-	// The one-command start script reuses the maintained CopilotKit frontend
-	// from examples/web-chat/copilotkit. Direct Go invocations remain locked
-	// down unless the operator deliberately enables one browser origin.
+	// The one-command start script reuses the maintained assistant-ui frontend
+	// from examples/web-chat/assistant-ui through its same-origin dev proxy.
+	// Direct Go invocations keep CORS disabled unless the operator enables one
+	// browser origin.
 	defaultWebCORSOrigin = ""
 
 	// workflowSentinel is the leader's own completion marker.
@@ -246,28 +249,59 @@ func serveAGUI(ctx context.Context, leader adaptor.Runner, opts options, term *c
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	term.Logf("[web] AG-UI on %s (POST /agent) — every request delegates and bills the CLIs", opts.webAddr)
+	term.Logf("[web] AG-UI session on %s (POST /agent, /message, GET /history) — every run delegates and bills the CLIs", opts.webAddr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
 }
 
+// newTeamWebHandler serves the leader through the same recorded AG-UI session
+// endpoints as examples/web-chat/assistant-ui, so that page renders the team
+// run, its delegated activity, reload history and in-run guidance unchanged.
+// History is in-memory: it lives as long as this showcase's temporary workspace.
 func newTeamWebHandler(leader adaptor.Runner, corsOrigin string) http.Handler {
-	mux := http.NewServeMux()
-	mux.Handle("/agent", sse.Handler(leader, sse.Options{
-		Protocol:          sse.AGUI,
-		CORSAllowedOrigin: corsOrigin,
+	session := aguisession.New(leader, aguisession.Options{
+		Recorder: sessionrecorder.NewEventRecorder(sessionrecorder.NewMemoryEventBackend()),
+		// Every browser thread maps to its own key; a production host would
+		// authenticate the caller here instead of trusting the thread ID.
+		Resolve: func(_ *http.Request, a aguisession.Access) (string, error) {
+			if a.ThreadID == "" {
+				return "", &agui.InputError{Status: http.StatusBadRequest, Code: "team.thread_required", Message: "threadId is required"}
+			}
+			return aguisession.ThreadKey(a.ThreadID), nil
+		},
 		// The showcase accepts arbitrary Runners, including stateless decorators.
 		// Rehydrate the client's prior text when no checkpoint can be inspected.
-		AGUIInput: agui.InputOptions{HistoryFallback: true},
-	}))
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		Input:         agui.InputOptions{HistoryFallback: true},
+		KeepAlivePing: 10 * time.Second,
 	})
-	return mux
+	mux := http.NewServeMux()
+	mux.Handle("/agent", session.Handler())
+	mux.Handle("/message", session.MessageHandler())
+	mux.Handle("/history", session.MessagesHandler())
+	mux.Handle("/events", session.EventsHandler())
+	mux.Handle("/snapshot", session.SnapshotHandler())
+	mux.Handle("/observe", session.ObserveHandler())
+	mux.Handle("/cancel", session.CancelHandler())
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		// The assistant-ui page reads this public mode; it contains no paths.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"mode": "real", "agent": "team leader", "unattended": false, "observation": true})
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if corsOrigin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", corsOrigin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // ---- The role table: host data, not an SDK concept ----

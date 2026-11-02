@@ -13,7 +13,6 @@ import (
 
 type preparationRunner struct{}
 
-
 func (preparationRunner) Send(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
 	panic("preparation must not execute")
 }

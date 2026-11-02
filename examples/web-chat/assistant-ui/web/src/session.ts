@@ -26,6 +26,77 @@ export async function checkedFetch(url: string, init?: RequestInit): Promise<Res
   }
   return response;
 }
+// In-run guidance is a companion POST: the active run's SSE stream reports its
+// delivery through CUSTOM "message.update" events (state 1 accepted, 2 delivered,
+// 3 failed). The server records accepted guidance as a user message in history.
+export type Guidance = { id: string; text: string; state: "sending" | "accepted" | "delivered" | "failed"; detail?: string };
+export async function sendGuidance(threadId: string, id: string, text: string, base = ""): Promise<Guidance> {
+  try {
+    const response = await fetch(`${base}/message`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId, messageId: id, text }),
+    });
+    const body: unknown = await response.json().catch(() => null);
+    const value = body && typeof body === "object" ? body as Record<string, unknown> : {};
+    if (value.state === "accepted" && value.messageId === id) {
+      // HTTP 500 with "accepted": admitted, but the run failed to record it.
+      return response.ok ? { id, text, state: "accepted" } : { id, text, state: "failed", detail: "Accepted, but saving it to history failed; the run stops." };
+    }
+    const error = value.error && typeof value.error === "object" ? value.error as Record<string, unknown> : {};
+    const detail = response.status === 409 && error.code === "agui.run_inactive"
+      ? "The run has finished. Send this as a new message instead."
+      : `${typeof error.code === "string" ? error.code : `HTTP ${response.status}`}: ${typeof error.message === "string" ? error.message : "not accepted"}`;
+    return { id, text, state: "failed", detail };
+  } catch (e) {
+    return { id, text, state: "failed", detail: `Acceptance unknown (${String(e)}); retrying reuses the same message ID.` };
+  }
+}
+// assistant-ui's AG-UI runtime folds a live run into assistant messages, so an
+// echoed user message would render as assistant output. Drop user-role text
+// lifecycles from the live SSE body only; the guidance panel tracks them and the
+// canonical history imported after the run shows them in place. Other frames
+// pass through byte-for-byte to HttpAgent's official parser and verifier.
+type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
+export function withoutUserEchoes(fetchImpl: Fetch = fetch): Fetch {
+  return async (input, init) => {
+    const response = await fetchImpl(input, init);
+    if (!response.ok || !response.body || !(response.headers.get("content-type") ?? "").includes("text/event-stream")) return response;
+    const decoder = new TextDecoder(); const encoder = new TextEncoder();
+    const users = new Set<string>();
+    let buffer = "";
+    const keep = (frame: string) => {
+      const data = frame.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart()).join("\n");
+      if (!data) return true;
+      try {
+        const event = JSON.parse(data) as { type?: string; role?: string; messageId?: string };
+        if (event.type === "TEXT_MESSAGE_START" && event.role === "user" && event.messageId) { users.add(event.messageId); return false; }
+        if ((event.type === "TEXT_MESSAGE_CONTENT" || event.type === "TEXT_MESSAGE_END") && event.messageId && users.has(event.messageId)) return false;
+      } catch { /* leave malformed frames to the official parser */ }
+      return true;
+    };
+    const flush = (controller: TransformStreamDefaultController<Uint8Array>, final: boolean) => {
+      let end: number;
+      while ((end = buffer.indexOf("\n\n")) >= 0) {
+        const frame = buffer.slice(0, end + 2); buffer = buffer.slice(end + 2);
+        if (keep(frame.slice(0, -2))) controller.enqueue(encoder.encode(frame));
+      }
+      if (final && buffer) { controller.enqueue(encoder.encode(buffer)); buffer = ""; }
+    };
+    const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) { buffer += decoder.decode(chunk, { stream: true }).replaceAll("\r\n", "\n"); flush(controller, false); },
+      flush(controller) { buffer += decoder.decode(); flush(controller, true); },
+    }));
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  };
+}
+export function messageUpdate(event: { name?: string; value?: unknown }): Pick<Guidance, "id" | "state" | "detail"> | undefined {
+  if (event.name !== "message.update" || !event.value || typeof event.value !== "object") return;
+  const value = event.value as Record<string, unknown>;
+  if (typeof value.id !== "string") return;
+  if (value.state === 2) return { id: value.id, state: "delivered" };
+  if (value.state === 3) return { id: value.id, state: "failed", detail: typeof value.reason === "string" && value.reason ? `Not delivered: ${value.reason}` : "Not delivered" };
+  if (value.state === 1) return { id: value.id, state: "accepted" };
+}
 export function toolOutcome(event: BaseEvent): ToolOutcome | undefined {
   const value: unknown = event.metadata?.agentAdaptor;
   if (!value || typeof value !== "object" || !("status" in value) || typeof value.status !== "string") return;

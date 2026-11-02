@@ -31,8 +31,9 @@ func TestTeamWebHandlerExposesHealthAndScopedCORS(t *testing.T) {
 
 	health := httptest.NewRecorder()
 	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
-	if health.Code != http.StatusOK || health.Body.String() != "ok" {
-		t.Fatalf("GET /health = (%d, %q), want (200, ok)", health.Code, health.Body.String())
+	var info map[string]any
+	if health.Code != http.StatusOK || json.Unmarshal(health.Body.Bytes(), &info) != nil || info["mode"] != "real" || info["observation"] != true {
+		t.Fatalf("GET /health = (%d, %q), want the assistant-ui health shape", health.Code, health.Body.String())
 	}
 
 	preflight := httptest.NewRecorder()
@@ -45,7 +46,7 @@ func TestTeamWebHandlerExposesHealthAndScopedCORS(t *testing.T) {
 	}
 }
 
-func TestStartAllScriptWiresTeamBackendToCopilotKit(t *testing.T) {
+func TestStartAllScriptWiresTeamBackendToAssistantUI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows filesystems do not expose the repository's POSIX executable bit")
 	}
@@ -66,11 +67,10 @@ func TestStartAllScriptWiresTeamBackendToCopilotKit(t *testing.T) {
 		"go build -o",
 		"./examples/showcases/team-agent-workflow",
 		"-web-mode",
-		"NEXT_PUBLIC_COPILOTKIT_MODE=team-agent-workflow",
-		"AGENT_BACKEND_URL",
-		"examples/web-chat/copilotkit/web",
-		"npm run build",
-		"npm run start",
+		"AGUI_BACKEND_URL",
+		"examples/web-chat/assistant-ui/web",
+		"npm ci",
+		"npm run dev",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("start-all.sh missing %q", want)
@@ -162,16 +162,25 @@ func (optionStream) RunID() string { return "test" }
 func TestWebHandlerRehydratesSecondTurnWithoutCheckpoint(t *testing.T) {
 	runner := &historyRunner{}
 	handler := newTeamWebHandler(runner, "")
-	for _, body := range []string{
-		`{"messages":[{"id":"u1","role":"user","content":"first"}]}`,
-		`{"messages":[{"id":"u1","role":"user","content":"first"},{"id":"a1","role":"assistant","content":"answer"},{"id":"u2","role":"user","content":"second"}]}`,
-	} {
+	post := func(body string) {
+		t.Helper()
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest("POST", "/agent", strings.NewReader(body)))
 		if response.Code != 200 {
 			t.Fatalf("status=%d body=%s", response.Code, response.Body)
 		}
 	}
+	post(`{"threadId":"team","runId":"r1","messages":[{"id":"u1","role":"user","content":"first"}]}`)
+	// The page sends back the recorded history, as assistant-ui's adapter does.
+	stored := httptest.NewRecorder()
+	handler.ServeHTTP(stored, httptest.NewRequest("GET", "/history?thread_id=team", nil))
+	var history []map[string]any
+	if err := json.Unmarshal(stored.Body.Bytes(), &history); err != nil || len(history) != 2 {
+		t.Fatalf("history = %s (%v)", stored.Body, err)
+	}
+	history = append(history, map[string]any{"id": "u2", "role": "user", "content": "second"})
+	body, _ := json.Marshal(map[string]any{"threadId": "team", "runId": "r2", "messages": history})
+	post(string(body))
 	if len(runner.prompts) != 2 || !strings.Contains(runner.prompts[1], "<agent-adaptor-history>") ||
 		!strings.Contains(runner.prompts[1], `"text":"first"`) || !strings.HasSuffix(runner.prompts[1], "second") {
 		t.Fatalf("second turn lost history: %v", runner.prompts)

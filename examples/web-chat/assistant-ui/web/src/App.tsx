@@ -3,7 +3,7 @@ import { HttpAgent, type Message } from "@ag-ui/client";
 import { AssistantRuntimeProvider, ComposerPrimitive, MessagePrimitive, ThreadPrimitive, groupPartByType, useAuiState, type ToolCallMessagePartProps } from "@assistant-ui/react";
 import { useAgUiRuntime } from "@assistant-ui/react-ag-ui";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
-import { checkedFetch, createHistory, repository, toolOutcome, type ToolOutcome, runNotice, type RunNotice } from "./session";
+import { checkedFetch, createHistory, messageUpdate, repository, runNotice, sendGuidance, toolOutcome, withoutUserEchoes, type Guidance, type RunNotice, type ToolOutcome } from "./session";
 
 export const Outcomes = createContext<ReadonlyMap<string, ToolOutcome>>(new Map());
 export function Shell({ toolCallId, toolName, argsText, result, isError, status }: ToolCallMessagePartProps) {
@@ -22,8 +22,22 @@ export function Activity({ data }: { data: unknown }) {
     {typeof value.text === "string" && <p>{value.text}</p>}
   </aside>;
 }
+// Delegated team work (hosttools/team) arrives as activityType "subagent".
+export function Subagent({ data }: { data: unknown }) {
+  const v = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  const text = (k: string) => typeof v[k] === "string" ? v[k] as string : "";
+  const error = v.error && typeof v.error === "object" ? v.error as Record<string, unknown> : undefined;
+  const status = text("status") || "running";
+  return <details className={`activity subagent ${status === "failed" ? "failed" : ""}`} data-status={status} open={status === "running"}>
+    <summary>{text("agentName") || text("agentKey") || "Worker"} · {status}{text("description") && ` · ${text("description")}`}</summary>
+    {text("text") && <p className="subagent-text">{text("text")}</p>}
+    {v.result !== undefined && <pre>{typeof v.result === "string" ? v.result : JSON.stringify(v.result, null, 2)}</pre>}
+    {error && <p role="alert">{String(error.code ?? "error")}: {String(error.message ?? "")}</p>}
+  </details>;
+}
 export function ProtocolData({ name, data }: { name: string; data: unknown }) {
   if (name === "agui-activity/command-review") return <Activity data={data} />;
+  if (name === "agui-activity/subagent") return <Subagent data={data} />;
   if (!["agentAdaptor.input.warning", "lifecycle", "stream.dropped", "hitl.requested", "hitl.resolved"].includes(name)) return null;
   const value = data && typeof data === "object" ? data as Record<string, unknown> : {};
   const text = typeof value.message === "string" ? value.message : typeof value.text === "string" ? value.text : name;
@@ -40,6 +54,20 @@ export function RunNoticeView({ notice, dismiss }: { notice: RunNotice; dismiss?
   return <div role={notice.kind === "cancelled" ? "status" : "alert"} className={notice.kind === "cancelled" ? "cancelled" : "error"}>
     {notice.message}{dismiss && <button onClick={dismiss}>Dismiss</button>}
   </div>;
+}
+const guidanceLabel: Record<Guidance["state"], string> = { sending: "Sending…", accepted: "Accepted · waiting for delivery", delivered: "Delivered", failed: "Not delivered" };
+export function GuidancePanel({ enabled, items, send, retry }: { enabled: boolean; items: Guidance[]; send: (text: string) => void; retry: (item: Guidance) => void }) {
+  const [text, setText] = useState("");
+  return <section className="guidance" aria-label="Guidance for the running task">
+    <form onSubmit={(e) => { e.preventDefault(); const value = text.trim(); if (value) { send(value); setText(""); } }}>
+      <label htmlFor="guidance">Add guidance while the agent works</label>
+      <div className="guidance-row"><input id="guidance" value={text} disabled={!enabled} onChange={(e) => setText(e.target.value)} placeholder={enabled ? "e.g. also run the unit tests" : "Available while a run is active"} /><button type="submit" disabled={!enabled || !text.trim()}>Send guidance</button></div>
+    </form>
+    {items.length > 0 && <ul>{items.map((item) => <li key={item.id} data-state={item.state} className={item.state === "failed" ? "failed" : ""}>
+      <span>{item.text}</span> <strong>{guidanceLabel[item.state]}</strong>{item.detail && <em> · {item.detail}</em>}
+      {enabled && item.state === "failed" && item.detail?.startsWith("Acceptance unknown") && <button type="button" onClick={() => retry(item)}>Retry</button>}
+    </li>)}</ul>}
+  </section>;
 }
 const groupBy = groupPartByType({ "tool-call": ["group-tools"], reasoning: ["group-reasoning"] });
 function ChatMessage() {
@@ -74,7 +102,17 @@ export function App({ threadId }: { threadId: string }) {
   const copy = modeCopy(health);
   const [outcomes, setOutcomes] = useState(new Map<string, ToolOutcome>());
   const canonical = useRef<Message[] | undefined>(undefined);
-  const agent = useMemo(() => new HttpAgent({ url: "/agent", threadId, fetch: checkedFetch }), [threadId]);
+  const agent = useMemo(() => new HttpAgent({ url: "/agent", threadId, fetch: withoutUserEchoes(checkedFetch) }), [threadId]);
+  const [running, setRunning] = useState(false);
+  const [guidance, setGuidance] = useState<Guidance[]>([]);
+  const guided = useRef(false);
+  const updateGuidance = (next: Guidance | Pick<Guidance, "id" | "state" | "detail">) =>
+    setGuidance((old) => old.map((g) => g.id === next.id && g.state !== "delivered" ? { ...g, ...next } : g));
+  async function guide(text: string, id: string = crypto.randomUUID()) {
+    guided.current = true;
+    setGuidance((old) => [...old.filter((g) => g.id !== id), { id, text, state: "sending" }]);
+    updateGuidance(await sendGuidance(threadId, id, text));
+  }
   const history = useMemo(() => createHistory(agent,
     (id, value) => setOutcomes((old) => new Map(old).set(id, value)),
     (messages) => { canonical.current = messages; }, receiveNotice), [agent]);
@@ -89,11 +127,25 @@ export function App({ threadId }: { threadId: string }) {
         if (value) setOutcomes((old) => new Map(old).set(event.toolCallId, value));
       },
       onRunErrorEvent({ event }) { receiveNotice(runNotice(event)); },
+      onCustomEvent({ event }) { const update = messageUpdate(event); if (update) updateGuidance(update); },
     });
     return () => { subscription.unsubscribe(); history.dispose(); };
   }, [agent, history]);
   useEffect(() => runtime.thread.subscribe(() => {
-    if (canonical.current && !runtime.thread.getState().isRunning) {
+    const isRunning = runtime.thread.getState().isRunning;
+    setRunning(isRunning);
+    if (!isRunning && guided.current) {
+      // Guidance is recorded as user messages inside the run. Import the
+      // canonical history so the thread shows them in place and the next POST
+      // carries the same message IDs as the server's recording.
+      guided.current = false;
+      void checkedFetch(`/history?thread_id=${encodeURIComponent(threadId)}`).then((r) => r.json()).then((messages: Message[]) => {
+        canonical.current = messages;
+        if (!runtime.thread.getState().isRunning) { canonical.current = undefined; runtime.thread.import(repository(messages)); }
+        setGuidance((old) => old.filter((g) => g.state === "failed"));
+      }).catch((e: unknown) => showError(String(e)));
+    }
+    if (canonical.current && !isRunning) {
       const messages = canonical.current; canonical.current = undefined;
       runtime.thread.import(repository(messages));
     }
@@ -111,6 +163,7 @@ export function App({ threadId }: { threadId: string }) {
         <ThreadPrimitive.Empty><p className="empty">{copy.intro}</p></ThreadPrimitive.Empty>
         <ThreadPrimitive.Messages components={{ UserMessage: ChatMessage, AssistantMessage: ChatMessage }} />
       </ThreadPrimitive.Viewport>
+      {(running || guidance.length > 0) && <GuidancePanel enabled={running} items={guidance} send={(text) => void guide(text)} retry={(item) => void guide(item.text, item.id)} />}
       <ComposerPrimitive.Root className="composer"><ComposerPrimitive.Input placeholder="Write a message…" aria-label="Message" /><div className="actions"><ComposerPrimitive.Send>Send</ComposerPrimitive.Send>{unattended ? <button type="button" onClick={() => void cancel()}>Cancel run on host</button> : <ComposerPrimitive.Cancel>Cancel</ComposerPrimitive.Cancel>}</div></ComposerPrimitive.Root>
       </ThreadPrimitive.Root>
       <footer>{copy.footer}</footer>

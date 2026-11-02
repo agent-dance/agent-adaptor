@@ -52,7 +52,6 @@ func TestWebHandlerRehydratesSecondTurnWithoutCheckpoint(t *testing.T) {
 
 type historyRunner struct{ prompts []string }
 
-
 func (r *historyRunner) Send(_ context.Context, prompt string, _ ...adaptor.CallOption) adaptor.Stream {
 	r.prompts = append(r.prompts, prompt)
 	events := make(chan adaptor.Event)

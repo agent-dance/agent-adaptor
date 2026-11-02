@@ -235,3 +235,42 @@ test("cancelled runs render a status while genuine driver failures remain errors
   const errorHTML = renderToStaticMarkup(createElement(glue.RunNoticeView, { notice: failed }));
   assert.match(errorHTML, /role="alert"/); assert.match(errorHTML, /agent_error/); assert.match(errorHTML, /status -1/);
 });
+test("live glue drops only user-role echoes and maps guidance receipts", async () => {
+  const frames = [
+    { type: "RUN_STARTED", threadId: "t", runId: "r" },
+    { type: "TEXT_MESSAGE_START", messageId: "a", role: "assistant" },
+    { type: "TEXT_MESSAGE_START", messageId: "guide", role: "user" },
+    { type: "TEXT_MESSAGE_CONTENT", messageId: "guide", delta: "more" },
+    { type: "TEXT_MESSAGE_CONTENT", messageId: "a", delta: "answer" },
+    { type: "TEXT_MESSAGE_END", messageId: "guide" },
+    { type: "TEXT_MESSAGE_END", messageId: "a" },
+    { type: "RUN_FINISHED", threadId: "t", runId: "r" },
+  ];
+  const body = `: keep-alive\n\n${wire(frames)}`;
+  // Split mid-frame to prove the filter buffers across chunks.
+  const chunks = [body.slice(0, 37), body.slice(37, 140), body.slice(140)];
+  const upstream = async () => new Response(new ReadableStream({ start(c) { for (const chunk of chunks) c.enqueue(new TextEncoder().encode(chunk)); c.close(); } }), { headers: { "content-type": "text/event-stream" } });
+  const text = await (await glue.withoutUserEchoes(upstream)("/agent")).text();
+  const kept = text.split("\n\n").filter((f) => f.startsWith("data:")).map((f) => JSON.parse(f.slice(5)));
+  assert.deepEqual(kept.map((e) => `${e.type}:${e.messageId ?? ""}`), ["RUN_STARTED:", "TEXT_MESSAGE_START:a", "TEXT_MESSAGE_CONTENT:a", "TEXT_MESSAGE_END:a", "RUN_FINISHED:"]);
+  assert.ok(text.startsWith(": keep-alive\n\n"));
+  const json = new Response("{}", { headers: { "content-type": "application/json" } });
+  assert.equal(await glue.withoutUserEchoes(async () => json)("/agent"), json);
+  assert.deepEqual(glue.messageUpdate({ name: "message.update", value: { id: "g", state: 2 } }), { id: "g", state: "delivered" });
+  assert.deepEqual(glue.messageUpdate({ name: "message.update", value: { id: "g", state: 3, reason: "limit_exceeded" } }), { id: "g", state: "failed", detail: "Not delivered: limit_exceeded" });
+  assert.equal(glue.messageUpdate({ name: "turn.end", value: {} }), undefined);
+});
+test("guidance POST maps acceptance and inactive runs", async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async (_url, init) => {
+      const { messageId } = JSON.parse(init.body);
+      return messageId === "ok"
+        ? Response.json({ threadId: "t", runId: "r", messageId, state: "accepted" }, { status: 202 })
+        : Response.json({ error: { code: "agui.run_inactive", message: "no run" } }, { status: 409 });
+    };
+    assert.deepEqual(await glue.sendGuidance("t", "ok", "more"), { id: "ok", text: "more", state: "accepted" });
+    const inactive = await glue.sendGuidance("t", "late", "more");
+    assert.equal(inactive.state, "failed"); assert.match(inactive.detail, /run has finished/);
+  } finally { globalThis.fetch = original; }
+});

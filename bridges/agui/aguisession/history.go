@@ -44,6 +44,8 @@ type projector struct {
 	runID          string
 	userMessageID  string
 	hasUserMessage bool
+	// turn counts provider turns within the run; TurnEnd advances it.
+	turn int
 }
 
 type cancelledTerminal string
@@ -83,6 +85,7 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 	var out []events.Event
 	if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == BoundaryKind {
 		p.runID = str(n.Data, "runId")
+		p.turn = 1
 		p.userMessageID = str(n.Data, "userMessageId")
 		p.hasUserMessage = n.Data["userMessage"] != nil
 		opts := append([]agui.EventTranslatorOption(nil), p.opts...)
@@ -152,6 +155,9 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 				meta.Time = rec.RecordedAt
 			}
 			out = p.t.Translate(adaptor.WithEventMeta(p.scopeSource(rec.Event), meta))
+			if _, ok := rec.Event.(adaptor.TurnEnd); ok {
+				p.turn++
+			}
 		}
 	}
 	// Constructors use wall-clock timestamps; recorded time is the replay authority.
@@ -161,23 +167,24 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 	return out
 }
 
-// Provider message and tool IDs are run-local (Claude reasoning IDs, for
-// example, use thinking-0). Scope them before translation so the client cannot
-// append a new turn to an earlier turn with the same provider ID. Submitted user
-// IDs and approval request IDs remain client/host identities respectively.
+// Provider message and tool IDs are only turn-local (Claude reasoning IDs, for
+// example, use thinking-0), and one v2 execution can span several provider
+// turns. Scope them by run and turn before translation so the client cannot
+// append a later turn to an earlier one with the same provider ID. Turn 1 keeps
+// the run-only form of earlier recordings. Submitted user IDs and approval
+// request IDs remain client/host identities respectively.
 func (p *projector) scopeSource(ev adaptor.Event) adaptor.Event {
-	messageID := func(id string) string {
+	scope := func(kind, id string) string {
 		if id == "" {
 			return ""
 		}
-		return bridgekey.Encode("agui-message", p.runID, id)
-	}
-	toolID := func(id string) string {
-		if id == "" {
-			return ""
+		if p.turn > 1 {
+			return bridgekey.Encode(kind, p.runID, strconv.Itoa(p.turn), id)
 		}
-		return bridgekey.Encode("agui-tool", p.runID, id)
+		return bridgekey.Encode(kind, p.runID, id)
 	}
+	messageID := func(id string) string { return scope("agui-message", id) }
+	toolID := func(id string) string { return scope("agui-tool", id) }
 	switch e := ev.(type) {
 	case adaptor.TextDelta:
 		if e.Role != adaptor.RoleUser || e.MessageID != p.userMessageID {

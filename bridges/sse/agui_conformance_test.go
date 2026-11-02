@@ -25,7 +25,6 @@ type conformanceRunner struct {
 	prompt string
 }
 
-
 func (r *conformanceRunner) Send(_ context.Context, p string, _ ...adaptor.CallOption) adaptor.Stream {
 	r.calls++
 	r.prompt = p

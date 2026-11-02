@@ -32,3 +32,13 @@ footer { margin-top: 1rem; text-align: center; }
 .activity { margin: .8rem 0; padding: .8rem; background: #edf4f1; border-left: 3px solid #408977; font-size: .9rem; }
 
 .cancelled { padding: .8rem 1rem; color: #305e57; background: #e6efea; border-radius: .5rem; }
+.guidance { margin: 1rem 0 0; padding: .9rem 1rem; border: 1px dashed #9fb8b0; border-radius: .65rem; background: #fbfcfb; font-size: .85rem; }
+.guidance label { display: block; font-weight: 600; margin-bottom: .4rem; }
+.guidance-row { display: flex; gap: .5rem; }
+.guidance input { flex: 1; min-width: 0; font: inherit; padding: .5rem .7rem; border: 1px solid #a4bbb3; border-radius: .5rem; }
+.guidance ul { list-style: none; margin: .6rem 0 0; padding: 0; }
+.guidance li { padding: .3rem 0; overflow-wrap: anywhere; }
+.guidance li[data-state="delivered"] strong { color: #28776a; }
+.guidance li button { margin-left: .5rem; padding: .2rem .6rem; }
+.subagent summary { font-weight: 600; }
+.subagent-text { white-space: pre-wrap; margin: .5rem 0; }

@@ -640,7 +640,10 @@ func TestDrainCancellationUnblocksFullOutput(t *testing.T) {
 	stream := script(nil, context.Canceled, source...)
 	output := make(chan events.Event, 32)
 	done := make(chan struct{})
-	go func() { defer close(done); s.drain(ctx, ThreadKey("t"), in, stream, s.openLive(ThreadKey("t"), in, stream), boundary, output) }()
+	go func() {
+		defer close(done)
+		s.drain(ctx, ThreadKey("t"), in, stream, s.openLive(ThreadKey("t"), in, stream), boundary, output)
+	}()
 	select {
 	case <-blocked:
 	case <-time.After(10 * time.Second):

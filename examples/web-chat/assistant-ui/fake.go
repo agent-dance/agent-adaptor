@@ -101,6 +101,9 @@ func (d scriptedDriver) Run(ctx context.Context, req driver.Request, sink driver
 			return driver.Response{}, err
 		}
 	}
+	// Core turns each provider turn into TurnEnd; guidance sent during this turn
+	// is delivered at its end by resuming the checkpoint in the same execution.
+	_ = sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Turn: &driver.TurnCompleted{Text: text, CompletedAt: time.Now().UTC()}})
 	return driver.Response{Output: text, Summary: fmt.Sprintf("Scripted turn %d", turn), Provider: "script", Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: providerID, Data: map[string]string{"turn": strconv.Itoa(turn)}}}}, nil
 }
 
