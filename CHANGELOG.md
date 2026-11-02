@@ -22,6 +22,11 @@ All notable changes to this project are documented in this file.
   history with checkpoint state under validated leases.
 - Stream and Standby expose Cancel, with no Close. Agent.Close remains the
   idempotent owner-level process and Tool runtime cleanup operation.
+- assistant-ui is the only web front-end example. The CopilotKit
+  (`examples/web-chat/copilotkit`) and plain `@ag-ui/client`
+  (`examples/web-chat/aguiclient`) examples are removed; their in-run input,
+  approval and history capabilities are in `examples/web-chat/assistant-ui`, and
+  the team showcase's one-command web mode starts that page.
 
 ### Core and results
 
@@ -193,8 +198,8 @@ Pi and OpenCode remain outside the supported v2 Driver set.
 - Keep team Standby contexts scoped to admission and drain reliable events on
   shutdown. AG-UI Activity restores member display names, worker text and
   validated structured attachments, excluding raw and private runtime data.
-- Add AG-UI RunRegistry routing and a CopilotKit running-message input using
-  the existing event stream for delivery receipts. Record safe Done fields by
+- Add AG-UI RunRegistry routing for running-message input, using the existing
+  event stream for delivery receipts. Record safe Done fields by
   default; sessionrecorder.WithExposure explicitly enables diagnostic layers.
 - Add adaptertest MSG-01–MSG-10 and transport fixtures for all four built-in
   Drivers. Stabilize event-loop and store-expiry tests across race instrumentation
@@ -219,6 +224,16 @@ Pi and OpenCode remain outside the supported v2 Driver set.
 - AG-UI 1.0 validation and conformance fixtures, structured transport errors,
   input diagnostics, context projection, history fallback, configurable tool
   result limits, and deterministic redaction/extension hooks.
+- `aguisession.Session.Supplement` and `MessageHandler` route in-run user input
+  to the active run's `Stream.Send` (authorized as `OpMessage`). The run's sole
+  drain records accepted input as a user message before `Done` and the terminal,
+  identically live and in history; rejected input creates no history and a
+  recording failure after admission is explicit. A new run POSTed during an
+  active run is still rejected with 409 `agui.run_active`.
+- The assistant-ui example adds in-run guidance with `message.update` receipts,
+  human approval decisions through host-owned `/decision/pending` and
+  `/decision/resolve`, and team subagent activity cards. The team showcase web
+  mode serves the same recorded-session endpoints.
 
 ### Changed
 
@@ -240,10 +255,12 @@ Pi and OpenCode remain outside the supported v2 Driver set.
 - The assistant-ui real-driver example explicitly binds the operator CLI profile
   (HOME and Codex CODEX_HOME) for existing login/custom-provider configuration.
   Driver defaults are unchanged; changing bindings requires a compatible Thread.
-- Direct clients pin `@ag-ui/client` 1.0.3. The CopilotKit example uses
-  CopilotKit 1.83.0's bundled `@ag-ui/client` 1.0.2. Session projection format `agui-session/2` uses
-  run-scoped provider IDs and an idempotent submitted-user seed; older recording
-  formats require migration. Recorder-key encoding remains version 1.
+- The assistant-ui example pins `@ag-ui/client` 1.0.3. Session projection
+  format `agui-session/3` adds recorded supplements and scopes provider IDs by
+  run and, from the second provider turn of one execution, by turn; `/2`
+  recordings remain readable and older formats require migration. Recorded
+  `Done` is informational: the terminal Notice stays the sole outcome.
+  Recorder-key encoding remains version 1.
 
 ### Fixed
 
@@ -279,8 +296,7 @@ Pi and OpenCode remain outside the supported v2 Driver set.
   metadata. Tool output truncation respects UTF-8 and retains integral exit codes.
 - Unknown identity metadata is omitted; event queries encode empty lists as [].
   The assistant-ui page suppresses unknown data blocks, uses mode-appropriate copy,
-  and displays cancelled status live and after reload. The direct aguiclient
-  handles content-array tool results with the official text conversion helper.
+  and displays cancelled status live and after reload.
 - Preserve recorded approval retry attempts and latency in AG-UI live/history
   projections. Share exact integer conversion with A2A approval/drop consumers,
   preserve decoded A2A payload numbers, and accept JSON numbers in task metadata.
@@ -292,12 +308,13 @@ Pi and OpenCode remain outside the supported v2 Driver set.
 - Make assistant-ui checkpoint directory durability platform-aware on Windows;
   add scoped authenticated restart and visible activity parity fixtures, and
   enforce the example's build, Node suite and input fuzz target in CI.
-- Upgraded the CopilotKit example to CopilotKit 1.83.0, `@ag-ui/client` 1.0.2
-  and stable Next.js 16.4.3, with `zod` 4.6.7, `undici` 6.29.1 and
-  `graphql-scalars` 2.0.1 overrides for advisories that have no upstream fix in
-  the required ranges, so `npm audit --omit=dev --audit-level=high` passes
-  again. The remaining moderate `@hono/node-server` and low `katex` findings are
-  documented in the example README.
+- Recorded sessions subscribe to `Stream.Events` before any recorder I/O. A
+  Driver that asked for approval while the run boundary was being recorded was
+  otherwise resolved by v2's "Events never called" timeout fallback.
+- One execution that resumes several provider turns no longer folds a later
+  turn into an earlier assistant message with the same provider ID.
+- Codex persistent turns that end without a healthy checkpoint stop the process
+  and join its readers before capturing Raw streams.
 
 ## [1.1.2] - 2026-08-07
 

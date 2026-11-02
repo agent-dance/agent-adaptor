@@ -49,6 +49,34 @@ banner. Cancelled runs display a separate “Run cancelled” status live and af
 reload; the process-exit diagnostic remains in ordered events. Reload reads those
 events to recover the latest terminal outcome.
 
+## In-run guidance
+
+Restart with a visible pace (`-observation -pace=300ms`) and send a message.
+While it runs, the page shows **Add guidance while the agent works**. Guidance
+is POSTed to `/message` (`aguisession.Session.MessageHandler`) and calls the
+active run's `Stream.Send`; it never starts another run, and a second chat
+message sent with the composer while a run is active is rejected with 409
+`agui.run_active`. The panel shows "Accepted · waiting for delivery", then
+"Delivered" from the run's `message.update` events. The fake driver has no
+mid-turn delivery boundary, so the SDK delivers guidance at the end of the turn
+by resuming the checkpoint inside the same execution: a "Turn 2 continues…"
+answer follows. When the run ends the page imports `/history`, which shows the
+guidance as a user message between the two turns, exactly as after a reload.
+
+## Human approval
+
+Send a message containing "approval" (for example "deploy with approval"). The
+fake driver asks for a Permission decision before a simulated deploy. The
+decision appears as a `dec.permission.shell` tool call with **Approve** and
+**Deny** buttons. Approve lets the run finish; Deny follows the SDK default
+`OnReject` action and ends the run with `RUN_ERROR approval_denied`. Answers go
+to the host's own `/decision/resolve` route ([`approvals.go`](approvals.go)),
+which keeps the live `ApprovalRequest` captured through
+`aguisession.Options.Observe` and calls exactly one of Approve/Deny/Answer;
+repeated or late answers return 410 `approval.resolved`. Who may decide is host
+policy: the example authorizes it through the same resolver as in-run input
+(`OpMessage`). The default approval timeout is 30 seconds.
+
 ## Real CLI smoke (explicit opt-in)
 
 Install and authenticate the CLI separately. These commands can execute tools
@@ -84,8 +112,7 @@ Ask for a short answer, then ask what you just requested. Reload, restart with
 the same working directory/configuration/data directory, and ask again. Confirm
 continued context and history. A real CLI is not expected to produce the scripted
 13-command trace. The example uses `exampleutil.NonInteractive` with WorkspaceWrite;
-production approval/grant policy belongs to the host. The plain
-[`aguiclient`](../aguiclient) remains available for a smaller, unrecorded endpoint.
+production approval/grant policy belongs to the host.
 
 ## Configuration and endpoints
 
@@ -111,6 +138,9 @@ not enable unattended execution; the two switches are independent.
 | Endpoint | Contract |
 | --- | --- |
 | `POST /agent` | AG-UI 1.0 RunAgentInput → SSE; `HttpAgent` supplies complete messages |
+| `POST /message` | `{threadId,messageId,text}` in-run guidance → 202 `{threadId,runId,messageId,state:"accepted"}`; 409 without an active run |
+| `GET /decision/pending?thread_id=T` | Live approval requests awaiting an answer |
+| `POST /decision/resolve` | `{threadId,requestId,result:"approve"\|"deny"\|"answer",text?,choice?}` → 204; 410 when already resolved |
 | `GET /history?thread_id=T` | Materialized AG-UI Message[] |
 | `GET /events?thread_id=T&after=N` | Ordered projected records (`host_seq`, `events`) for exact interleaving |
 | `GET /snapshot?thread_id=T` | `{messages,cursor,activeRun}`; requires `-observation` |
@@ -145,6 +175,15 @@ adapter. It does not implement an AG-UI parser or reducer:
 - `agent.subscribe` reads TOOL_CALL_RESULT.metadata.agentAdaptor.status/exitCode.
   `Shell` uses that live map and, after reload, `isError` from ToolMessage.error.
   Bare HttpAgent does not set ToolMessage.error from live result metadata.
+- `withoutUserEchoes` wraps the page's live POST stream. assistant-ui 0.1.1
+  folds a live run into assistant messages, so the run's echo of in-run
+  guidance (a user-role text message) would render as assistant output. The glue
+  drops only user-role text lifecycles from that SSE body; the guidance panel
+  tracks status through `message.update`, and the canonical `/history` import
+  after the run shows the guidance in place. Bare HttpAgent folds the echo
+  correctly and needs no glue.
+- `Decision` renders `dec.*` tool calls: Approve/Deny while the result is
+  missing, the outcome afterwards. A pending decision keeps its tool group open.
 - `checkedFetch` preserves HTTP status and structured error codes in the banner;
   an idle load consults the ordered event view for terminal outcomes, which
   Message[] alone cannot represent. `append()` is intentionally a no-op: the
@@ -181,7 +220,7 @@ mode-appropriate copy; real CLI mode does not describe the fake 13-command scena
 
 `demoResolve` **permits everyone** and maps IDs with `aguisession.ThreadKey`.
 Replace it with authenticated principal and per-operation grants for start,
-read, follow and cancel; encode tenant/user/business dimensions without collisions.
+read, follow, cancel and in-run message/decision; encode tenant/user/business dimensions without collisions.
 The demo default remains permissive. `TestAuthenticatedScopedThreadSurvivesReconstruction`
 injects a test-only resolver using a verified-principal stand-in header, an
 allowlist for every operation and an opaque hash of a JSON tenant/principal/Thread
@@ -193,7 +232,7 @@ is not a production authentication mechanism. Production also owns:
 - Worker lifetime, concurrency limits, routing, revocation and cancellation.
   On grant changes call Session.Revoke and update Resolve; no public revoke
   endpoint is exposed by this permissive demo.
-- Domain facts, approvals, business decisions, custom activities and their UI.
+- Domain facts, approval grants, business decisions, custom activities and their UI.
 
 The injected JSONL recorder (`events/`) syncs each append. The injected Store
 (`checkpoints/threads.json`) persists records via fsync + atomic rename and
@@ -228,12 +267,12 @@ skips the HTTP test while retaining the offline checks. The existing Go golden
 fixtures and standalone `node bridges/agui/testdata/verify-client.mjs` remain
 usable and are included in this test command.
 
-All npm dependencies are pinned to exact versions. The
-plain aguiclient manifest and lockfile pin **@ag-ui/client@1.0.3**;
-use `npm ci` on a fresh checkout. CopilotKit's pins remain
-unchanged: it bundles its own AG-UI client/core 0.0.57, and forcing a transitive
-1.0 client is not a trivial compatible upgrade. Its Go endpoint still uses the
-same tested bridge. `internal/aguiversion` guards both independent pin lines.
+All npm dependencies are pinned to exact versions, including
+**@ag-ui/client@1.0.3** in both manifest and lockfile; use `npm ci` on a fresh
+checkout. This page is the repository's only web front end (the earlier
+CopilotKit and plain `@ag-ui/client` examples were removed), and
+`internal/aguiversion` guards its pins against the Go AG-UI module pin.
+`npm audit --omit=dev --audit-level=high` runs in CI.
 
 ## What is verified automatically
 
@@ -248,7 +287,15 @@ same tested bridge. `internal/aguiversion` guards both independent pin lines.
   identities, two thinking-settings reloads, process restart, observation cursor
   delivery, cancellation, duplicate requests and history divergence.
 - Offline Node tests exercise the actual history adapter and renderers, sanitized
-  real Codex history, failed tools, cancelled status, and partial observation EOF.
+  real Codex history, failed tools, cancelled status, partial observation EOF,
+  the live echo filter and guidance receipts.
+- The in-run guidance integration test checks 202 admission, `message.update`
+  accepted→delivered, the live user echo, live/history equality, the next turn's
+  verification, and 409 for inactive runs and reused IDs.
+- `TestApprovalRoundTripThroughCompanionEndpoint` approves and denies through the
+  companion endpoint; `aguisession` tests cover supplement ordering before Done,
+  concurrent admission racing run end, recording failure and an approval
+  requested before any event is recorded.
 
 Run `npm run test:integration` for the complete client suite or `npm run test:offline`
 for the checks that do not start an HTTP server. Go and Node must be on PATH.

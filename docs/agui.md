@@ -219,7 +219,10 @@ provides neither durable UI history nor background execution/observation.
 The optional Session below provides recording and observation with host-injected
 backends. The runnable [assistant-ui example](../examples/web-chat/assistant-ui)
 shows durable JSONL history, persistent Thread checkpoints, two fake turns,
-failed tool 13, reload and active-run joining; real CLI mode is explicit opt-in.
+failed tool 13, reload, active-run joining, in-run guidance and human approval
+decisions; real CLI mode is explicit opt-in. Approval answers stay host-owned:
+the example captures the live ApprovalRequest through `Options.Observe` and
+answers it from its own `/decision/resolve` route.
 Its demo Resolve permits everyone and marks the production auth boundary.
 The host still supplies authorization, retention/redaction, durable deployment,
 worker routing/lifetime and domain facts.
@@ -236,8 +239,8 @@ Regenerate with `UPDATE_GOLDEN=1` with `go test ./bridges/sse -run TestAGUIHandl
 The read handlers accept `thread_id`; events additionally accepts `after`.
 **Production hosts must install `Options.Resolve`: a client threadId is not
 an authorization decision.** This single hook authorizes and maps both starts
-and reads. It receives `Access{Op: OpStart|OpRead, ThreadID, Input}`; Input is
-set only for starts. Nil permits all access and uses the default mapping.
+and reads. It receives `Access{Op: OpStart|OpRead|OpFollow|OpCancel|OpMessage,
+ThreadID, Input}`; Input is set only for starts. Nil permits all access and uses the default mapping.
 The default Thread key remains `bridgekey.Encode("agui", threadId)` for an Agent
 or other Runner. A Session constructed with an already-bound Thread defaults all
 operations to that Thread's actual host key, matching execution admission. A
@@ -249,14 +252,27 @@ changing it requires an explicit storage migration. It derives a portable name f
 all recorder access must use that mapping. This introduces the usual SHA-256
 collision assumption, rather than changing the opaque Thread identity.
 
-Projection version `agui-session/2` records typed Notices with reserved kinds
+Projection version `agui-session/3` records typed Notices with reserved kinds
 `agentAdaptor.agui.boundary` (public identity, input protocol version,
-projection version, diagnostics, submitted user message and its ID) and
+projection version, diagnostics, submitted user message and its ID),
+`agentAdaptor.agui.supplement` (admitted in-run user input, see below) and
 `agentAdaptor.agui.terminal` (authoritative code/message and SDK run/key metadata).
+Version 2 recordings contain no supplements and remain readable unchanged.
 Older, missing or unknown projection versions produce
 `agui.projection_version_unsupported`, never successful replay. Recordings from earlier projection versions require
 an explicit host migration; they are not silently reinterpreted.
-Source events cannot use either reserved Notice kind: the session cancels/drains
+v2 `MessageUpdate` and `TurnEnd` are recorded and project as the CUSTOM events
+`message.update` and `turn.end`. `Done` is recorded last among source events,
+after admitted supplements and any Result.Text fallback, but stays informational
+in projection: the recorded terminal Notice remains the sole outcome, so
+bridge-level cancellation and recording failures keep their codes. One execution
+can resume several provider turns whose provider IDs repeat (Claude's
+`thinking-0`, for example); message and tool IDs are therefore scoped by run and
+turn, advanced by each `TurnEnd`. Turn 1 keeps the run-only form of earlier
+recordings. The drain subscribes to `Stream.Events` before any recorder I/O:
+v2 resolves an approval through its timeout fallback when nobody has called
+Events yet.
+Source events cannot use any reserved Notice kind: the session cancels/drains
 and records `agui.reserved_notice` instead of accepting a forged boundary/terminal. Between them are the input user turn, source events including
 approvals, and any Result.Text fallback. Stream.Result is the terminal authority.
 Only successfully recorded events are projected. Recording failure cancels and
@@ -375,6 +391,43 @@ History I/O never holds the admission mutex; reads retry if admission/completion
 changes the active boundary during the read. HTTP errors use the same JSON error
 envelope; host/storage failures are 500, explicit InputError statuses are retained,
 missing identities and invalid cursors are 400, and 405 includes Allow.
+
+## In-run input (supplements)
+
+`Session.Supplement(ctx, key, messageID, text)` and `MessageHandler()` add user
+text to the active run through `Stream.Send` with the human author and Soon
+timing. They never start a run: a new RunAgentInput POST for a thread with an
+active run still returns 409 `agui.run_active`, because busy task-mode input must
+not be merged silently. `MessageHandler` accepts exactly one JSON object
+`{"threadId","messageId","text"}`, authorizes `OpMessage` through `Resolve`, and
+answers 202 with `{threadId, runId, messageId, state: "accepted"}`. Admission is
+not delivery: `message.update` events on the original run stream report
+accepted, delivered or failed (with the original text on failure), and the
+Driver's message capability decides the boundary. Drivers without mid-turn
+boundaries receive the input at turn end, when core resumes the healthy
+checkpoint inside the same execution.
+
+The run's drain is the only recorder writer. It records an admitted supplement
+as a `agentAdaptor.agui.supplement` Notice and projects it as a user text message
+that keeps the client's message ID, both to live observers and in history.
+After `Stream.Events` closes, admission is sealed and every supplement already
+admitted is recorded before `Done` and the terminal. Inactive runs (409
+`agui.run_inactive`), a message ID already in the thread's history (409
+`agui.duplicate_message`), run rejections such as disabled messages or size
+limits (422 `agui.message_rejected`) and malformed bodies (400) create no
+history. If recording fails after admission, the response is 500 with
+`state: "accepted"` and the run fails closed with `agui.recording_failed`;
+retries must keep the message ID. The handler checks the request context before
+dispatch and then detaches: a disconnected companion request does not withdraw
+input that the run has admitted.
+
+assistant-ui 0.1.1's AG-UI runtime folds a live run into assistant messages, so
+a user message echoed mid-run would render as assistant output. The example's
+thin glue (`withoutUserEchoes` in `web/src/session.ts`) drops user-role text
+lifecycles from the page's own live SSE body, shows guidance status from
+`message.update`, and imports the canonical `/history` after the run so the
+guidance appears in place and the next turn's IDs verify. Bare `HttpAgent`
+clients fold the echo correctly and need no glue.
 
 ## Active observation and unattended lifetime
 

@@ -21,7 +21,7 @@ Claude Code に切り替えるには、コンストラクタの Driver を差し
 ## 高度な機能
 
 - **構造化出力**：Go の構造体を定義し、`RunAs[T]` を呼ぶと、Agent はその構造に従って実行し、値が設定されたオブジェクトを返します。
-- **プロトコル対応**：組み込みの A2A/AGUI ラッパーにより、1 行で Agent を SSE + AGUI ストリーミング対応にできます。独自のフロントエンドやクライアントを接続すれば Agent サービスを構成できます。実行可能な CopilotKit フロントエンドの例も含まれています。
+- **プロトコル対応**：組み込みの A2A/AGUI ラッパーにより、1 行で Agent を SSE + AGUI ストリーミング対応にできます。独自のフロントエンドやクライアントを接続すれば Agent サービスを構成できます。実行可能な assistant-ui フロントエンドの例も含まれています。
 - **チーム**：ホストが選んだ leader が、任意の Driver を使うメンバーや Remote A2A メンバーを調整します。たとえば Codex が計画担当（Codex）、実装担当（Claude）、レビュー担当（Cursor）をまとめ、タスクの更新と worker の承認要求を leader の Event ストリームに集約します。[チームガイド](./docs/team.md)と examples/showcases/team-agent-workflow を参照してください。
 - **Agent の分離**：マシン上の Agent 設定を専用ディレクトリに複製し、ログイン状態をリンクで共有することで、設定変更を分離します。並行開発や役割分担のために、複数の Codex/Claude Code インスタンスを同時に実行できます。
 
@@ -220,7 +220,7 @@ func consumeApprovals(ctx context.Context, stream adaptor.Stream,
 
 応答は 1 回だけ受理されます。重複した応答、Kind の不一致、実行終了後の応答には、安定したエラー（`ErrApprovalResolved`、`ErrApprovalKindMismatch`、`ErrApprovalExpired`）を返します。ゼロ値の要求が永久にブロックすることもありません。要求の到着時に `Events()` が一度も呼ばれず、`OnApproval` handler もなければ、タイムアウト時のフォールバックをすぐ適用し、ライフサイクルの Notice を発行します。それ以外は、期限までに応答がない場合に `Policy.Approvals` の `OnTimeout` に従い、拒否された場合は `OnReject` に従います。保留要求の保存先はホストが決め、プロセスメモリに限定されません。
 
-実行可能な Web HITL の一式は [`web-chat/copilotkit`](./examples/web-chat/copilotkit) にあります。`/decision/pending` と `/decision/resolve` の 2 つのエンドポイントを備え、ページを再読み込みしても保留中の意思決定を表示できます。
+実行可能な Web HITL の一式は [`web-chat/assistant-ui`](./examples/web-chat/assistant-ui) にあります。意思決定は `dec.*` ツール呼び出しとして Approve/Deny ボタンで表示され、ホスト側の `/decision/pending` と `/decision/resolve` が実行中のリクエストにちょうど 1 回応答します。
 
 ## 複数ターンの会話
 
@@ -433,7 +433,7 @@ if err != nil {
 
 [AG-UI 1.0 ブリッジの仕様](./docs/agui.md)
 
-**Web フロントエンド**：1 行で Agent を AG-UI プロトコルの `http.Handler` に包めるため、CopilotKit などの AG-UI 対応クライアントから直接接続できます。
+**Web フロントエンド**：1 行で Agent を AG-UI プロトコルの `http.Handler` に包めるため、assistant-ui（`@ag-ui/client` 併用）などの AG-UI 対応クライアントから直接接続できます。
 
 ```go
 mux.Handle("/agent", sse.Handler(agent, sse.Options{
@@ -441,7 +441,7 @@ mux.Handle("/agent", sse.Handler(agent, sse.Options{
 }))
 ```
 
-チャット UI では、`agui.RunRegistry` が待機中の Thread で実行を開始し、実行中はその Stream に新しい入力を送ります。context は元の Stream.Send と同じ扱いで、キャンセルにより未取得の入力を取り消せます。CopilotKit の例では `POST /message` の送信処理を補足リクエストの context から明示的に切り離します。送信開始後は HTTP 切断で入力が撤回されたりキュー待ちが終了したりせず、配送確認は元の SSE ストリームに届きます。任意で利用できる `sessionrecorder` は、既定では安全な終局フィールドを記録し、追加の診断情報は `WithExposure` で明示的に有効にします。ルーティングと記録については[ストリーミングガイド](./docs/streaming.md#8-ag-ui-bridge)を参照してください。
+チャット UI では、`agui.RunRegistry` が待機中の Thread で実行を開始し、実行中はその Stream に新しい入力を送ります。context は元の Stream.Send と同じ扱いで、キャンセルにより未取得の入力を取り消せます。記録付き実行では `aguisession.Session.MessageHandler` が `POST /message` を提供します。送信処理を補足リクエストの context から切り離し、受理した入力を終局より前に user メッセージとして履歴に記録し、配送確認は元の SSE ストリームに届きます。assistant-ui の例は実行中のガイダンスにこれを使います。任意で利用できる `sessionrecorder` は、既定では安全な終局フィールドを記録し、追加の診断情報は `WithExposure` で明示的に有効にします。ルーティングと記録については[ストリーミングガイド](./docs/streaming.md#8-ag-ui-bridge)を参照してください。
 
 **A2A**：`bridges/a2a` は任意の Runner を A2A server として公開します。ルーティング、認証、TLS はホストが担当します。
 
@@ -503,7 +503,7 @@ func Coordinate(ctx context.Context, leader, planner, implementer *adaptor.Agent
 
 `context`、`adaptor "github.com/agent-dance/agent-adaptor/v2"`、`"github.com/agent-dance/agent-adaptor/v2/hosttools/team"` を import します。Agent の所有権はホストが保持します。継続的な入力には `Thread(key).Standby(ctx)` を使います。処理中の scope に対する `Thread.Send` は `ErrThreadBusy` を返します。[チームガイド](./docs/team.md)では、Remote メンバー、ツール、承認、上限、永続ストアからの復旧、遅延 Fork を説明しています。
 
-[ライブ実行のショーケース](./examples/showcases/team-agent-workflow)は、役割ごとの sandbox と CopilotKit ページを備え、ローカルで計画 → 実装 → レビューのワークフローを実行します。
+[ライブ実行のショーケース](./examples/showcases/team-agent-workflow)は、役割ごとの sandbox と assistant-ui ページを備え、ローカルで計画 → 実装 → レビューのワークフローを実行します。
 
 ```bash
 ./examples/showcases/team-agent-workflow/start-all.sh claude
@@ -562,7 +562,7 @@ synced, err := agent.SyncProfile(ctx)                // explicitly materializes 
 - [`tools`](./examples/tools)：MCP を自分で管理せず、型付き Go 関数を実際のローカル provider に公開します。
 - [`skills`](./examples/skills)：skill を選択し、その証拠ファイルを検証します。[`profiles`](./examples/profiles) は profile リソースを同期し、必要に応じてローカルプローブやタスク送信を行います。
 - [`inspect`](./examples/inspect)：2 回の実際の呼び出し後に、プローブと宣言済みの reviewer skill の選択を行います。
-- [`web-chat`](./examples/web-chat)：SSE/AG-UI server と、[`aguiclient`](./examples/web-chat/aguiclient)、[`copilotkit`](./examples/web-chat/copilotkit) のフロントエンド。[`assistant-ui`](./examples/web-chat/assistant-ui) は永続履歴、ツール失敗表示、任意の実行中監視を提供（既定は fake）。
+- [`web-chat`](./examples/web-chat)：SSE/AG-UI server と組み込みページ。Web フロントエンドは [`assistant-ui`](./examples/web-chat/assistant-ui) で、永続履歴、ツール失敗表示、実行中のガイダンス、承認、任意の実行中監視を提供（既定は fake）。
 - [`a2a-server`](./examples/a2a-server)：A2A 経由で Agent を公開し、呼び出します。
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow)：計画、実装、レビューを 1 つのパイプラインにまとめます。
 

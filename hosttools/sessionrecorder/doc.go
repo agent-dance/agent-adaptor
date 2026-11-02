@@ -74,7 +74,7 @@
 //   - routing / sticky-by-thread dispatch across pods — the package is
 //     single-process by design. Multi-pod hosts should plug a shared
 //     EventBackend (e.g. Redis, Postgres) below the EventRecorder.
-//   - fan-out (Stream → SSE + EventRecorder + metrics) — that's a few lines
-//     of host-owned for loop; see examples/web-chat/copilotkit
-//     for the canonical pattern.
+//   - fan-out (Stream → SSE + EventRecorder + metrics) — bridges/agui/aguisession
+//     implements the AG-UI single-drain recording pattern on this contract;
+//     see examples/web-chat/assistant-ui.
 package sessionrecorder

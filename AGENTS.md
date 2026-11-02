@@ -253,6 +253,7 @@ Bridges：
 - A2A 必须保持 ExposurePolicy 的最小暴露、敏感字段过滤与错误状态映射。`MessageUpdate`、`TurnEnd` 与 `Done` 投影为 A2A 状态/产物；`ProcessInfo` 与 `SubagentUpdate` 不经 A2A 暴露，不得宣称完整转发团队事件。
 - 带 working task 的 `taskId` 的消息路由到该执行的 `Stream.Send`（接纳不等于交付，回执仍是原流的 `MessageUpdate`）；只带 `contextId` 时以任务模式 `Thread.Send`，该 context 忙时返回 `task_in_progress` 并给出 activeTaskId；已终结的 task 返回明确终态，不得以旧 ID 新开任务。
 - A2A 不提供可移植的审批应答扩展、会话 Fork、输出 schema 或补充 timing 协商；生命周期字段不得伪造成可应答的远端 ApprovalRequest。协议保真缺口必须明确文档化，不得静默丢失或伪造支持。
+- `bridges/agui/aguisession` 是可选的 AG-UI 录制与历史投影：每次执行只有一个 drain，在任何录制 I/O 之前订阅 Events，按序写入 boundary、提交的用户轮次、源事件、Result.Text 兜底、`Done` 与权威 terminal Notice；live 与 history 使用同一投影，`Done` 仅作审计，terminal Notice 是唯一结论。活动期间的新 run 返回 409 `agui.run_active`，不得静默并入；运行中输入只经 `Supplement`/`MessageHandler`（`OpMessage` 授权）显式路由到该执行的 `Stream.Send`，接纳后由同一 drain 在 `Done` 之前记录为 user 消息，拒绝的输入不产生历史。provider 消息/工具 ID 按 run 与轮次作用域化。身份授权、持久后端、保留/脱敏与 worker 生命周期仍由宿主注入。
 
 Hosttools：
 

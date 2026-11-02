@@ -1,6 +1,6 @@
 # Examples
 
-这些示例使用 `github.com/agent-dance/agent-adaptor/v2`。任务从 `Send` 开始，通过 `Result()` 同步取结果，或消费 `Events()`。示例中的终端聊天采用任务模式；CopilotKit Web 示例可将运行中输入补充到当前 Stream。`showcases/issue-daemon` 展示消息投递、Standby 与团队的端到端场景。相关用法见 [streaming](../docs/streaming.md) 和 [API reference](../docs/api-reference.md)。
+这些示例使用 `github.com/agent-dance/agent-adaptor/v2`。任务从 `Send` 开始，通过 `Result()` 同步取结果，或消费 `Events()`。示例中的终端聊天采用任务模式；assistant-ui Web 示例可将运行中输入补充到当前 Stream，并在历史中记录。`showcases/issue-daemon` 展示消息投递、Standby 与团队的端到端场景。相关用法见 [streaming](../docs/streaming.md) 和 [API reference](../docs/api-reference.md)。
 
 除 `threads/codec`、`web-chat/assistant-ui` 的默认 fake 模式和关闭模型调用的 profile 同步模式外，运行示例通常会调用本机真实的 Codex、Claude、Cursor 或 CodeBuddy CLI，并可能产生费用。请先安装并登录对应 CLI；编译和 fake 测试不需要付费调用。
 
@@ -11,7 +11,7 @@ go run ./examples/quickstart -agent=claude
 go run ./examples/quickstart -agent=cursor -command=/absolute/path/to/agent
 ```
 
-也可使用 `AGENT_ADAPTOR_EXAMPLE_AGENT`、`CODEX_COMMAND`、`CLAUDE_COMMAND`、`CURSOR_COMMAND`、`CODEBUDDY_COMMAND` 及对应的 `*_MODEL` 环境变量。`web-chat/aguiclient` 和 `web-chat/copilotkit` 使用 `AGUI_AGENT` 等 AG-UI 示例环境设置，见各自 README。
+也可使用 `AGENT_ADAPTOR_EXAMPLE_AGENT`、`CODEX_COMMAND`、`CLAUDE_COMMAND`、`CURSOR_COMMAND`、`CODEBUDDY_COMMAND` 及对应的 `*_MODEL` 环境变量。`web-chat/assistant-ui` 使用 `AGUI_AGENT` 等 AG-UI 示例环境设置，见其 README。
 
 ## Core
 
@@ -40,16 +40,14 @@ Cursor 的工具边界补充消息需要宿主入口调用 `cursor.RunHookRelayI
 | 示例 | 代码实际展示的行为 |
 |---|---|
 | [`web-chat`](./web-chat) | AG-UI SSE 服务和内置原生浏览器页面，按请求发送任务，内存 store 按会话续接。 |
-| [`web-chat/aguiclient`](./web-chat/aguiclient) | Vite/React 的 `@ag-ui/client` 直接连接 Go SSE bridge；无 CopilotKit 代理层。 |
-| [`web-chat/assistant-ui`](./web-chat/assistant-ui) | 直连 assistant-ui：持久历史与 Thread checkpoint、13 条工具命令中一条失败、刷新后历史一致、运行中补充输入与 opt-in 活跃观察；默认 fake，真实 CLI 需显式启用。 |
-| [`web-chat/copilotkit`](./web-chat/copilotkit) | CopilotKit 前端、AG-UI 后端、approval responder、typed Event recorder，以及 session replay/pending/resolve 路由；可选择内存或 JSONL 恢复存储。 |
+| [`web-chat/assistant-ui`](./web-chat/assistant-ui) | 直连 assistant-ui：持久历史与 Thread checkpoint、13 条工具命令中一条失败、刷新后历史一致、运行中补充指导、人工审批与 opt-in 活跃观察；仓库唯一的 Web 前端；默认 fake，真实 CLI 需显式启用。 |
 | [`a2a-server`](./a2a-server) | 在隔离 workspace/profile 中发布本机 Agent；默认通过客户端读取 AgentCard、发送一个带 contextID 的流式任务，再用 GetTask 检查终态、历史和结果 artifact；`-serve-only` 只启动服务。 |
 
 `adapter.stream.v1` 和 `DecodeAdapterEventV1` 是版本化 wire schema 名，不是根包 v1 执行入口。A2A/团队 API 细节由对应文档单独维护。
 
 ## Showcase
 
-[`showcases/team-agent-workflow`](./showcases/team-agent-workflow) 是 live-only 的多 Agent 规划、实现、审查示例，可在 CLI 或 CopilotKit Web 模式下观察委派进度和工作区产物。它会产生多次模型调用，不进入自动 smoke；用法由其 [README](./showcases/team-agent-workflow/README.md) 单独维护。
+[`showcases/team-agent-workflow`](./showcases/team-agent-workflow) 是 live-only 的多 Agent 规划、实现、审查示例，可在 CLI 或 assistant-ui Web 模式下观察委派进度和工作区产物。它会产生多次模型调用，不进入自动 smoke；用法由其 [README](./showcases/team-agent-workflow/README.md) 单独维护。
 
 ## Smoke
 
