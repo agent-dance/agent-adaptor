@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	"github.com/agent-dance/agent-adaptor/internal/jsonnumber"
+	"github.com/agent-dance/agent-adaptor/v2/internal/jsonnumber"
 )
 
 // ProjectionHook redacts, drops, or expands projected content and diagnostics.

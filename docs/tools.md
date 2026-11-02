@@ -4,6 +4,8 @@ Host-defined Tools let an application add typed Go functions to an Agent. The
 application describes Tools; it does not construct an MCP server, choose a
 transport, distribute a bearer token, or manage a second service lifecycle.
 
+All SDK imports use `github.com/agent-dance/agent-adaptor/v2`; Tool definitions live in its `tool` package.
+
 ## Define and install a Tool
 
 ```go
@@ -20,7 +22,13 @@ lookupIssue := tool.Define(
 	"lookup_issue",
 	"Look up one issue by key.",
 	func(ctx context.Context, in LookupInput) (LookupOutput, error) {
-		return issues.Lookup(ctx, in.Key)
+		if err := ctx.Err(); err != nil {
+			return LookupOutput{}, err
+		}
+		if in.Key != "ISSUE-42" {
+			return LookupOutput{}, tool.Reject("not_found", "Choose ISSUE-42 for this example.")
+		}
+		return LookupOutput{Title: "Fix the build", State: "open"}, nil
 	},
 	tool.Title("Issue lookup"),
 	tool.ReadOnly(),
@@ -32,9 +40,13 @@ agent := adaptor.New(
 	codex.Driver(codex.Config{}),
 	adaptor.WithTools(lookupIssue),
 )
-defer agent.Close(shutdownCtx)
+defer agent.Close(context.Background())
 
-result, err := agent.Run(ctx, "Check whether ISSUE-42 is still open.")
+result, err := agent.Send(ctx, "Check whether ISSUE-42 is still open.").Result()
+if err != nil {
+	return err
+}
+fmt.Println(result.Text)
 ```
 
 `tool.Define` accepts heterogeneous typed handlers through the sealed
@@ -43,7 +55,7 @@ its `context.Context`.
 
 ## Construction and merge semantics
 
-`WithTools` returns `adaptor.Option`, so using it in `Run` or `Stream` is a
+`WithTools` returns `adaptor.Option`, so using it in `Send` is a
 compile error. The Tool set is part of the Agent's stable capability and
 authorization surface, not a per-call setting.
 
@@ -69,12 +81,14 @@ Use `tool.InputSchemaJSON` or `tool.OutputSchemaJSON` when a schema is maintaine
 outside Go:
 
 ```go
-tool.Define(
+lookupIssue := tool.Define(
 	"lookup_issue",
 	"Look up one issue by key.",
-	handler,
-	tool.InputSchemaJSON(inputSchema),
-	tool.OutputSchemaJSON(outputSchema),
+	func(_ context.Context, in map[string]string) (map[string]string, error) {
+		return map[string]string{"key": in["key"]}, nil
+	},
+	tool.InputSchemaJSON([]byte(`{"type":"object","properties":{"key":{"type":"string"}},"required":["key"],"additionalProperties":false}`)),
+	tool.OutputSchemaJSON([]byte(`{"type":"object","additionalProperties":{"type":"string"}}`)),
 )
 ```
 
@@ -87,11 +101,14 @@ construction or execution.
 Return `tool.Reject` for an expected failure the model can correct:
 
 ```go
-if !issues.Exists(in.Key) {
-	return LookupOutput{}, tool.Reject(
-		"not_found",
-		"Choose an issue key that exists in this repository.",
-	)
+func lookup(ctx context.Context, in LookupInput) (LookupOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return LookupOutput{}, err
+	}
+	if in.Key != "ISSUE-42" {
+		return LookupOutput{}, tool.Reject("not_found", "Choose ISSUE-42 for this example.")
+	}
+	return LookupOutput{Title: "Fix the build", State: "open"}, nil
 }
 ```
 
@@ -119,7 +136,7 @@ The Tool catalog fingerprint covers the sorted names, titles, descriptions,
 canonical input/output schemas, annotations, and semantic revisions. It never
 uses a function or closure address and never includes authentication secrets.
 
-Every Tool used by a stateful Thread must set `tool.Revision`. Change the
+Every Tool used by a named Thread, including Standby, must set `tool.Revision`. Named Threads use an Agent-local memory store by default; a custom store is not required to activate this revision check. Change the
 revision whenever handler behavior changes without a corresponding descriptor
 or schema change. A missing revision fails a Thread before the Driver starts.
 An unchanged catalog can resume the Thread and reuse a compatible persistent
@@ -173,7 +190,7 @@ resource resolution, not while defining the Tool. It has these properties:
   execution profiles, and only then revokes the Tool registration; a deadline
   leaves cleanup retryable instead of caching a partial close.
 
-`Inspect().ProfileState` and `SyncProfile` continue to describe the configured
+`Agent.ProfileState` and `Agent.SyncProfile` continue to describe the configured
 source profile and its public desired resources. The private clone is created
 only for execution and is not a second consumer-facing profile identity.
 
@@ -182,6 +199,10 @@ tenant identity and does not replace application authorization. A handler
 captures the host services and authority it needs through its Go closure. It
 does not receive invented Run, Thread, workspace, identity, or policy metadata
 that the shared provider transport cannot prove.
+
+A Stream can receive supplemental messages during a Tool call. Delivery follows the Driver's declared boundaries; a message does not mutate the Tool catalog, replace a running handler's arguments, or synthesize a Tool result. Unsupported mid-turn delivery falls back to checkpoint continuation. Interrupt requires Driver support and can cancel current provider work; handlers must honor cancellation and the host must account for any side effects already performed.
+
+`Stream.Cancel()` stops one execution. `Standby.Cancel()` stops current processing and clears pending input while keeping the conversation alive. `Agent.Close(ctx)` performs Agent resource shutdown. Final Tool/resource cleanup errors surface in `Done.Err` and `Stream.Result()`; `TurnEnd` can precede that cleanup. See [Streaming](./streaming.md).
 
 ## Existing MCP servers
 
@@ -199,6 +220,14 @@ Provider profile materialization applies the same fail-closed rule when that
 key already belongs to an external entry copied into the isolated execution
 profile. Ownership markers and rendered-content fingerprints ensure cleanup
 never adopts or deletes a user-modified entry.
+
+For Codex, SDK-declared MCP servers, including hosted Tools, team tools, and
+WithMCP servers, remain enabled under a ReadOnly sandbox. The sandbox restricts
+provider filesystem/shell access; the host controls its tools' authority.
+Permission auto-approve sets the server default approval mode to `approve`;
+Ask and auto-deny use `prompt` through app-server and core's approval path.
+Native-profile servers not declared by the SDK retain their own settings.
+These defaults do not override an explicit per-tool policy.
 
 Tool-call Events and Transcript entries still come only from each Driver's
 official provider-protocol parser. The internal runtime does not publish a

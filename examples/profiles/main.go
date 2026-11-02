@@ -39,11 +39,11 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	agentprofile "github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	agentprofile "github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 const (
@@ -77,7 +77,7 @@ func main() {
 		workspace   = flag.String("workspace", "", "Workspace cwd for agent runs. Defaults to a temp dir.")
 		timeout     = flag.Duration("timeout", 2*time.Minute, "Context timeout.")
 		probe       = flag.Bool("probe", true, "Run lightweight local probes that show the selected CLI can read the materialized profile where the provider exposes such probes.")
-		runAgent    = flag.Bool("run", false, "Also run the selected agent after syncing the profile. The Run call uses no run options.")
+		runAgent    = flag.Bool("run", false, "Also run the selected agent after syncing the profile. The Send call uses no execution options.")
 		prompt      = flag.String("prompt", defaultPrompt(), "Prompt used when -run=true.")
 	)
 	flag.Parse()
@@ -149,7 +149,7 @@ func main() {
 	}
 	output := map[string]any{
 		"demo":              "profiles",
-		"run_call_contract": "When -run=true this example calls ai.Run(ctx, prompt) with no CallOption arguments: everything the run sees comes from the agent-level defaults above.",
+		"run_call_contract": "When -run=true this example calls ai.Send(ctx, prompt).Result() with no CallOption arguments: everything the run sees comes from the agent-level defaults above.",
 		"profile_mode":      profileDescription,
 		"agent":             exampleutil.LiveAgentSummary(agentCfg),
 		"paths":             paths,
@@ -165,7 +165,7 @@ func main() {
 	}
 
 	if *runAgent {
-		result, runErr := ai.Run(ctx, *prompt)
+		result, runErr := ai.Send(ctx, *prompt).Result()
 		// One err, one verdict. A run that completed but failed at the business
 		// level arrives as a *RunError that still carries the full Result, so
 		// the evidence below is collected on both paths.

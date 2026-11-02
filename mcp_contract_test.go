@@ -14,11 +14,11 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/skill"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 func mcpServerKeys(payload driver.MCPPayload) []string {
@@ -37,28 +37,28 @@ func TestMCPDefaultOverrideClear(t *testing.T) {
 	fake := capsFake()
 	agent := adaptor.New(fake, adaptor.WithMCP(mcp.Stdio("default-stdio", "npx", mcp.Args("default-server"))))
 
-	if _, err := agent.Run(ctx, "run 1"); err != nil {
+	if _, err := agent.Send(ctx, "run 1").Result(); err != nil {
 		t.Fatalf("run 1: %v", err)
 	}
 	if keys := mcpServerKeys(fake.request(t, 0).MCP); !equalUnordered(keys, []string{"default-stdio"}) {
 		t.Errorf("run 1 servers = %v, want the construction default", keys)
 	}
 
-	if _, err := agent.Run(ctx, "run 2", adaptor.WithMCP(mcp.HTTP("remote-http", "https://example.com/mcp"))); err != nil {
+	if _, err := agent.Send(ctx, "run 2", adaptor.WithMCP(mcp.HTTP("remote-http", "https://example.com/mcp"))).Result(); err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
 	if keys := mcpServerKeys(fake.request(t, 1).MCP); !equalUnordered(keys, []string{"remote-http"}) {
 		t.Errorf("run 2 servers = %v, want the per-run replacement only", keys)
 	}
 
-	if _, err := agent.Run(ctx, "run 3", adaptor.WithMCP()); err != nil {
+	if _, err := agent.Send(ctx, "run 3", adaptor.WithMCP()).Result(); err != nil {
 		t.Fatalf("run 3: %v", err)
 	}
 	if keys := mcpServerKeys(fake.request(t, 2).MCP); len(keys) != 0 {
 		t.Errorf("run 3 servers = %v, want none after the zero-arg clear", keys)
 	}
 
-	if _, err := agent.Run(ctx, "run 4"); err != nil {
+	if _, err := agent.Send(ctx, "run 4").Result(); err != nil {
 		t.Fatalf("run 4: %v", err)
 	}
 	if keys := mcpServerKeys(fake.request(t, 3).MCP); !equalUnordered(keys, []string{"default-stdio"}) {
@@ -90,7 +90,7 @@ func TestMCPChangeStartsFreshThreadSession(t *testing.T) {
 	)
 
 	const key = "tenant-1/issue-1"
-	res1, err := agent.Thread(key).Run(ctx, "first")
+	res1, err := agent.Thread(key).Send(ctx, "first").Result()
 	if err != nil {
 		t.Fatalf("run 1: %v", err)
 	}
@@ -100,10 +100,10 @@ func TestMCPChangeStartsFreshThreadSession(t *testing.T) {
 	rec1 := activeRecord(t, store, key)
 
 	// Same thread key, different skill + MCP surface → fresh session.
-	res2, err := agent.Thread(key).Run(ctx, "second",
+	res2, err := agent.Thread(key).Send(ctx, "second",
 		adaptor.WithSkills(skill.Inline("team/override", "# override\n")),
 		adaptor.WithMCP(mcp.HTTP("remote-http", "https://example.com/mcp")),
-	)
+	).Result()
 	if err != nil {
 		t.Fatalf("run 2: %v", err)
 	}
@@ -123,10 +123,10 @@ func TestMCPChangeStartsFreshThreadSession(t *testing.T) {
 	}
 
 	// And an unchanged third run resumes the second session normally.
-	res3, err := agent.Thread(key).Run(ctx, "third",
+	res3, err := agent.Thread(key).Send(ctx, "third",
 		adaptor.WithSkills(skill.Inline("team/override", "# override\n")),
 		adaptor.WithMCP(mcp.HTTP("remote-http", "https://example.com/mcp")),
-	)
+	).Result()
 	if err != nil {
 		t.Fatalf("run 3: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestMCPTransportUnsupportedFailsPreLaunch(t *testing.T) {
 	}
 	agent := adaptor.New(fake, adaptor.WithMCP(mcp.HTTP("remote-http", "https://example.com/mcp")))
 
-	_, err := agent.Run(context.Background(), "go")
+	_, err := agent.Send(context.Background(), "go").Result()
 	if !errors.Is(err, adaptor.ErrMCPTransportUnsupported) {
 		t.Fatalf("err = %v, want ErrMCPTransportUnsupported", err)
 	}
@@ -210,7 +210,7 @@ func TestMCPTransportScopedOptionsFailPreLaunch(t *testing.T) {
 			fake := capsFake()
 			agent := adaptor.New(fake, adaptor.WithMCP(tt.server))
 
-			_, err := agent.Run(context.Background(), "go")
+			_, err := agent.Send(context.Background(), "go").Result()
 			if !errors.Is(err, adaptor.ErrInvalidMCPConfig) {
 				t.Fatalf("err = %v, want ErrInvalidMCPConfig", err)
 			}

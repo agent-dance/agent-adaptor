@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // SkillProvider resolves catalogue keys into concrete skills for a run.

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 func TestRecordedToolResultPreservesExitFailure(t *testing.T) {

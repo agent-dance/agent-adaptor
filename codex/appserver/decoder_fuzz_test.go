@@ -45,11 +45,11 @@ func FuzzCodexAppserverNotificationDecoder(f *testing.F) {
 		state := newRunState("fuzz-run", nil)
 		state.onNotification(method, params)
 
-		clean := state.snapshot(Options{}, "seed-thread", "", "", 0, "", false, nil)
+		clean := state.snapshot(Options{}, "seed-thread", "", "", 0, "", false)
 		if checkpoint := clean.Checkpoint; checkpoint != nil && (!checkpoint.Valid || checkpoint.State == nil || checkpoint.State.ResumeID == "") {
 			t.Fatalf("decoder produced malformed checkpoint %#v", checkpoint)
 		}
-		failed := state.snapshot(Options{}, "seed-thread", "", "", exitCode, "", false, nil)
+		failed := state.snapshot(Options{}, "seed-thread", "", "", exitCode, "", false)
 		if checkpoint := failed.Checkpoint; checkpoint != nil {
 			t.Fatalf("non-zero exit %d produced checkpoint %#v for %q", exitCode, checkpoint, method)
 		}
@@ -57,7 +57,7 @@ func FuzzCodexAppserverNotificationDecoder(f *testing.F) {
 		poisoned := newRunState("fuzz-poisoned", nil)
 		poisoned.onNotification(NotifyThreadStarted, []byte("{"))
 		poisoned.onNotification(method, params)
-		poisonedResult := poisoned.snapshot(Options{}, "seed-thread", "", "", 0, "", false, nil)
+		poisonedResult := poisoned.snapshot(Options{}, "seed-thread", "", "", 0, "", false)
 		if checkpoint := poisonedResult.Checkpoint; checkpoint != nil {
 			t.Fatalf("malformed protocol produced checkpoint %#v for %q", checkpoint, method)
 		}

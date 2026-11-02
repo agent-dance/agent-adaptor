@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 func TestUnclassifiedAbnormalProcessOutcomeIsRunErrorWithPartialResult(t *testing.T) {
@@ -50,7 +50,7 @@ func TestUnclassifiedAbnormalProcessOutcomeIsRunErrorWithPartialResult(t *testin
 			}
 			fake.response.Transcript = []driver.TranscriptItem{{Kind: driver.TranscriptAssistant, Text: "partial assistant text"}}
 
-			res, err := adaptor.New(fake).Run(context.Background(), "go")
+			res, err := adaptor.New(fake).Send(context.Background(), "go").Result()
 			if res != nil {
 				t.Fatalf("Result = %#v, want nil on failure", res)
 			}
@@ -89,7 +89,7 @@ func TestOuterCancellationKeepsContextIdentityWithoutProviderFailure(t *testing.
 		}, nil
 	}
 
-	_, err := adaptor.New(fake).Run(context.Background(), "go", adaptor.WithTimeout(20*time.Millisecond))
+	_, err := adaptor.New(fake).Send(context.Background(), "go", adaptor.WithTimeout(20*time.Millisecond)).Result()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %T %v, want context.DeadlineExceeded", err, err)
 	}
@@ -101,7 +101,10 @@ func TestOuterCancellationKeepsContextIdentityWithoutProviderFailure(t *testing.
 
 func TestProviderFailureWinsConcurrentCancellationAndPreservesResult(t *testing.T) {
 	fake := newFakeDriver()
-	fake.runFunc = func(ctx context.Context, _ driver.Request, _ driver.EventSink) (driver.Response, error) {
+	observed := make(chan struct{})
+	fake.runFunc = func(ctx context.Context, _ driver.Request, sink driver.EventSink) (driver.Response, error) {
+		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunError, Error: &driver.RunFailure{Code: driver.FailureAgentError, Message: "official provider terminal failure"}})
+		close(observed)
 		<-ctx.Done()
 		return driver.Response{
 			Output:     "provider partial",
@@ -115,7 +118,10 @@ func TestProviderFailureWinsConcurrentCancellationAndPreservesResult(t *testing.
 		}, ctx.Err()
 	}
 
-	_, err := adaptor.New(fake).Run(context.Background(), "go", adaptor.WithTimeout(20*time.Millisecond))
+	stream := adaptor.New(fake).Send(context.Background(), "go")
+	<-observed
+	stream.Cancel()
+	_, err := stream.Result()
 	var runErr *adaptor.RunError
 	if !errors.As(err, &runErr) || !errors.Is(err, adaptor.ErrAgentFailed) {
 		t.Fatalf("error = %T %v, want provider *RunError", err, err)
@@ -138,7 +144,7 @@ func TestAbnormalOutcomeCannotPersistThreadCheckpoint(t *testing.T) {
 	}
 	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
 
-	_, err := agent.Thread("outcome-thread").Run(context.Background(), "go")
+	_, err := agent.Thread("outcome-thread").Send(context.Background(), "go").Result()
 	if !errors.Is(err, adaptor.ErrAgentFailed) {
 		t.Fatalf("error = %T %v, want ErrAgentFailed", err, err)
 	}

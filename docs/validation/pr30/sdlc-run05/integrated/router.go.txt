@@ -1,0 +1,200 @@
+package mentionroute
+
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+type State string
+
+const (
+	Pending  State = "pending"
+	Busy     State = "busy"
+	Finished State = "finished"
+)
+
+type Author string
+
+const (
+	Human Author = "human"
+	Agent Author = "agent"
+)
+
+type Delivery struct {
+	Key  string
+	When string
+}
+
+// Extract returns the eligible literal mentions in source order.
+func Extract(text string, keys []string) []string {
+	if !utf8.ValidString(text) {
+		return nil
+	}
+
+	known := make([]string, 0, len(keys))
+	registered := make(map[string]bool)
+	for _, key := range keys {
+		if validKey(key) && !registered[key] {
+			known = append(known, key)
+			registered[key] = true
+		}
+	}
+	if len(known) == 0 {
+		return nil
+	}
+
+	var result []string
+	seen := make(map[string]bool)
+	var fence byte
+	fenceWidth := 0
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		// Quoted lines cannot change fence state, even inside a fence.
+		if strings.HasPrefix(strings.TrimLeft(line, " \t"), ">") {
+			continue
+		}
+		marker, width, tail := fenceRun(line)
+		if fence != 0 {
+			if marker == fence && width >= fenceWidth && strings.Trim(tail, " \t") == "" {
+				fence = 0
+			}
+			continue
+		}
+		if width >= 3 {
+			fence, fenceWidth = marker, width
+			continue
+		}
+		result = extractLine(line, known, seen, result)
+	}
+	return result
+}
+
+func validKey(key string) bool {
+	if key == "" || !utf8.ValidString(key) {
+		return false
+	}
+	for _, r := range key {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || r == '@' || r == '\\' || r == '`' {
+			return false
+		}
+	}
+	return true
+}
+
+// fenceRun reads a possible fence after at most three ASCII spaces.
+func fenceRun(line string) (marker byte, width int, tail string) {
+	i := 0
+	for i < len(line) && line[i] == ' ' {
+		i++
+	}
+	if i > 3 || i == len(line) || (line[i] != '`' && line[i] != '~') {
+		return 0, 0, ""
+	}
+	marker = line[i]
+	j := i
+	for j < len(line) && line[j] == marker {
+		j++
+	}
+	return marker, j - i, line[j:]
+}
+
+func extractLine(line string, keys []string, seen map[string]bool, result []string) []string {
+	spanWidth := 0
+	for i := 0; i < len(line); {
+		if line[i] == '`' {
+			j := i
+			for j < len(line) && line[j] == '`' {
+				j++
+			}
+			if spanWidth == 0 {
+				spanWidth = j - i
+			} else if j-i == spanWidth {
+				spanWidth = 0
+			}
+			i = j
+			continue
+		}
+		if spanWidth != 0 || line[i] != '@' || !mentionStart(line, i) {
+			i++
+			continue
+		}
+
+		best := ""
+		for _, key := range keys {
+			if len(key) <= len(best) || !strings.HasPrefix(line[i+1:], key) {
+				continue
+			}
+			end := i + 1 + len(key)
+			if end < len(line) {
+				r, _ := utf8.DecodeRuneInString(line[end:])
+				if identifierRune(r) {
+					continue
+				}
+			}
+			best = key
+		}
+		if best == "" {
+			i++
+			continue
+		}
+		if !seen[best] {
+			seen[best] = true
+			result = append(result, best)
+		}
+		i += 1 + len(best)
+	}
+	return result
+}
+
+func identifierRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r) || r == '_' || r == '-'
+}
+
+func mentionStart(line string, at int) bool {
+	// Escape parity is checked before the ordinary left boundary.
+	slashes := 0
+	for i := at - 1; i >= 0 && line[i] == '\\'; i-- {
+		slashes++
+	}
+	if slashes%2 != 0 {
+		return false
+	}
+	if at == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(line[:at])
+	return !identifierRune(r) && r != '.' && r != '+' && r != '@'
+}
+
+// Route applies the state and author permissions to eligible mentions.
+func Route(state State, author Author, text string, keys []string) []Delivery {
+	var when string
+	switch author {
+	case Human:
+		switch state {
+		case Pending:
+			when = "start"
+		case Busy:
+			when = "soon"
+		case Finished:
+			when = "new"
+		default:
+			return nil
+		}
+	case Agent:
+		if state != Busy {
+			return nil
+		}
+		when = "soon"
+	default:
+		return nil
+	}
+
+	mentions := Extract(text, keys)
+	var deliveries []Delivery
+	for _, key := range mentions {
+		deliveries = append(deliveries, Delivery{Key: key, When: when})
+	}
+	return deliveries
+}

@@ -1,7 +1,7 @@
 package codebuddy
 
 import (
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // wantsControlTransport reports whether the run policy requires the

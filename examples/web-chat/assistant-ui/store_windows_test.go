@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
 func TestWindowsCheckpointReplacementAndReopen(t *testing.T) {

@@ -16,11 +16,11 @@ import (
 	"time"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 func cloneMessages(t *testing.T, ms []Message) []Message {
@@ -427,8 +427,8 @@ func TestSessionOfficialClientFixture(t *testing.T) {
 			if mode == "tools" {
 				source = append(source, adaptor.RunStarted{RunID: "provider"}, adaptor.Thinking{MessageID: "thinking-0", Text: "thinking"}, adaptor.TextDelta{MessageID: "a", Text: fmt.Sprintf("answer %d", turn)})
 				source = append(source,
-					adaptor.SubagentUpdate{Agent: "helper", Kind: adaptor.SubagentStarted, Data: map[string]any{"delegation_id": "child"}},
-					adaptor.SubagentUpdate{Agent: "helper", Data: map[string]any{"delegation_id": "child", "kind": "subagent.tool_call.start", "remote_tool_call_id": "tool13", "tool_name": "shell"}},
+					adaptor.SubagentUpdate{Member: "helper", Kind: adaptor.SubagentStarted, Data: map[string]any{"delegation_id": "child"}},
+					adaptor.SubagentUpdate{Member: "helper", Data: map[string]any{"delegation_id": "child", "kind": "subagent.tool_call.start", "remote_tool_call_id": "tool13", "tool_name": "shell"}},
 				)
 				for i := 1; i <= 13; i++ {
 					id := fmt.Sprintf("tool%d", i)
@@ -438,7 +438,7 @@ func TestSessionOfficialClientFixture(t *testing.T) {
 					}
 					source = append(source, adaptor.ToolCall{ID: id, Name: "shell", Phase: adaptor.PhaseStart, Args: map[string]any{"n": i}}, adaptor.ToolCall{ID: id, Phase: adaptor.PhaseEnd, Result: map[string]any{"output": "output", "exitCode": exit}})
 				}
-				source = append(source, adaptor.SubagentUpdate{Agent: "helper", Kind: adaptor.SubagentFinished, Data: map[string]any{"delegation_id": "child", "kind": "subagent.failed", "status": "failed"}})
+				source = append(source, adaptor.SubagentUpdate{Member: "helper", Kind: adaptor.SubagentFinished, Data: map[string]any{"delegation_id": "child", "kind": "subagent.failed", "status": "failed"}})
 			}
 			switch mode {
 			case "business":
@@ -640,7 +640,7 @@ func TestDrainCancellationUnblocksFullOutput(t *testing.T) {
 	stream := script(nil, context.Canceled, source...)
 	output := make(chan events.Event, 32)
 	done := make(chan struct{})
-	go func() { defer close(done); s.drain(ctx, ThreadKey("t"), in, stream, boundary, output) }()
+	go func() { defer close(done); s.drain(ctx, ThreadKey("t"), in, stream, s.openLive(ThreadKey("t"), in, stream), boundary, output) }()
 	select {
 	case <-blocked:
 	case <-time.After(10 * time.Second):
@@ -747,7 +747,7 @@ func TestDivergenceDestinationFilledDuringResolution(t *testing.T) {
 
 func TestCancelledSubagentHasCancelledHistory(t *testing.T) {
 	s := New(fakeRunner{func(context.Context, string) adaptor.Stream {
-		return script(nil, context.Canceled, adaptor.SubagentUpdate{Agent: "child", Kind: adaptor.SubagentStarted})
+		return script(nil, context.Canceled, adaptor.SubagentUpdate{Member: "child", Kind: adaptor.SubagentStarted})
 	}}, Options{Recorder: recorder(t)})
 	w := request(s, "t", "r", []Message{user("u", "go")})
 	if w.Code != 200 {
@@ -796,7 +796,7 @@ func TestRichJSONLReconstructionMatchesMemory(t *testing.T) {
 			adaptor.Thinking{MessageID: "thinking-0", Text: "reason"}, adaptor.TextDelta{MessageID: "a", Text: "answer"},
 			adaptor.ToolCall{ID: "tool", Name: "shell", Phase: adaptor.PhaseStart, Args: map[string]any{"nested": []any{map[string]any{"n": 1}}}},
 			adaptor.ToolCall{ID: "tool", Phase: adaptor.PhaseEnd, Result: map[string]any{"output": "failed", "exitCode": json.Number("1")}},
-			adaptor.SubagentUpdate{Agent: "helper", Kind: adaptor.SubagentStarted, Data: map[string]any{"delegation_id": "child"}},
+			adaptor.SubagentUpdate{Member: "helper", Kind: adaptor.SubagentStarted, Data: map[string]any{"delegation_id": "child"}},
 		)
 	}}
 	memorySession := New(runner, Options{Recorder: mem, Input: agui.InputOptions{HistoryFallback: true}})

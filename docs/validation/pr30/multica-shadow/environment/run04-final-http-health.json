@@ -1,0 +1,13 @@
+{
+  "observed_at_utc": "2026-11-01T18:53:15.338545+00:00",
+  "api": {
+    "status": "ok",
+    "pid": 6868,
+    "commit": "unknown",
+    "started_at": "2026-11-01T16:54:25Z"
+  },
+  "web": {
+    "http_status": 200,
+    "response_bytes": 482353
+  }
+}

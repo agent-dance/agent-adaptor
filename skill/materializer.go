@@ -1,6 +1,6 @@
 package skill
 
-import "github.com/agent-dance/agent-adaptor/internal/skillmaterializer"
+import "github.com/agent-dance/agent-adaptor/v2/internal/skillmaterializer"
 
 // SkillCacheRootEnv names the AGENT_ADAPTOR_SKILL_CACHE_ROOT environment
 // variable. It overrides the default materializer's cache root. Drivers use

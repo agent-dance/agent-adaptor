@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/agent-dance/agent-adaptor/internal/jsonnumber"
+	"github.com/agent-dance/agent-adaptor/v2/internal/jsonnumber"
 )
 
 const (

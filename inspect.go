@@ -4,8 +4,8 @@ import (
 	"context"
 	"slices"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
 )
 
 // Agent.Inspect returns a read-only panel for one configured Agent. Optional
@@ -306,7 +306,7 @@ func (a *Agent) SyncProfile(ctx context.Context) (ProfileSnapshot, error) {
 }
 
 // SelectSkills installs a process-local skill selection override: the given
-// keys replace the agent-default refs for every subsequent Run/Stream/Thread
+// keys replace the agent-default refs for every subsequent Send/Thread
 // resolution and Inspect().Skills report, until the next SelectSkills call.
 // Keys must reference skills visible through the SkillProvider or the inline
 // defaults (bare-key selection semantics — inline Skill values can only be

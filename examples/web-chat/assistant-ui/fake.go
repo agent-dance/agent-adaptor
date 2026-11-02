@@ -7,7 +7,7 @@ import (
 	"time"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // scriptedDriver produces deterministic protocol-demo content without running

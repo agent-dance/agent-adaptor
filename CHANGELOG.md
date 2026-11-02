@@ -2,7 +2,207 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [2.0.0] - Unreleased
+
+### Breaking changes and migration
+
+- The Go module is now `github.com/agent-dance/agent-adaptor/v2`; update root
+  and subpackage imports together.
+- Replace consumer `agent.Run(ctx, p)` with `agent.Send(ctx, p).Result()`,
+  `agent.Stream(ctx, p)` with `agent.Send(ctx, p)`, and Thread execution with
+  `th.Send`. Runner now requires Send; Stream wrappers must also forward its
+  new message Send method. Driver.Run remains the extension SPI.
+- Done is the authoritative last event and carries the same Result pointer and
+  error as Stream.Result. RunFinished remains informational. Subscribe to Events
+  before execution traffic when ordinary events are needed; Result-only use
+  retains critical events and a Dropped summary instead of blocking producers.
+- Named Threads use a per-Agent memory store by default. Inject a shared or
+  durable WithThreadStore for continuity across Agents or restarts. Custom
+  stores must atomically persist delivered-message receipts and bounded recovery
+  history with checkpoint state under validated leases.
+- Stream and Standby expose Cancel, with no Close. Agent.Close remains the
+  idempotent owner-level process and Tool runtime cleanup operation.
+
+### Core and results
+
+- Added ThreadRunner and Thread.Standby while keeping the six-noun public model
+  and a single Send execution pipeline. Anonymous Agent sends remain independent.
+- Added Stream.Send with From, MessageID, and When(Soon/Interrupt/AfterTurn).
+  Message options also apply at execution start; execution options cannot be
+  passed to Stream.Send. Policy.Messages controls framing, pending capacity
+  (default 32), turn budget (default 20), and delivery enablement.
+- Added reliable MessageUpdate, per-provider-turn TurnEnd, final Done,
+  Result.Turns, Messages(), Undelivered(), and Subagents(). Multi-turn executions
+  retain complete raw streams/transcript, the last turn's text and terminal
+  payload, and summed observed usage. Core delivery transcript entries preserve
+  author authority without fabricating a provider user role.
+- Added MessageError carrying rejected input and a wrapped cause; accepted input
+  finishes delivered or failed with original text. MessageID dedupes within an
+  execution and against bounded Thread receipts (1000 IDs, seven days).
+- Added ApprovalRequest.Origin/Forward with one shared exactly-once responder.
+  Requests with no OnApproval handler and no prior Events call immediately use
+  the approval timeout fallback with a Notice.
+
+### Standby and Thread recovery
+
+- Standby accepts input until its creation context ends, has no overall Result,
+  and forwards each execution's TurnEnd and Done events. Its Send context bounds
+  admission only. Cancel stops current processing and queued input while keeping
+  the conversation on standby. Execution options queue a separate execution.
+- Repeated Standby calls for one key within an Agent return the live handle.
+  A renewed ownership lease excludes other writers even while idle; task-mode
+  Thread.Send fails with ErrThreadBusy for an active execution or live Standby.
+- Failed run_failed input carries into the next execution under the same IDs.
+  Only classified rate-limit/network/provider-server failures retry once;
+  otherwise input waits for the next host message. A carried item can report
+  failed/run_failed and later delivered; it is not silently marked successful.
+- Store outages retain the latest checkpoint in process, publish a Notice, and
+  retry persistence. Ownership is revalidated before recovery writes. Fresh
+  session fallback preserves bounded earlier guidance and three recent turns.
+
+### Message delivery SPI
+
+- Added MessageCapability and per-invocation resolution, MessagePort Window/
+  Signal/Claim/Ack, typed boundaries and size units, ContinueResume/InRun, and
+  per-turn TurnCompleted events. Core owns ordering and accounting; every Driver
+  claim must receive exactly one MessageAck before Run returns.
+- Boundary failures requeue for turn-end continuation; ambiguous attempts carry
+  a duplicate warning. Core resumes late messages admitted after an InRun
+  Driver's last empty claim; without resume those messages explicitly fail.
+- Delivery receipts persist atomically with healthy checkpoints. A crash after
+  provider acceptance but before receipt persistence can replay input after
+  recovery; MessageID dedupe does not guarantee exactly-once across that window.
+
+### Codex
+
+- App-server supports immediate turn/steer guarded by expectedTurnId, interrupt
+  followed by turn/start, and multiple turns within one Driver call, for one-shot
+  and resident transports. Declares minimum version 0.100.0 and persisted input.
+- Native structured output uses app-server `turn/start.outputSchema`, including
+  non-streaming Driver requests, with normal Thread process reuse and WithSpawn
+  behavior. Every continuation and interrupt restart receives the schema.
+- Without an explicit profile, CODEX_HOME or tenant identity, the Driver uses
+  the CLI's own home (`~/.codex`), so the user's login and provider
+  configuration apply as when running `codex` directly. Previously it fell back
+  to an empty managed home unless HOME was bound explicitly, and requests failed
+  authentication. Tenants keep per-tenant managed homes.
+- Fix MCP invocation overrides so SDK Tool and Team servers start correctly;
+  preserve literal server names, native servers, and explicit exact-tool policy.
+- Preserve MCP and dynamic tool argument objects as complete ToolCall.Args
+  snapshots, including nested values; non-object values keep an explicit wrapper.
+- Avoid false Windows termination errors for processes proven already exited.
+  Genuine process or transport errors invalidate checkpoints while preserving
+  partial audit data.
+- Exec resolves to core checkpoint continuation. Per-turn usage and output remain
+  separate from execution aggregation. Message live conformance requires both
+  the codex_live build tag and AGENT_ADAPTOR_LIVE_CONFORMANCE=1.
+
+### Claude
+
+- Stream-json input registers SDK main-agent prompt/tool/Stop hooks; tool context
+  and Stop continuation share a serialized writer and claim ownership.
+- Rejected or unanswered hook registration degrades after at most ten seconds
+  waiting for a response to core checkpoint resume, with a Notice; ordinary
+  prompt and HITL processing continue. Resident processes retain that outcome.
+- Declares minimum version 2.1.110, tool/stop boundaries and InRun continuation;
+  interrupt, echo confirmation and persistence of hook context remain false.
+  Batch native-schema JSON transport uses core resume.
+
+### Cursor
+
+- Added authenticated loopback hook relay, per-run nonce framing, exact ownership
+  checks and official hookAdditionalContexts echo confirmation. Hosts call
+  RunHookRelayIfRequested first in main or configure a compatible HookRelay.
+- Tool delivery requires an explicitly managed workspace and an unused hooks.json;
+  setup/probe failure, user workspaces and Windows use core resume with a Notice.
+  The total hook context is limited to 10000 UTF-16 units, with tag overhead
+  reserved at admission. Declares minimum version 2026.10.14, no interrupt and
+  no persistence of hook input across resume.
+
+### CodeBuddy
+
+- Added exactly one TurnCompleted for headless, control and resident turns,
+  preserving existing Raw/Transcript/checkpoint behavior and propagating sink
+  failures. Declares no verified mid-turn or interrupt capability; supplemental
+  messages continue through core resume.
+
+Built-in Drivers probe the installed CLI version and report the effective
+message capability through Inspect.Environment. Unsupported or unknown versions
+fall back to available core resume with a Notice.
+Pi and OpenCode remain outside the supported v2 Driver set.
+
+### Teams and A2A
+
+- Replace `hosttools/a2adelegation` with `hosttools/team`: a delegation-first
+  leader, four fixed leader tools, two local worker tools, host-selected local
+  or Remote A2A members, one loopback MCP listener and execution-scoped tokens.
+- Add asynchronous task handles, PerTask/PerScope continuity, queued concurrency
+  limits, wake coalescing, leader relays, and worker approvals forwarded with
+  `Origin{Member, Task}` under each member's own policy.
+- Add named team Threads and Standby. Task-mode `Thread.Send` reports
+  `ErrThreadBusy` for active work or live Standby; supplements use Stream.Send
+  and Standby.Send. Team.Close releases host resources without closing Agents.
+- Add TaskStore fencing, atomic task/wake commits, inbox claims, original-ID
+  resubmission, interrupted-task recovery and `teamstoretest`. Recovered messages
+  needing execution options remain held until the host restores those options.
+- Add idle-scope Fork with durable lineage, copied terminal history/artifacts,
+  and lazy leader/local PerScope conversation branching. PerTask conversation
+  links and inboxes are not copied; PerScope Remote members reject Fork.
+- Compose leader audit layers with `ComposeResults`, rebase message turn
+  numbers, expose task summaries through `Subagents()`, and retain full member
+  results/Remote snapshots in TaskStore. `CapMessageTurns` enforces remaining
+  leader budget; aborted work at a team limit reports `ReasonLimitExceeded`.
+- Replace the delegation-bus subagent bridge with typed `SubagentUpdate`
+  projection and optional external-source Merge; Teams already include workers.
+- Remote members retain origin-restricted authentication and policy, same-task
+  messages (`Soon` only), observed context continuity, and a two-minute
+  disconnected observation deadline. No approval-response extension,
+  conversation Fork or output-schema negotiation is available; input-required
+  is handled by remote policy. The A2A bridge routes active-task input to the
+  existing Stream and projects v2 turn, message, subagent and completion events;
+  a new task targeting a busy context is explicitly rejected.
+
+### Integration hardening
+
+- Preserve cancellation identity across provider process teardown, approval
+  shutdown and lease renewal, while retaining diagnostics and provider failures
+  observed before cancellation. Preflight failures return message receipts and
+  cannot replay rejected input through Standby recovery.
+- Preserve reliable terminal and message events during cancellation and paused
+  subscriptions. Carried Standby input no longer prevents fresh host input from
+  being admitted; internal event drains do not suppress approval fallback.
+- Enforce framed message limits on combined continuation batches and turn-limit
+  reminders, including UTF-16 overhead, without starting a turn for a reminder.
+- Codex submits one ordered steer RPC per claimed batch and acknowledges confirmed
+  RPC success before a later cancel. Late and replayed usage notifications are
+  attributed to their own turns without double-counting resumed history.
+- Keep SDK-declared Codex MCP servers enabled under read-only isolation. Derived
+  approval defaults map AutoApprove to approve and Ask/AutoDeny to prompt,
+  retaining exact per-tool overrides. App-server MCP consent reaches host
+  approvals; blocked replies retire the transport within bounded cleanup.
+- Bound Claude hook writer settlement, retire unusable resident processes and
+  report ambiguous delivery truthfully. Hook degradation restores ordinary stdin
+  lifecycle; Stop delivery preserves admission order and per-turn usage.
+- Give a healthy Claude terminal up to 100ms for its hook writer to finish
+  bookkeeping before retiring the resident. Cancellation and failed runs still
+  interrupt writes immediately; blocked writes retain bounded cleanup.
+- Fix team rejected-message replay, retry continuity, final task snapshots on
+  every completion path, unread notes and Remote approval-state recovery.
+  Add Result.WithSubagents for detached task-snapshot replacement without
+  repeating usage accounting. Fork retains healthy local PerScope lineage.
+- Keep team Standby contexts scoped to admission and drain reliable events on
+  shutdown. AG-UI Activity restores member display names, worker text and
+  validated structured attachments, excluding raw and private runtime data.
+- Add AG-UI RunRegistry routing and a CopilotKit running-message input using
+  the existing event stream for delivery receipts. Record safe Done fields by
+  default; sessionrecorder.WithExposure explicitly enables diagnostic layers.
+- Add adaptertest MSG-01–MSG-10 and transport fixtures for all four built-in
+  Drivers. Stabilize event-loop and store-expiry tests across race instrumentation
+  and Windows clock resolution. Snapshot lease timing before asynchronous store
+  calls so abandoned hooks cannot read a later configuration lifetime.
+  Synchronize v2 guides and all README languages.
+- Use Go 1.26.10 for security fixes and upgrade the example frontend dependencies
+  without lowering production audit thresholds.
 
 ### Added
 

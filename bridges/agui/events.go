@@ -5,7 +5,7 @@ package agui
 //
 // Typical host use:
 //
-//	stream := agent.Stream(ctx, prompt)
+//	stream := agent.Send(ctx, prompt)
 //	for ev := range agui.Events(stream) {
 //	    // ev is an AG-UI events.Event; forward it via SSE / WebSocket.
 //	}
@@ -38,8 +38,8 @@ import (
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/internal/jsonnumber"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/internal/jsonnumber"
 )
 
 // EventTranslator is the stateful mapper from adaptor.Event to AG-UI
@@ -84,7 +84,7 @@ type EventTranslator struct {
 type EventTranslatorOption func(*EventTranslator)
 
 // WithEventDecisionMode selects the approval projection strategy for the
-// v1 translator. DecisionAsToolCall is the default; DecisionAsCustom selects
+// event translator. DecisionAsToolCall is the default; DecisionAsCustom selects
 // an explicit CustomEvent mapping.
 func WithEventDecisionMode(mode DecisionMode) EventTranslatorOption {
 	return func(t *EventTranslator) { t.decisionMode = mode }
@@ -178,7 +178,8 @@ func EventsContext(ctx context.Context, stream adaptor.Stream, opts ...EventTran
 // Translate maps one adaptor.Event to zero or more AG-UI events. Stateful:
 // it synthesizes missing opening lifecycle markers, buffers pre-RUN_STARTED
 // output and dedupes lifecycle markers. RunFinished only supplies identity;
-// CloseResult latches the authoritative terminal after Stream.Result().
+// Done projects the authoritative terminal; CloseResult supplies the same
+// terminal for streams without a Done event.
 func (t *EventTranslator) Translate(ev adaptor.Event) (out []aguievents.Event) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -237,6 +238,8 @@ func (t *EventTranslator) Translate(ev adaptor.Event) (out []aguievents.Event) {
 		}
 		return out
 
+	case adaptor.Done:
+		return t.closeResultLocked(e.Result, e.Err)
 	case adaptor.RunFinished:
 		if e.ThreadID != "" {
 			t.providerThreadID = e.ThreadID
@@ -247,8 +250,8 @@ func (t *EventTranslator) Translate(ev adaptor.Event) (out []aguievents.Event) {
 		if !t.publicIdentity && !t.runStart && meta.RunID == "" && e.RunID != "" {
 			t.runID = e.RunID
 		}
-		// Informational only. Stream.Result() is the sole terminal authority;
-		// Events calls CloseResult after the event channel is fully drained.
+		// Informational only. Done carries the authoritative final result;
+		// Events also calls CloseResult after the event channel is fully drained.
 		return nil
 	}
 
@@ -289,6 +292,10 @@ func (t *EventTranslator) CloseResult(result *adaptor.Result, err error) (output
 	// The named return includes synthesized text and terminal boundaries in
 	// the same final projection as events produced by Translate.
 	defer func() { output = t.project(output) }()
+	return t.closeResultLocked(result, err)
+}
+
+func (t *EventTranslator) closeResultLocked(result *adaptor.Result, err error) []aguievents.Event {
 	if t.runFinish {
 		return nil
 	}
@@ -359,6 +366,14 @@ func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguieve
 		return []aguievents.Event{t.toolResultEvent(e.ID, e.Result)}
 	case adaptor.Notice:
 		return t.noticeLocked(e)
+	case adaptor.MessageUpdate:
+		return []aguievents.Event{customEvent("message.update", map[string]any{"id": e.ID, "state": e.State, "turn": e.Turn, "boundary": e.Boundary, "mechanism": e.Mechanism, "reason": e.Reason, "text": e.Text})}
+	case adaptor.TurnEnd:
+		value := map[string]any{"turn": e.Turn, "result": turnResultValue(e.Result), "message_ids": e.MessageIDs}
+		if e.Err != nil {
+			value["error"] = e.Err.Error()
+		}
+		return []aguievents.Event{customEvent("turn.end", value)}
 	case adaptor.Dropped:
 		return []aguievents.Event{customEvent("stream.dropped", droppedValue(e))}
 	case adaptor.SubagentUpdate:
@@ -567,6 +582,7 @@ func (t *EventTranslator) approvalRequestLocked(req *adaptor.ApprovalRequest) []
 		return nil
 	}
 	payload := map[string]any{
+		"origin":        req.Origin(),
 		"request_id":    req.ID,
 		"kind":          string(req.Kind),
 		"source":        req.Source,
@@ -788,11 +804,27 @@ func customEvent(name string, value map[string]any) aguievents.Event {
 	if name == "" {
 		name = "codex.event"
 	}
-	// CUSTOM.value is required even when the notice has no payload.
 	if value == nil {
 		value = map[string]any{}
 	}
 	return aguievents.NewCustomEvent(name, aguievents.WithValue(value))
+}
+
+// turnResultValue retains the public per-turn fields without exposing
+// arbitrary provider metadata through a protocol custom event.
+func turnResultValue(result *adaptor.Result) *adaptor.Result {
+	if result == nil {
+		return nil
+	}
+	var usage *adaptor.Usage
+	if result.Usage != nil {
+		copy := *result.Usage
+		usage = &copy
+	}
+	return &adaptor.Result{
+		RunID: result.RunID, Turns: result.Turns, Model: result.Model,
+		Provider: result.Provider, Text: result.Text, Summary: result.Summary, Usage: usage,
+	}
 }
 
 func intFromAny(v any) int {

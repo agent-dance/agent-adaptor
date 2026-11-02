@@ -1,0 +1,172 @@
+{
+  "original_directory": "C:\\Users\\buthim\\AppData\\Local\\Temp\\agent-adaptor-pr30-sdlc-run05",
+  "original_files": [
+    {
+      "bytes": 5138,
+      "path": "acceptance_test.go.txt",
+      "sha256": "3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1"
+    },
+    {
+      "bytes": 8349215,
+      "path": "events.json",
+      "sha256": "b10e4f86f8812b69bb6ae7d1a512dd5f003a4f883a94fb66a444c319f5df401c"
+    },
+    {
+      "bytes": 2336727,
+      "path": "leader-result.json",
+      "sha256": "349641106dc6e2041e5165be6e1d01660bee75715e83f31a09d77977b34c1b1c"
+    },
+    {
+      "bytes": 6847,
+      "path": "report.json",
+      "sha256": "45a45eff484bd28f631f8321958e5508a009f85c5c71c9472d2f2142931e6fea"
+    },
+    {
+      "bytes": 5219,
+      "path": "spec.md",
+      "sha256": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0"
+    },
+    {
+      "bytes": 354,
+      "path": "candidates/01.manifest.json",
+      "sha256": "109a1d09349ea28f3b39505d13ee5b483704bc58d201fd75cb38d111a6110ad1"
+    },
+    {
+      "bytes": 5138,
+      "path": "candidates/01/acceptance_test.go",
+      "sha256": "3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1"
+    },
+    {
+      "bytes": 42,
+      "path": "candidates/01/go.mod",
+      "sha256": "8e7cb46679d52fc477d4f99d40c8bb88706ab0a2ce9cff5ed5eccd46dd29671d"
+    },
+    {
+      "bytes": 4026,
+      "path": "candidates/01/router.go",
+      "sha256": "e9b724906451ff41c89dfce512486fe67731f30589cb3e7c872b8c6a24085b6b"
+    },
+    {
+      "bytes": 8893,
+      "path": "checks/check-001.log",
+      "sha256": "01e001f2e1101bdec4c5143d14a8887374436ce8a226f3db812d531c63d0c275"
+    },
+    {
+      "bytes": 0,
+      "path": "checks/check-002.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 5138,
+      "path": "integrated/acceptance_test.go",
+      "sha256": "3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1"
+    },
+    {
+      "bytes": 42,
+      "path": "integrated/go.mod",
+      "sha256": "8e7cb46679d52fc477d4f99d40c8bb88706ab0a2ce9cff5ed5eccd46dd29671d"
+    },
+    {
+      "bytes": 4026,
+      "path": "integrated/router.go",
+      "sha256": "e9b724906451ff41c89dfce512486fe67731f30589cb3e7c872b8c6a24085b6b"
+    },
+    {
+      "bytes": 7863,
+      "path": "prompts/engineer.txt",
+      "sha256": "26cdd53a5784879e3868e77eb5632c265523d7476e357cb18b68b6c8d1407157"
+    },
+    {
+      "bytes": 3343,
+      "path": "prompts/leader.txt",
+      "sha256": "34046ee70dabfdf9086ab94343a2ae7c6b6dd36c0e8abd19e41b08c4f2afa8b9"
+    },
+    {
+      "bytes": 7365,
+      "path": "prompts/planner.txt",
+      "sha256": "bf140536003ad07a8b0b6c5293e83643e91338c61271d0816bb703e7ba02c241"
+    },
+    {
+      "bytes": 7772,
+      "path": "prompts/reviewer.txt",
+      "sha256": "c1e1226d89c73eda8d547f8c9583d4ebab877e6656db54626ccf23ef6cb242ee"
+    },
+    {
+      "bytes": 7684,
+      "path": "prompts/verifier.txt",
+      "sha256": "df0522190e387bc8562873ea5273a36e7a05c2efcf9be08e3ee8762b0b64d3c8"
+    },
+    {
+      "bytes": 640165,
+      "path": "tasks/01-planner.json",
+      "sha256": "cca1288f961c267f4614c9e420916d1525cb14e71e82024e3caf4f5b37af2515"
+    },
+    {
+      "bytes": 577684,
+      "path": "tasks/02-engineer.json",
+      "sha256": "3afcbf1e311097fc4142228c16dc2404e8a456068d7685ac9729d460d65dcc38"
+    },
+    {
+      "bytes": 394448,
+      "path": "tasks/03-reviewer.json",
+      "sha256": "1cec6afffb3afab084647a326c1757a9d3acdeeb446615c718b2ba5084e46779"
+    },
+    {
+      "bytes": 407745,
+      "path": "tasks/04-verifier.json",
+      "sha256": "c01896839cdffa1d2bbe198b4409c8b6819e2637396ac4638fac8f61cdb3142b"
+    }
+  ],
+  "source_manifest": [
+    {
+      "path": "examples/showcases/sdlc-team/evidence.go",
+      "sha256": "7717b93fb86f021a5ad48be792cdceb56ea61d4045c89ecc04cb686bc65c36fa"
+    },
+    {
+      "path": "examples/showcases/sdlc-team/fixture_guard_test.go",
+      "sha256": "1e0e6925e5f11bc2329c221db4e64e6bc747ff1dcc7a482ab1790728c0732eaf"
+    },
+    {
+      "path": "examples/showcases/sdlc-team/fixture.go",
+      "sha256": "7e7e1d8b3cebc14441f31d28a0f23244dd2e0ae660f32ec8ff1d84be1b53d2cf"
+    },
+    {
+      "path": "examples/showcases/sdlc-team/main.go",
+      "sha256": "07e1c876aa1adad252d1f87960f1f9ad9b3a29aeb38d5c4aeb21aa78d5af4754"
+    },
+    {
+      "path": "examples/showcases/sdlc-team/workflow_test.go",
+      "sha256": "f062936f6c3b9d32586a1a7c7f59dc96d93aeee26bacb22aa7b43534ef6bf948"
+    },
+    {
+      "path": "examples/showcases/sdlc-team/workflow.go",
+      "sha256": "b8d0a50db90c28e5fb5194532380ccdaa1abd038a2e4628a33800b1baff9f5b9"
+    }
+  ],
+  "source_commit": "6f17eaa6957411a5d568a55ec15ed978fde259fe",
+  "note": "Curated review copy. Complete Raw, Transcript and typed events remain in the original local directory. Original artifacts are unmodified; this run uses the corrected nullable MCP parser. Candidate source is stored with .txt suffix to avoid making the audit fixture an SDK package.",
+  "independent_review": {
+    "test_package_passes": 1,
+    "successful_mcp_transcript_errors": 0,
+    "tasks_succeeded": 4,
+    "leader_mcp_calls": 12,
+    "task_lifecycle_overlap_seconds": 112.829,
+    "member_mcp_calls": 10,
+    "work_directory_absent": true,
+    "outputs_match_official_terminal": true,
+    "usage_matches_observed_token_update": true,
+    "candidate_manifest_recomputed": true,
+    "limitations": [
+      "Incoming-only Raw cannot independently attest per-turn effort.",
+      "Absence of the temporary work directory does not independently prove that every operating-system process has exited.",
+      "The fixture is the documented mention/routing subset, not the full Multica parser."
+    ],
+    "reviewer_read_receipt_matches": true,
+    "leader_typed_mcp_results_with_error_field": 0,
+    "skipped_or_failed_tests": 0,
+    "joined_work_overlap_seconds": 98.924,
+    "integrated_identical": true,
+    "check_receipt_log_hashes_match": true,
+    "expected_tests_run_and_passed": 9
+  }
+}

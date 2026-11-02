@@ -1,0 +1,62 @@
+{
+  "note": "Original report remains incomplete and failed (MC-006). Read-only diagnostics reused the completed development task after the tint-parser correction; they do not change the original verdict. The active second task was actually cancelled and SDK cleanup confirmed before restart for MC-007.",
+  "original_directory": "C:\\Users\\buthim\\.codex\\worktrees\\multica-pr30-shadow\\multica\\output\\playwright\\agent-adaptor-shadow\\multica-sdk-20261101T174220Z",
+  "accepted": false,
+  "original_files": [
+    {
+      "bytes": 78144,
+      "path": "existing-development-confirmed.json",
+      "sha256": "0bbec4b938ad1f23a9e0c0227a42acabd08b5f67eb7c96e1ef2c979ae9a3917e"
+    },
+    {
+      "bytes": 152173,
+      "path": "existing-development-ui-confirmed.png",
+      "sha256": "589321d2bb211557410ff523690b0a27574f09c3be1e7ad0dfdcf1e7ee96d633"
+    },
+    {
+      "bytes": 88840,
+      "path": "interrupted-cleanup.json",
+      "sha256": "793535652b9d149e34302ac6fcea50692303ca7868c2567c256de5154afa5749"
+    },
+    {
+      "bytes": 1374,
+      "path": "mc006-source-freeze.json",
+      "sha256": "0d8bb46ab93a5d55b5c8a4d6b6a40d5776ef85a0dae11ef6db64f9bb95354320"
+    },
+    {
+      "bytes": 3010,
+      "path": "playwright.log",
+      "sha256": "c7f4ff3ff7769fa23a5ff810714d4ff978c1438f02c3d93facf669ced479eea2"
+    },
+    {
+      "bytes": 58,
+      "path": "process-result.json",
+      "sha256": "69da8fd9b8e9d424bf0daf0c746aaaecdc660bce22e3014d6e51a99efd3aa46d"
+    },
+    {
+      "bytes": 140818,
+      "path": "report.json",
+      "sha256": "68eb7c788247440f2178d3887c6c40c1945ce0ffc1aabc2a4d53684cc4a4d0ef"
+    },
+    {
+      "bytes": 1191,
+      "path": "source-freeze.json",
+      "sha256": "37656c496bf3f799f7b7626e8d42cd90a338e3bcbe0d6418d92b6fd8f221bc24"
+    },
+    {
+      "bytes": 101,
+      "path": "test-results/.last-run.json",
+      "sha256": "706364327712c1869fcdef64495e43920a01862341806ecb719072048c89bcd3"
+    },
+    {
+      "bytes": 135131,
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/actual-shadow-evidence.json",
+      "sha256": "70915aa64039dbfec55bfb6ee990adff77c1acfdffe53f8a98afd006b0cc0453"
+    },
+    {
+      "bytes": 6488,
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/failure.png",
+      "sha256": "b2c67d4745d1e02309a52e80e930e5b5da6a926805fcb9bd554a3f318ece97b2"
+    }
+  ]
+}

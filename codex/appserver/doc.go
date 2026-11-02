@@ -1,6 +1,11 @@
 // Package appserver is a typed client for the codex app-server JSON-RPC
 // protocol over stdio. It is the backing transport used by codex adapter
-// runs whose resolved driver.Request selects provider-native streaming.
+// runs whose resolved driver.Request selects this transport, including native
+// schema output independently of provider streaming.
+//
+// MCP and dynamic tool calls expose object arguments directly as the complete
+// initial Args snapshot. Non-object arguments use an "arguments" wrapper;
+// strings are preserved without recursively interpreting embedded JSON.
 //
 // The package is organised into five files:
 //

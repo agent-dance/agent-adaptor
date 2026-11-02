@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/agent-dance/agent-adaptor/internal/profilestate"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilestate"
 )
 
 func readJSONObject(path string) (map[string]any, error) {

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/keycodec"
+	"github.com/agent-dance/agent-adaptor/v2/internal/keycodec"
 )
 
 // LeaseTTL and LeaseRenewInterval report the session lease timing knobs.
@@ -310,7 +310,12 @@ func (p *resolvedSessionPlan) startLeaseRenewal(ctx context.Context, store Sessi
 	if store == nil {
 		return
 	}
-	interval := leaseRenewInterval()
+	// Snapshot timing before spawning either the coordinator or an external
+	// hook. An abandoned hook goroutine may start after renewal has stopped,
+	// so it must not read mutable timing providers from that later lifetime.
+	ttl := LeaseTTL()
+	interval := leaseRenewInterval(ttl)
+	attemptTimeout := leaseRenewAttemptTimeout(ttl)
 	if interval <= 0 {
 		return
 	}
@@ -337,9 +342,9 @@ func (p *resolvedSessionPlan) startLeaseRenewal(ctx context.Context, store Sessi
 				return
 			case <-ticker.C:
 				for _, lease := range p.snapshotLeases() {
-					attemptCtx, attemptCancel := context.WithTimeout(renewCtx, leaseRenewAttemptTimeout())
+					attemptCtx, attemptCancel := context.WithTimeout(renewCtx, attemptTimeout)
 					err, completed := boundedSessionStoreCall(attemptCtx, func(callCtx context.Context) error {
-						return store.RenewLease(callCtx, lease, LeaseTTL())
+						return store.RenewLease(callCtx, lease, ttl)
 					})
 					attemptCancel()
 					if err != nil {
@@ -432,10 +437,10 @@ func (p *resolvedSessionPlan) renewalError() error {
 	return p.renewErr
 }
 
-func leaseRenewInterval() time.Duration {
+func leaseRenewInterval(ttl time.Duration) time.Duration {
 	interval := LeaseRenewInterval()
-	if interval <= 0 || interval >= LeaseTTL() {
-		interval = LeaseTTL() / 2
+	if interval <= 0 || interval >= ttl {
+		interval = ttl / 2
 	}
 	if interval <= 0 {
 		return time.Second
@@ -446,8 +451,8 @@ func leaseRenewInterval() time.Duration {
 // leaseRenewAttemptTimeout fails a stalled renewal well before the current
 // lease can expire. The five-second cap keeps the SDK responsive with normal
 // production TTLs; short test/host TTLs retain a proportional safety margin.
-func leaseRenewAttemptTimeout() time.Duration {
-	timeout := LeaseTTL() / 2
+func leaseRenewAttemptTimeout(ttl time.Duration) time.Duration {
+	timeout := ttl / 2
 	if timeout <= 0 {
 		return time.Millisecond
 	}
@@ -765,7 +770,7 @@ func persistSessionPlan(
 		}
 	}
 
-	return &SessionRef{
+	ref := &SessionRef{
 		ID:            plan.engineID,
 		Namespace:     plan.request.Namespace,
 		Key:           plan.request.Key,
@@ -774,5 +779,13 @@ func persistSessionPlan(
 		Created:       plan.created,
 		PreviousID:    plan.previousID,
 		Compatibility: plan.compatibility,
-	}, nil
+	}
+	// Later turns in this execution continue under the same held leases.
+	// Advance only after atomic persistence succeeded, retaining the saved
+	// creation timestamp and clearing one-shot fork/rebind preconditions.
+	plan.record = &record
+	plan.reused = true
+	plan.previousID = ""
+	plan.requireKeyAbsent = false
+	return ref, nil
 }

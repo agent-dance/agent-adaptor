@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	schema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -85,9 +85,9 @@ func TestIdentityAttributionHook(t *testing.T) {
 func TestSubagentToolAttribution(t *testing.T) {
 	tr := NewEventTranslator()
 	tr.Translate(adaptor.RunStarted{RunID: "r"})
-	tr.Translate(adaptor.SubagentUpdate{Agent: "worker", Kind: adaptor.SubagentStarted, Data: map[string]any{"delegation_id": "delegated-run"}})
+	tr.Translate(adaptor.SubagentUpdate{Member: "worker", Kind: adaptor.SubagentStarted, Data: map[string]any{"delegation_id": "delegated-run"}})
 	tr.Translate(adaptor.SubagentUpdate{
-		Agent: "worker",
+		Member: "worker",
 		Data: map[string]any{
 			"delegation_id": "delegated-run", "kind": "subagent.tool_call.start",
 			"remote_tool_call_id": "tool", "tool_name": "shell",

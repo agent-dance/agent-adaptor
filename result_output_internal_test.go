@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func TestResultFromResponseDeepCopiesAuditLayers(t *testing.T) {
@@ -126,5 +126,38 @@ func TestMergeServiceReportsByStableID(t *testing.T) {
 	got[0].Metadata["sdk"] = "mutated"
 	if ensured[0].Metadata["sdk"] != "yes" || observed[0].Metadata["driver"] != "yes" {
 		t.Fatal("merge aliased an input metadata map")
+	}
+}
+
+func TestResultWithSubagentsCopiesSnapshotAndPreservesAccounting(t *testing.T) {
+	original := resultFromResponse("run", driver.Response{
+		Output: "leader answer", Summary: "leader summary", Model: "model", Provider: "provider",
+		Usage: &driver.Usage{InputTokens: 8}, Metadata: map[string]string{"key": "value"},
+		RawStreams: &driver.RawStreams{Stdout: "raw"},
+		Transcript: []driver.TranscriptItem{{Kind: driver.TranscriptAssistant, Text: "leader answer"}},
+	})
+	original.messages = []MessageOutcome{{ID: "host", Text: "objective", State: MessageDelivered}}
+	original.subagents = []SubagentResult{{Task: "old", State: "running"}}
+	snapshot := []SubagentResult{{Task: "task", Member: "worker", State: "cancelled", Usage: &Usage{InputTokens: 7}, Unread: []string{"note"}}}
+	result := original.WithSubagents(snapshot)
+	if result == original || result.Text != original.Text || result.RunID != "run" || result.Usage.InputTokens != 8 || !reflect.DeepEqual(result.Raw(), original.Raw()) || !reflect.DeepEqual(result.Transcript(), original.Transcript()) || !reflect.DeepEqual(result.Messages(), original.Messages()) || !reflect.DeepEqual(result.Subagents(), snapshot) {
+		t.Fatalf("snapshot replacement changed result accounting or audit: %+v", result)
+	}
+	if got := original.Subagents(); len(got) != 1 || got[0].Task != "old" {
+		t.Fatalf("source summaries mutated: %+v", got)
+	}
+	snapshot[0].Unread[0] = "mutated"
+	snapshot[0].Usage.InputTokens = 99
+	result.Usage.InputTokens = 99
+	result.Metadata["key"] = "mutated"
+	if got := result.Subagents()[0]; got.Unread[0] != "note" || got.Usage.InputTokens != 7 {
+		t.Fatalf("snapshot retained caller-owned data: %+v", got)
+	}
+	if original.Usage.InputTokens != 8 || original.Metadata["key"] != "value" {
+		t.Fatal("result copy retained source-owned accounting or metadata")
+	}
+	var empty *Result
+	if got := empty.WithSubagents(nil); got == nil || len(got.Subagents()) != 0 || got.Usage != nil {
+		t.Fatalf("nil result copy=%+v", got)
 	}
 }

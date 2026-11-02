@@ -1,0 +1,12 @@
+◇ injected env (1) from .env.worktree // tip: ◈ secrets for agents [www.dotenvx.com]
+
+Running 4 tests using 1 worker
+
+[1A[2K◇ injected env (0) from .env.worktree // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+
+[1A[2K[1/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:271:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › same development task: real server to daemon to provider to UI
+[1A[2K[2/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:288:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › current comment receipt, retry identity, ordinary reply queued after Done
+[1A[2K[3/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:347:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › UI stop and start over uses a cancelled task and a fresh task
+[1A[2K[4/4] [chromium] › e2e/agent-adaptor-shadow.spec.ts:373:3 › actual local Multica agent-adaptor shadow (explicit paid opt-in) › real Chat Steer, withdrawal and independent session isolation
+[1A[2K  3 skipped
+  1 passed (1.3m)

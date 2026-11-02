@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,21 +10,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/processx"
 )
 
 // Process owns one initialized app-server connection and one loaded Codex
 // thread. Callers must serialize RunTurn calls; Process also enforces that
 // rule so an accidental second writer cannot interleave JSON-RPC turns.
 type Process struct {
-	client   *Client
-	stream   *stdioStream
-	cmd      *exec.Cmd
-	cancel   context.CancelFunc
-	threadID string
-	stdout   *syncBuffer
-	stderr   *syncBuffer
+	client         *Client
+	stream         *stdioStream
+	cmd            *exec.Cmd
+	cancel         context.CancelFunc
+	threadID       string
+	notificationMu sync.Mutex
+	state          *runState
+	usageTotal     *driver.Usage // latest cumulative thread usage; guarded by notificationMu
+	pendingUsage   []json.RawMessage
+	freshThread    bool
+	stdout         *syncBuffer
+	stderr         *syncBuffer
 
 	turnMu        sync.Mutex
 	closeMu       sync.Mutex
@@ -108,7 +114,15 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 	p := &Process{
 		client: client, stream: stream, cmd: cmd, cancel: cancel,
 		stdout: stdoutBuf, stderr: stderrBuf, exitCh: make(chan struct{}), waitCh: make(chan struct{}),
+		freshThread: opts.ResumeThreadID == "" && opts.ForkThreadID == "",
 	}
+	if p.freshThread {
+		p.usageTotal = &driver.Usage{}
+	}
+	// A resume can replay usage before its RPC response. Keep the dispatcher
+	// installed throughout the handshake and bind buffered usage to the
+	// returned thread identity before exposing the process.
+	client.SetNotificationHandler(p.onNotification)
 	go func() {
 		_ = output.wait(cmd, stream, stderrDone, func(err error) {
 			_ = stdin.Close()
@@ -167,7 +181,7 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 	if threadID == "" {
 		return fail(errors.New("codex app-server returned an empty thread id"))
 	}
-	p.threadID = threadID
+	p.bindThread(threadID)
 	return p, nil
 }
 
@@ -210,7 +224,7 @@ func (p *Process) IsClosed() bool {
 	}
 }
 
-// RunTurn sends exactly one prompt on the loaded thread. promptSent becomes
+// RunTurn sends a prompt and any in-run continuations on the loaded thread. promptSent becomes
 // true immediately before turn/start because an RPC error cannot prove the
 // peer did not receive the request; callers must not replay in that case.
 // Healthy turns retain the live process and return bytes observed during the
@@ -232,57 +246,41 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	stdoutStart := p.stdout.Len()
 	stderrStart := p.stderr.Len()
 	state := newRunState(opts.RunID, sink)
+	state.ctx = ctx
+	state.messages = opts.Messages
 	state.setThread(p.threadID)
-	p.client.SetNotificationHandler(state.onNotification)
-	defer p.client.SetNotificationHandler(nil)
-
-	turnParams := TurnStartParams{
-		ThreadID:    p.threadID,
-		Input:       []UserInput{TextInput(opts.Prompt)},
-		CWD:         opts.CWD,
-		Model:       opts.Model,
-		Effort:      opts.Effort,
-		ServiceTier: opts.ServiceTier,
-	}
-	if opts.OutputSchema != nil {
-		turnParams.OutputSchema = append([]byte(nil), opts.OutputSchema.SchemaJSON...)
-	}
-	if opts.Approval != "" {
-		turnParams.ApprovalPolicy = opts.Approval
-	}
-	if opts.Sandbox != "" {
-		turnParams.SandboxPolicy = sandboxPolicyFor(opts.Sandbox)
-	}
+	p.notificationMu.Lock()
+	state.freshThread = p.freshThread
+	state.usageBaseline = cloneUsage(p.usageTotal)
+	state.historicalUsage = cloneUsage(p.usageTotal)
+	p.state = state
+	p.notificationMu.Unlock()
+	stopRequests := p.client.handleRunRequests(ctx, opts.RunID, sink, state)
+	defer stopRequests()
+	defer func() {
+		p.notificationMu.Lock()
+		p.state = nil
+		p.notificationMu.Unlock()
+	}()
 
 	promptSent = true
-	turn, startErr := p.client.TurnStart(ctx, turnParams)
-	if startErr != nil {
-		err = fmt.Errorf("codex app-server turn/start: %w", startErr)
-	} else {
-		state.setTurn(turn.Turn.ID)
-	}
+	err = runTurns(ctx, p.client, state, opts, p.threadID)
+	stopRequests()
 	if err == nil {
-		select {
-		case <-state.done:
-		case <-ctx.Done():
-			interruptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 500*time.Millisecond)
-			_ = p.client.TurnInterrupt(interruptCtx, TurnInterruptParams{ThreadID: p.threadID, TurnID: turn.Turn.ID})
-			cancel()
-			err = ctx.Err()
-		case <-p.client.DisconnectNotify():
-			if !state.hasTerminal() {
-				err = errors.New("codex app-server disconnected before turn completion")
-			}
-		case <-p.exitCh:
-			// Exit can precede decoding buffered terminal frames. Preserve them
-			// by joining the bounded drain before judging turn completeness.
-			<-p.waitCh
-			if p.waitErr != nil {
-				err = fmt.Errorf("codex app-server exited before turn completion: %w", p.waitErr)
-			} else if !state.hasTerminal() {
-				err = errors.New("codex app-server exited before turn completion")
-			}
+		err = state.executionError()
+	}
+	// Capture external cancellation, including an owner's explicit shutdown,
+	// before initiating our own cleanup. A provider failure observed first is
+	// never reclassified as host cancellation.
+	cancellation := p.cancellation(ctx)
+	if state.failedBeforeCancel() {
+		cancellation = nil
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			err = nil
 		}
+	}
+	if cancellation != nil {
+		err = errors.Join(cancellation, err)
 	}
 	if err == nil {
 		if protocolErr := state.protocolError(); protocolErr != nil {
@@ -290,13 +288,6 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 		} else if !state.hasTerminal() {
 			err = errors.New("codex app-server protocol ended without turn/completed")
 		}
-	}
-
-	// Capture external cancellation before initiating our own cleanup, so a
-	// failed provider/transport is never reclassified as a host cancellation.
-	cancellation := p.cancellation(ctx)
-	if cancellation != nil {
-		err = cancellation
 	}
 	if err != nil {
 		if cancellation != nil {
@@ -321,26 +312,54 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 			err = fmt.Errorf("codex app-server exited: %w", errors.Join(p.waitErr, err))
 		}
 	}
-	// Validate semantic output before deciding whether to retain a live writer.
-	// Raw streams are attached only after any required shutdown/reader join.
+
 	exitCode, signal, timedOut := 0, "", false
 	if err != nil {
-		exitCode, signal, timedOut = -1, err.Error(), errors.Is(err, context.DeadlineExceeded)
+		exitCode = -1
+		signal = err.Error()
+		timedOut = errors.Is(err, context.DeadlineExceeded)
 	}
-	result = state.snapshot(opts, p.threadID, "", "", exitCode, signal, timedOut, cancellation)
-	result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
+	// Seal attribution and snapshot under the same dispatcher lock. Later
+	// frames are idle history for the next execution, never mutations of a
+	// response whose final accounting has already been copied. Raw streams are
+	// attached only after any required shutdown and reader join above.
+	p.notificationMu.Lock()
+	p.state = nil
+	result = state.snapshot(opts, p.threadID, p.stdout.Since(stdoutStart), p.stderr.Since(stderrStart), exitCode, signal, timedOut)
+	if cancellation != nil {
+		// An owner's explicit shutdown cancels the turn even when ctx is live.
+		result.Failure = &driver.RunFailure{Code: driver.FailureCancelled, Message: cancellation.Error()}
+		result.Checkpoint = nil
+	}
+	baseline := cloneUsage(state.usageBaseline)
+	for _, id := range state.usageOrder {
+		usage := state.usageTurns[id]
+		if total := usage.total; total != nil {
+			// A cumulative counter also closes any earlier unobserved gap.
+			baseline = cloneUsage(total)
+		} else if baseline != nil && usage.fixed != nil {
+			baseline = addUsage(baseline, usage.fixed)
+		} else {
+			// Result.Usage can contain only a partial observed sum. A turn
+			// with no reported usage invalidates the cumulative baseline.
+			baseline = nil
+		}
+	}
+	// Include counters queued before turn/start returned and later attributed
+	// by runState, even if the dispatcher could not recognize them earlier.
+	p.usageTotal = baseline
+	p.freshThread = false
+	p.notificationMu.Unlock()
+	result = finalizeAppServerResult(opts.OutputSchema, result, err)
 	if result.Failure != nil || result.Checkpoint == nil {
+		// The caller retires an unhealthy writer. Stop it here so RawStreams
+		// include diagnostics written before exit, joined with both readers.
 		_ = p.closeGracefully(context.Background(), 500*time.Millisecond, false)
+		if result.RawStreams != nil {
+			result.RawStreams.Stdout = p.stdout.Since(stdoutStart)
+			result.RawStreams.Stderr = p.stderr.Since(stderrStart)
+		}
 	}
-	// Close or caller cancellation can race output validation and shutdown.
-	if cancellation = p.cancellation(ctx); cancellation != nil {
-		err = cancellation
-		_ = p.terminateAndWait(context.Background(), false)
-		result = state.snapshot(opts, p.threadID, "", "", -1, cancellation.Error(), errors.Is(cancellation, context.DeadlineExceeded), cancellation)
-		result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
-	}
-	result.RawStreams.Stdout = p.stdout.Since(stdoutStart)
-	result.RawStreams.Stderr = p.stderr.Since(stderrStart)
 	state.finishPublicResult(result, err)
 	return result, promptSent, err
 }
@@ -441,4 +460,55 @@ func (p *Process) cancellation(ctx context.Context) error {
 		return context.Canceled
 	}
 	return nil
+}
+
+// onNotification stays installed while idle so a late usage snapshot advances
+// the next execution's history baseline without publishing into a finished run.
+func (p *Process) onNotification(method string, params json.RawMessage) {
+	p.notificationMu.Lock()
+	defer p.notificationMu.Unlock()
+	if p.state != nil {
+		p.state.onNotification(method, params)
+	}
+	if method == NotifyThreadTokenUsageUpdated {
+		if p.threadID == "" {
+			p.pendingUsage = append(p.pendingUsage, append(json.RawMessage(nil), params...))
+			return
+		}
+		p.absorbUsageTotalLocked(params)
+	}
+}
+
+func (p *Process) bindThread(threadID string) {
+	p.notificationMu.Lock()
+	defer p.notificationMu.Unlock()
+	p.threadID = threadID
+	for _, params := range p.pendingUsage {
+		p.absorbUsageTotalLocked(params)
+	}
+	p.pendingUsage = nil
+}
+
+func (p *Process) absorbUsageTotalLocked(params json.RawMessage) {
+	var body ThreadTokenUsageUpdatedNotification
+	if json.Unmarshal(params, &body) != nil || body.ThreadID != p.threadID || body.TurnID == "" {
+		return
+	}
+	if p.freshThread {
+		if p.state == nil {
+			return
+		}
+		p.state.mu.Lock()
+		knownTurn := p.state.usageTurns[body.TurnID] != nil
+		p.state.mu.Unlock()
+		if !knownTurn {
+			return
+		}
+	}
+	total := &driver.Usage{InputTokens: body.TokenUsage.Total.InputTokens, OutputTokens: body.TokenUsage.Total.OutputTokens, CachedInputTokens: body.TokenUsage.Total.CachedInputTokens}
+	last := &driver.Usage{InputTokens: body.TokenUsage.Last.InputTokens, OutputTokens: body.TokenUsage.Last.OutputTokens, CachedInputTokens: body.TokenUsage.Last.CachedInputTokens}
+	if nonnegativeUsage(total) && nonnegativeUsage(last) && nonnegativeUsage(subtractUsage(total, last)) &&
+		(p.usageTotal == nil || nonnegativeUsage(subtractUsage(total, p.usageTotal))) {
+		p.usageTotal = total
+	}
 }

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/profilestate"
-	"github.com/agent-dance/agent-adaptor/internal/toolidentity"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilestate"
+	"github.com/agent-dance/agent-adaptor/v2/internal/toolidentity"
 )
 
 const hostedToolsTestBearerEnv = toolidentity.BearerTokenEnvVarPrefix + "0123456789ABCDEF0123456789ABCDEF"

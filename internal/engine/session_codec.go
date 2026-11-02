@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Well-known session parameter keys used by the thread coordinator. Package

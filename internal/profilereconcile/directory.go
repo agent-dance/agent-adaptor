@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/internal/profilestate"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilestate"
 )
 
 type DirectoryEntry struct {

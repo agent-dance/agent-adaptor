@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	publicskill "github.com/agent-dance/agent-adaptor/skill"
+	publicskill "github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 func TestRehomedMaterializerPreservesCacheFingerprint(t *testing.T) {

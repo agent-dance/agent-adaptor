@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
 // diskStore is a single-process example Store. Leases use the SDK memory

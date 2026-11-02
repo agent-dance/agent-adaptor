@@ -1,0 +1,18 @@
+{
+  "agent": "codex",
+  "candidates": null,
+  "checks": null,
+  "cleanup_error": "",
+  "effort": "xhigh",
+  "error": "adaptor: run failed: agent_error: team execution failed\nadaptor: thread incompatible with current configuration (thread \"4:sdlc6:leader\"): host-defined tool \"workflow_inspect\" has no semantic revision\nagentadaptor: session incompatible: host-defined tool \"workflow_inspect\" has no semantic revision\nworkflow ended in stage \"plan\"",
+  "finished": "2026-11-01T16:00:26.6330745Z",
+  "history": null,
+  "model": "gpt-6.1-sol",
+  "spec_hash": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+  "stage": "plan",
+  "started": "2026-11-01T16:00:26.609259Z",
+  "success": false,
+  "task_count": 0,
+  "version": 1,
+  "violations": null
+}

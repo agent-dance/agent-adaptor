@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 func TestExistingJSONLNumbersDecodeLosslessly(t *testing.T) {
@@ -46,7 +46,7 @@ func TestTypedEnvelopeOpaqueNumbers(t *testing.T) {
 		adaptor.Notice{Kind: "host.data", Data: payload},
 		adaptor.ToolCall{ID: "tc", Args: payload, Result: payload},
 		adaptor.ToolResult{ID: "tc", Result: payload},
-		adaptor.SubagentUpdate{Agent: "helper", Data: payload},
+		adaptor.SubagentUpdate{Member: "helper", Data: payload},
 		&adaptor.ApprovalRequest{ID: "q", Kind: adaptor.ApprovalQuestion, Details: payload},
 	} {
 		t.Run(fmt.Sprintf("%T", event), func(t *testing.T) {

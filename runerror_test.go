@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func TestRunErrorPaths(t *testing.T) {
@@ -43,7 +43,7 @@ func TestRunErrorPaths(t *testing.T) {
 	}
 	plainRun := func(t *testing.T, agent *adaptor.Agent) error {
 		t.Helper()
-		_, err := agent.Run(context.Background(), "do the thing")
+		_, err := agent.Send(context.Background(), "do the thing").Result()
 		return err
 	}
 
@@ -98,7 +98,7 @@ func TestRunErrorPaths(t *testing.T) {
 				t.Helper()
 				ctx, cancel := context.WithCancel(context.Background())
 				cancel() // cancelled before the driver can finish
-				_, err := agent.Run(ctx, "do the thing")
+				_, err := agent.Send(ctx, "do the thing").Result()
 				return err
 			},
 			wantIs: context.Canceled,
@@ -108,8 +108,8 @@ func TestRunErrorPaths(t *testing.T) {
 			setup: func(f *fakeDriver) { f.blockUntilCancelled() },
 			run: func(t *testing.T, agent *adaptor.Agent) error {
 				t.Helper()
-				_, err := agent.Run(context.Background(), "do the thing",
-					adaptor.WithTimeout(20*time.Millisecond))
+				_, err := agent.Send(context.Background(), "do the thing",
+					adaptor.WithTimeout(20*time.Millisecond)).Result()
 				return err
 			},
 			wantIs: context.DeadlineExceeded,

@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	schema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -168,7 +168,7 @@ func TestSubagentActivityDoesNotMutateReturnedEvents(t *testing.T) {
 		for k, v := range extra {
 			data[k] = v
 		}
-		return tr.Translate(adaptor.SubagentUpdate{Agent: "worker", Data: data})
+		return tr.Translate(adaptor.SubagentUpdate{Member: "worker", Data: data})
 	}
 	out := update("subagent.tool_call.start", map[string]any{"tool_name": "command"})
 	before, err := json.Marshal(out)
@@ -224,7 +224,7 @@ func TestSubagentToolDoesNotInheritParentAgentMessage(t *testing.T) {
 	tr := NewEventTranslator()
 	tr.Translate(adaptor.RunStarted{})
 	tr.Translate(adaptor.TextDelta{MessageID: "parent-message", Text: "delegating"})
-	tr.Translate(adaptor.SubagentUpdate{Agent: "worker", Data: map[string]any{
+	tr.Translate(adaptor.SubagentUpdate{Member: "worker", Data: map[string]any{
 		"delegation_id": "child", "kind": "subagent.tool_call.start",
 		"remote_tool_call_id": "child-tool", "tool_name": "shell",
 	}})
@@ -270,7 +270,7 @@ func TestToolAttributionRemainsFixedAfterLateSubagentDiscovery(t *testing.T) {
 	out := tr.Translate(adaptor.RunStarted{})
 	out = append(out, tr.Translate(adaptor.TextDelta{MessageID: "parent", Text: "running"})...)
 	out = append(out, tr.Translate(adaptor.ToolCall{ID: "call", Name: "shell", Phase: adaptor.PhaseStart})...)
-	out = append(out, tr.Translate(adaptor.SubagentUpdate{Agent: "worker", Data: map[string]any{
+	out = append(out, tr.Translate(adaptor.SubagentUpdate{Member: "worker", Data: map[string]any{
 		"delegation_id": "child", "kind": "subagent.tool_call.start",
 		"remote_tool_call_id": "call", "tool_name": "shell",
 	}})...)

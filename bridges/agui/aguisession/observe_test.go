@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 type pacedStream struct {
@@ -409,4 +409,8 @@ func TestRecordingFailureAfterConsumedCursor(t *testing.T) {
 		t.Fatal(w.Body)
 	}
 	validate(t, "Event", []any{events[0]})
+}
+
+func (*pacedStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
 }

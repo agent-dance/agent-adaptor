@@ -3,7 +3,7 @@ package exampleutil
 import (
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 func TestNonInteractivePolicyMatchesProviderCapabilities(t *testing.T) {

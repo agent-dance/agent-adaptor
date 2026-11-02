@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 	schema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -24,10 +24,7 @@ type fakeRunner struct {
 	makeStream func(context.Context, string) adaptor.Stream
 }
 
-func (f fakeRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
-	panic("must stream")
-}
-func (f fakeRunner) Stream(c context.Context, p string, _ ...adaptor.CallOption) adaptor.Stream {
+func (f fakeRunner) Send(c context.Context, p string, _ ...adaptor.CallOption) adaptor.Stream {
 	return f.makeStream(c, p)
 }
 
@@ -149,7 +146,7 @@ func TestLiveHistoryAndMessages(t *testing.T) {
 						es = append(es, adaptor.ToolCall{ID: tool, Name: "shell", Phase: adaptor.PhaseStart, Args: map[string]any{"n": i}}, adaptor.ToolCall{ID: tool, Phase: adaptor.PhaseEnd, Result: map[string]any{"output": "output", "exitCode": exit}})
 					}
 					if mode == "activity" {
-						es = append(es, adaptor.SubagentUpdate{Agent: "helper", Data: map[string]any{"delegation_id": id + "-sub", "kind": "started"}})
+						es = append(es, adaptor.SubagentUpdate{Member: "helper", Data: map[string]any{"delegation_id": id + "-sub", "kind": "started"}})
 					}
 				}
 				es = append(es, adaptor.RunFinished{Failed: false})
@@ -654,4 +651,8 @@ func TestHistoryIODoesNotBlockAdmission(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("history I/O blocked admission")
 	}
+}
+
+func (*fakeStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
 }

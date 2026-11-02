@@ -1,0 +1,10 @@
+{
+  "phase": "run02",
+  "previous_shadow_pid": 38092,
+  "previous_shadow_stop_confirmed_at_utc": "2026-11-01T18:00:28.536322+00:00",
+  "new_shadow_pid": 44396,
+  "new_shadow_starting_at_utc": "2026-11-01T18:01:04.525000+00:00",
+  "new_shadow_after_previous_exit": true,
+  "log_append_offset_bytes": 67229,
+  "log_path": "/home/buthim/.multica/profiles/pr30-shadow-sdk/daemon.log"
+}

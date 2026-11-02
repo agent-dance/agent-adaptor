@@ -1,0 +1,85 @@
+{
+  "at": "2026-11-01T18:18:13.910Z",
+  "comment": {
+    "type": "comment",
+    "id": "01a1984b-fc94-78d4-ba31-222bbe5d5284",
+    "actor_type": "member",
+    "actor_id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+    "created_at": "2026-11-02T02:07:59+08:00",
+    "actor_name": "PR30 Shadow",
+    "content": "Write route-comment.txt with exact bytes COMMENT\\_da16fba4-30f8-4da5-93ae-5cd91915ebe6.",
+    "parent_id": "01a1984b-0a8c-72cd-98ac-9297d30a8929",
+    "updated_at": "2026-11-02T02:07:59+08:00",
+    "revision": 1,
+    "comment_type": "comment",
+    "supplements": [
+      {
+        "task_id": "01a1984b-0a96-7d1f-a10c-b0847eed18cd",
+        "agent_id": "2baf1a0a-4480-4d5f-b5e8-d9e330871978",
+        "status": "delivered",
+        "delivered_at": "2026-11-02T02:07:59+08:00"
+      }
+    ],
+    "supplement_task_id": "01a1984b-0a96-7d1f-a10c-b0847eed18cd",
+    "supplement_status": "delivered",
+    "supplement_delivered_at": "2026-11-02T02:07:59+08:00"
+  },
+  "task": {
+    "id": "01a1984b-0a96-7d1f-a10c-b0847eed18cd",
+    "agent_id": "2baf1a0a-4480-4d5f-b5e8-d9e330871978",
+    "runtime_id": "8e39cfb9-0068-4d8a-9e41-b42caf20f0dd",
+    "issue_id": "01a1984b-0a81-716c-a611-e9a81c5a650c",
+    "workspace_id": "a25b1ca8-15be-4485-9ab2-0abf04a09ad8",
+    "status": "failed",
+    "priority": 0,
+    "dispatched_at": "2026-11-02T02:06:57+08:00",
+    "started_at": "2026-11-02T02:06:57+08:00",
+    "completed_at": "2026-11-02T02:14:57+08:00",
+    "result": null,
+    "error": "adaptor: run failed: cancelled: context deadline exceeded\ncontext deadline exceeded",
+    "failure_reason": "timeout",
+    "attempt": 1,
+    "max_attempts": 2,
+    "created_at": "2026-11-02T02:06:57+08:00",
+    "work_dir": "/home/buthim/multica_workspaces_pr30-shadow-sdk/pr30-shadow-0abf04a09ad8/pr30-6-b0847eed18cd/workdir",
+    "relative_work_dir": "pr30-shadow-0abf04a09ad8/pr30-6-b0847eed18cd/workdir",
+    "trigger_comment_id": "01a1984b-0a8c-72cd-98ac-9297d30a8929",
+    "delivered_comment_ids": [
+      "01a1984b-0a8c-72cd-98ac-9297d30a8929"
+    ],
+    "supplement_capability": "task-supplement-v1",
+    "supplement_comment_ids": [
+      "01a1984b-fc94-78d4-ba31-222bbe5d5284"
+    ],
+    "trigger_summary": "[@PR30 agent-adaptor a3e2da75](mention://agent/2baf1a0a-4480-4d5f-b5e8-d9e330871978) Create route-base.txt containing BASE. Before final response, execute this exact foreground shell command and wait …",
+    "kind": "comment",
+    "attribution": {
+      "source": "direct_human",
+      "precise": true,
+      "initiator": {
+        "id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+        "name": "PR30 Shadow",
+        "email": "pr30-shadow@localhost"
+      },
+      "originator": {
+        "id": "2bab9cff-9b7a-4cd1-82eb-63e629aea38d",
+        "name": "PR30 Shadow",
+        "email": "pr30-shadow@localhost"
+      },
+      "evidence": {
+        "kind": "comment",
+        "ref_id": "01a1984b-0a8c-72cd-98ac-9297d30a8929"
+      }
+    },
+    "usage": [
+      {
+        "provider": "codex",
+        "model": "gpt-6.1-sol",
+        "input_tokens": 15929,
+        "output_tokens": 3817,
+        "cache_read_tokens": 599936,
+        "cache_write_tokens": 0
+      }
+    ]
+  }
+}

@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/claude"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 func requireClaudeCLI(t *testing.T) {
@@ -32,7 +32,7 @@ func TestClaudeStreamingHaiku(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	stream := agent.Stream(ctx, "Write a haiku about autumn. Reply with only the haiku.")
+	stream := agent.Send(ctx, "Write a haiku about autumn. Reply with only the haiku.")
 	var assembled strings.Builder
 	textDeltas := 0
 	sawFinishWithUsage := false
@@ -70,7 +70,7 @@ func TestClaudeStreamingResumeThreadID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	first := thread.Stream(ctx, "Say only the word hello.")
+	first := thread.Send(ctx, "Say only the word hello.")
 	firstThreadID := providerThreadID(first)
 	if _, err := first.Result(); err != nil {
 		t.Fatalf("first Result: %v", err)
@@ -80,7 +80,7 @@ func TestClaudeStreamingResumeThreadID(t *testing.T) {
 		t.Fatalf("Checkpoint = (%#v, %v)", checkpoint, err)
 	}
 
-	second := thread.Stream(ctx, "Say only the word goodbye.")
+	second := thread.Send(ctx, "Say only the word goodbye.")
 	secondThreadID := providerThreadID(second)
 	if _, err := second.Result(); err != nil {
 		t.Fatalf("second Result: %v", err)
@@ -106,7 +106,7 @@ func TestClaudeStreamingToolUseRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	stream := agent.Stream(ctx,
+	stream := agent.Send(ctx,
 		"In this workspace, call read_file on go.mod in the repo root if available, otherwise reply NO_TOOL. Reply with one word OK or NO_TOOL.")
 	started := 0
 	var args strings.Builder

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/bridges/agui/aguisession"
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui/aguisession"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
 func appForTest(t *testing.T, c config) *application {

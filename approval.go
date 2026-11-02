@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Approval requests support two consumption forms:
@@ -183,6 +183,7 @@ type ApprovalRequest struct {
 	// Attempt is the zero-based retry attempt (FallbackRetry re-asks).
 	Attempt int
 
+	origin    Origin
 	responder *approvalResponder
 }
 
@@ -351,4 +352,36 @@ func (r *ApprovalRequest) ready() <-chan struct{} {
 		return nil
 	}
 	return r.responder.ready
+}
+
+// Origin attributes an approval to a composite Runner's member and task.
+// Single-agent requests have a zero Origin.
+type Origin struct {
+	// Member is the composite Runner's member key.
+	Member string
+	// Task is the delegated task identifier.
+	Task string
+}
+
+// Origin reports where the request originated.
+func (r *ApprovalRequest) Origin() Origin {
+	if r == nil {
+		return Origin{}
+	}
+	return r.origin
+}
+
+// Forward returns an attributed copy sharing the original exactly-once
+// responder. Answering either copy resolves both; nil receivers return nil.
+func (r *ApprovalRequest) Forward(o Origin) *ApprovalRequest {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	c.origin = o
+	c.Choices = append([]Choice(nil), r.Choices...)
+	if r.Details != nil {
+		c.Details = cloneJSONValue(r.Details).(map[string]any)
+	}
+	return &c
 }

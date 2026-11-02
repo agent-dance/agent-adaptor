@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 func TestWebChatNetworkDefaultsAreLoopbackAndSameOrigin(t *testing.T) {
@@ -52,11 +52,8 @@ func TestWebHandlerRehydratesSecondTurnWithoutCheckpoint(t *testing.T) {
 
 type historyRunner struct{ prompts []string }
 
-func (r *historyRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
-	panic("handler must use Stream")
-}
 
-func (r *historyRunner) Stream(_ context.Context, prompt string, _ ...adaptor.CallOption) adaptor.Stream {
+func (r *historyRunner) Send(_ context.Context, prompt string, _ ...adaptor.CallOption) adaptor.Stream {
 	r.prompts = append(r.prompts, prompt)
 	events := make(chan adaptor.Event)
 	close(events)
@@ -72,3 +69,7 @@ func (historyStream) Result() (*adaptor.Result, error) { return &adaptor.Result{
 func (historyStream) RunID() string { return "example-run" }
 
 func (historyStream) Cancel() {}
+
+func (historyStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
+}

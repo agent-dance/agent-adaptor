@@ -1,0 +1,11 @@
+{
+  "status": "running",
+  "pid": 33179,
+  "profile": "pr30-shadow-native",
+  "daemon_id": "9dbfd6d3-f75a-456e-9c07-386a981c38c5",
+  "active_task_count": 0,
+  "running_task_count": 0,
+  "resource_wait_task_count": 0,
+  "pending_terminal_report_count": 0,
+  "failed_terminal_report_count": 0
+}

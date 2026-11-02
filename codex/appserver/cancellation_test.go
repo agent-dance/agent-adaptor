@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func TestSnapshotCancellationPreventsCheckpointAtAnyExit(t *testing.T) {
@@ -24,10 +25,22 @@ func TestSnapshotCancellationPreventsCheckpointAtAnyExit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			state := newRunState("sdk-run", &recordingSink{})
+			ctx := context.Background()
+			switch tc.cause {
+			case context.Canceled:
+				cancelled, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = cancelled
+			case context.DeadlineExceeded:
+				expired, cancel := context.WithDeadline(ctx, time.Unix(0, 0))
+				defer cancel()
+				ctx = expired
+			}
+			state.ctx = ctx
 			state.setThread("t")
 			state.setTurn("turn")
 			state.onNotification(NotifyTurnCompleted, json.RawMessage(`{"threadId":"t","turn":{"id":"turn","status":"completed"}}`))
-			result := state.snapshot(Options{}, "t", "raw stdout", "raw stderr", tc.exit, "", tc.cause == context.DeadlineExceeded, tc.cause)
+			result := state.snapshot(Options{}, "t", "raw stdout", "raw stderr", tc.exit, "", tc.cause == context.DeadlineExceeded)
 			if tc.want == "" {
 				if result.Failure != nil || result.Checkpoint == nil || !result.Checkpoint.Valid {
 					t.Fatalf("healthy result=%+v", result)

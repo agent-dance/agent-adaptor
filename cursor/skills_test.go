@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	agentadaptor "github.com/agent-dance/agent-adaptor/driver"
+	agentadaptor "github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func createCursorSkillDir(t *testing.T, root, name string) string {

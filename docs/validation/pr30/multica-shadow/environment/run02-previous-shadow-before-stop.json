@@ -1,0 +1,12 @@
+{
+  "status": "running",
+  "pid": 38092,
+  "profile": "pr30-shadow-sdk",
+  "daemon_id": "1075b8f8-988f-4143-a8dd-b0c739715386",
+  "active_task_count": 0,
+  "running_task_count": 0,
+  "resource_wait_task_count": 0,
+  "pending_terminal_report_count": 0,
+  "failed_terminal_report_count": 0,
+  "observed_at_utc": "2026-11-01T18:00:28.325874+00:00"
+}

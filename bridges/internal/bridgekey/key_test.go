@@ -3,7 +3,7 @@ package bridgekey_test
 import (
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/bridgekey"
 )
 
 func TestEncodeIsCollisionFreeAcrossTupleBoundaries(t *testing.T) {

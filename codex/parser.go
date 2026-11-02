@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // codexParser consumes raw stdout/stderr chunks from a Codex CLI run and
@@ -477,6 +477,16 @@ func (p *codexParser) handleTerminal(raw string, payload map[string]any, kind st
 		Usage:   p.usage,
 		Data:    map[string]any{"payload": payload},
 	})
+	if p.sink != nil {
+		completedAt := time.Now().UTC()
+		var usage *driver.Usage
+		if p.usage != nil {
+			copyUsage := *p.usage
+			usage = &copyUsage
+		}
+		_ = p.sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted, Timestamp: completedAt,
+			Turn: &driver.TurnCompleted{Index: 0, Text: p.buildOutput(), Usage: usage, CompletedAt: completedAt}})
+	}
 }
 
 func (p *codexParser) emit(item driver.TranscriptItem) {
@@ -527,27 +537,6 @@ func (p *codexParser) checkpointForOutcome(exitCode int, signal string, timedOut
 		return nil
 	}
 	return p.checkpoint(exitCode)
-}
-
-// nativeStructuredOutputForOutcome returns the last officially completed
-// agent_message as the Codex native structured-output candidate. The parser
-// deliberately does not claim schema validity: the core invocation pipeline
-// canonicalizes and validates RawJSON against the host's requested schema.
-// A candidate is exposed only after the official turn.completed terminal and
-// a clean process/business outcome.
-func (p *codexParser) nativeStructuredOutputForOutcome(exitCode int, signal string, timedOut bool, failure *driver.RunFailure) *driver.StructuredOutput {
-	if exitCode != 0 || signal != "" || timedOut || failure != nil || p.protocolMalformed || p.terminalFailed || !p.turnCompleted || p.terminal == nil || p.terminal.Event != "turn.completed" || len(p.assistantText) == 0 {
-		return nil
-	}
-	text := p.assistantText[len(p.assistantText)-1]
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-	return &driver.StructuredOutput{
-		Format:  driver.OutputFormatJSONSchema,
-		Source:  driver.StructuredOutputSourceNative,
-		RawJSON: append(json.RawMessage(nil), text...),
-	}
 }
 
 // snapshotCodexStdout feeds a complete stdout string through the parser and

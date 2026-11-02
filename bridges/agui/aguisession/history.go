@@ -8,10 +8,10 @@ import (
 	"time"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/bridgekey"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 // ProjectedRecord preserves source-record cursor granularity. One record may
@@ -110,11 +110,28 @@ func (p *projector) apply(rec sessionrecorder.EventRecord) []events.Event {
 				Messages: []agui.Message{submitted},
 			}
 		}
-		if str(n.Data, "projectionVersion") != ProjectionVersion {
+		if !supportedProjection(str(n.Data, "projectionVersion")) {
 			out = append(out, p.fail("agui.projection_version_unsupported", "unsupported or missing recording projection version")...)
 		}
 	} else if p.t != nil {
-		if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == TerminalKind {
+		if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == SupplementKind {
+			// Admitted in-run input keeps the client's message ID, exactly as the
+			// live wire projected it, so folding and history verification agree.
+			if id, text := str(n.Data, "messageId"), str(n.Data, "text"); id != "" && text != "" {
+				meta := adaptor.EventMeta{RunID: n.Meta().RunID, ThreadKey: n.Meta().ThreadKey, Time: rec.RecordedAt}
+				for _, phase := range []adaptor.Phase{adaptor.PhaseStart, adaptor.PhaseContent, adaptor.PhaseEnd} {
+					delta := adaptor.TextDelta{MessageID: id, Role: adaptor.RoleUser, Phase: phase}
+					if phase == adaptor.PhaseContent {
+						delta.Text = text
+					}
+					out = append(out, p.t.Translate(adaptor.WithEventMeta(delta, meta))...)
+				}
+			}
+		} else if _, ok := rec.Event.(adaptor.Done); ok {
+			// Done is retained for audit. TerminalKind remains the sole recorded
+			// outcome, including bridge-level cancellation and recording failures.
+			p.t.Translate(adaptor.WithEventMeta(adaptor.RunFinished{}, rec.Event.Meta()))
+		} else if n, ok := rec.Event.(adaptor.Notice); ok && n.Kind == TerminalKind {
 			// Stream.RunID and the resolved key are recorded even when the
 			// provider emitted no source events. Update audit metadata without
 			// letting its informational lifecycle select the outcome.
@@ -183,7 +200,7 @@ func (p *projector) scopeSource(ev adaptor.Event) adaptor.Event {
 		}
 		id := str(data, "delegation_id")
 		if id == "" {
-			id = e.Agent
+			id = e.Member
 		}
 		data["delegation_id"] = messageID(id)
 		for _, field := range []string{"parent_tool_call_id", "remote_tool_call_id"} {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 type terminalTestStream struct {
@@ -130,4 +130,8 @@ func TestRawTerminalInfrastructureFailureIsStructured(t *testing.T) {
 	if name != "run.error" || body["code"] != "run.error" || body["message"] != "transport broke" {
 		t.Fatalf("terminal = %s %#v", name, body)
 	}
+}
+
+func (s *terminalTestStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrMessageUnsupported
 }

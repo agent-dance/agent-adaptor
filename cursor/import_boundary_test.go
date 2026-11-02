@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const rootImportPath = "github.com/agent-dance/agent-adaptor"
+const rootImportPath = "github.com/agent-dance/agent-adaptor/v2"
 
 // TestPackageFilesDoNotImportRootAPI protects production code from
 // depending on the consumer-facing root API. Integration tests may use it.

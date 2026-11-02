@@ -16,10 +16,10 @@
 //		codex.Driver(codex.Config{Model: "gpt-5.4"}),
 //		adaptor.WithWorkspace("/repo"),
 //	)
-//	result, err := agent.Run(ctx, "Review this change")
+//	result, err := agent.Send(ctx, "Review this change").Result()
 //
-// Run and Stream share one execution pipeline. Run is exactly Stream followed
-// by draining Events and calling Result. Agent and Thread both implement
+// Send uses one execution pipeline for synchronous Result retrieval and
+// asynchronous Events consumption. Agent and Thread both implement
 // Runner, so bridges and host integrations do not need separate stateful and
 // stateless paths.
 //
@@ -40,7 +40,8 @@
 // internal implementation details. Existing external MCP servers continue to
 // use WithMCP.
 //
-// An Agent is stateless unless constructed with a ThreadStore. Agent.Thread
+// Agent.Send is stateless. Agent.Thread uses a per-Agent memory store by
+// default; WithThreadStore supplies a shared or durable store. Agent.Thread
 // continues or creates the host key, while Thread.Fork creates an independent
 // child. The SDK coordinates leases, compatibility fingerprints, and atomic
 // checkpoint persistence; provider resume identifiers remain Driver details.

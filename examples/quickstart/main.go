@@ -1,8 +1,8 @@
 // quickstart constructs an Agent from a Driver, asks one question, and reads
 // one Result.
 //
-// The whole SDK surface used here is three names — adaptor.New, agent.Run,
-// res.Text — plus the single err verdict: a business failure arrives as a
+// Construct with adaptor.New, send with agent.Send, and read Stream.Result
+// and res.Text. The single err verdict reports a business failure as a
 // typed *adaptor.RunError that still carries the full Result.
 //
 // Usage:
@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
 )
 
 func main() {
@@ -42,7 +42,7 @@ func main() {
 	// them in.
 	ai := adaptor.New(exampleutil.NewLiveDriver(agentCfg))
 
-	res, err := ai.Run(ctx, *prompt)
+	res, err := ai.Send(ctx, *prompt).Result()
 	checkRun(err, "run quickstart example")
 	exampleutil.Check(strings.TrimSpace(res.Text) != "", "expected non-empty text from %s", agentCfg.Agent)
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
 )
 
 type ownedRun struct {

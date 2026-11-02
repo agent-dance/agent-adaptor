@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // Compile-scope proofs for approval options: OnApproval is
@@ -86,7 +86,7 @@ func TestApprovalCallbackApprovePermission(t *testing.T) {
 		return req.Approve(ctx)
 	}))
 
-	st := agent.Stream(context.Background(), "deploy")
+	st := agent.Send(context.Background(), "deploy")
 	events, res, err := collect(st)
 	if err != nil {
 		t.Fatalf("Result: %v", err)
@@ -143,7 +143,7 @@ func TestApprovalCallbackDenyAbortsByDefault(t *testing.T) {
 	fake.runFunc = askOnce(driver.HumanDecisionPermission, nil)
 	agent := adaptor.New(fake, adaptor.OnApproval(adaptor.DenyAll("not on my watch")))
 
-	res, err := agent.Run(context.Background(), "rm -rf")
+	res, err := agent.Send(context.Background(), "rm -rf").Result()
 	if res != nil {
 		t.Fatalf("denied run must not return a Result, got %+v", res)
 	}
@@ -167,7 +167,7 @@ func TestApprovalCallbackPlanReview(t *testing.T) {
 	fake := newFakeDriver()
 	fake.runFunc = askOnce(driver.HumanDecisionPlanReview, nil)
 	agent := adaptor.New(fake, adaptor.OnApproval(adaptor.ApproveAll()))
-	res, err := agent.Run(context.Background(), "plan")
+	res, err := agent.Send(context.Background(), "plan").Result()
 	if err != nil || res.Text != "approved-path" {
 		t.Fatalf("approve: res=%v err=%v", res, err)
 	}
@@ -180,7 +180,7 @@ func TestApprovalCallbackPlanReview(t *testing.T) {
 		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{OnReject: adaptor.FallbackContinue}}),
 		adaptor.OnApproval(adaptor.DenyAll("needs rework")),
 	)
-	res2, err2 := agent2.Run(context.Background(), "plan")
+	res2, err2 := agent2.Send(context.Background(), "plan").Result()
 	if err2 != nil || res2.Text != "rejected-continue" {
 		t.Fatalf("deny+continue: res=%v err=%v", res2, err2)
 	}
@@ -202,7 +202,7 @@ func TestApprovalQuestionAnswer(t *testing.T) {
 		}),
 	)
 
-	res, err := agent.Run(context.Background(), "release?")
+	res, err := agent.Send(context.Background(), "release?").Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestApprovalQuestionFreeTextAnswer(t *testing.T) {
 		}),
 	)
 
-	res, err := agent.Run(context.Background(), "release?")
+	res, err := agent.Send(context.Background(), "release?").Result()
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestApprovalQuestionDefaultAutoDenied(t *testing.T) {
 		return req.Answer(ctx, "ship-it")
 	}))
 
-	_, err := agent.Run(context.Background(), "release?")
+	_, err := agent.Send(context.Background(), "release?").Result()
 	if !errors.Is(err, adaptor.ErrApprovalDenied) {
 		t.Fatalf("want ErrApprovalDenied, got %v", err)
 	}
@@ -261,7 +261,7 @@ func TestApprovalKindMismatch(t *testing.T) {
 		mismatch = req.Answer(ctx, "ship-it")
 		return req.Approve(ctx)
 	}))
-	res, err := agent.Run(context.Background(), "deploy")
+	res, err := agent.Send(context.Background(), "deploy").Result()
 	if err != nil || res.Text != "approved-path" {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
@@ -280,7 +280,7 @@ func TestApprovalKindMismatch(t *testing.T) {
 			return req.Answer(ctx, "hold")
 		}),
 	)
-	res2, err2 := agent2.Run(context.Background(), "release?")
+	res2, err2 := agent2.Send(context.Background(), "release?").Result()
 	if err2 != nil || res2.Text != "answered:hold/hold" {
 		t.Fatalf("res=%v err=%v", res2, err2)
 	}
@@ -296,7 +296,7 @@ func TestApproveAllPresetDeniesQuestions(t *testing.T) {
 		adaptor.WithPolicy(adaptor.Policy{Approvals: adaptor.ApprovalPolicy{Question: adaptor.QuestionAsk}}),
 		adaptor.OnApproval(adaptor.ApproveAll()),
 	)
-	_, err := agent.Run(context.Background(), "release?")
+	_, err := agent.Send(context.Background(), "release?").Result()
 	if !errors.Is(err, adaptor.ErrApprovalDenied) {
 		t.Fatalf("ApproveAll must deny questions, got %v", err)
 	}
@@ -317,7 +317,7 @@ func TestApprovalsAutoDenyPreset(t *testing.T) {
 			return req.Approve(ctx)
 		}),
 	)
-	_, err := agent.Run(context.Background(), "deploy")
+	_, err := agent.Send(context.Background(), "deploy").Result()
 	if !errors.Is(err, adaptor.ErrApprovalDenied) {
 		t.Fatalf("want ErrApprovalDenied, got %v", err)
 	}
@@ -332,7 +332,7 @@ func TestApprovalAutoApprove(t *testing.T) {
 	agent := adaptor.New(fake, adaptor.WithPolicy(adaptor.Policy{
 		Approvals: adaptor.ApprovalPolicy{Permission: adaptor.ApprovalAutoApprove},
 	}))
-	res, err := agent.Run(context.Background(), "deploy")
+	res, err := agent.Send(context.Background(), "deploy").Result()
 	if err != nil || res.Text != "approved-path" {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
@@ -350,7 +350,7 @@ func TestApprovalHandlerErrorSurfacesVerbatim(t *testing.T) {
 		return cause
 	}))
 
-	res, err := agent.Run(context.Background(), "deploy")
+	res, err := agent.Send(context.Background(), "deploy").Result()
 	if res != nil {
 		t.Fatalf("res = %+v, want nil", res)
 	}
@@ -370,7 +370,7 @@ func TestApprovalHandlerPanicIsAgentError(t *testing.T) {
 		panic("card renderer exploded")
 	}))
 
-	_, err := agent.Run(context.Background(), "deploy")
+	_, err := agent.Send(context.Background(), "deploy").Result()
 	var runErr *adaptor.RunError
 	if !errors.As(err, &runErr) || !errors.Is(err, adaptor.ErrAgentFailed) {
 		t.Fatalf("want *RunError(ErrAgentFailed), got %v", err)
@@ -387,7 +387,7 @@ func TestApprovalHandlerUnresolvedReturnIsAgentError(t *testing.T) {
 		return nil // never resolved the request
 	}))
 
-	_, err := agent.Run(context.Background(), "deploy")
+	_, err := agent.Send(context.Background(), "deploy").Result()
 	var runErr *adaptor.RunError
 	if !errors.As(err, &runErr) || runErr.Reason != adaptor.ReasonAgentError {
 		t.Fatalf("want agent-error *RunError, got %v", err)
@@ -435,7 +435,7 @@ func TestApprovalTimeoutFallbackMatrix(t *testing.T) {
 			}
 			agent := adaptor.New(fake, opts...)
 
-			st := agent.Stream(context.Background(), "deploy")
+			st := agent.Send(context.Background(), "deploy")
 			var captured *adaptor.ApprovalRequest
 			for ev := range st.Events() {
 				if req, ok := ev.(*adaptor.ApprovalRequest); ok {
@@ -490,7 +490,7 @@ func TestApprovalRetryUnsupportedDegradesToAbort(t *testing.T) {
 		}),
 	)
 
-	st := agent.Stream(context.Background(), "deploy")
+	st := agent.Send(context.Background(), "deploy")
 	events, _, err := collect(st)
 	if !errors.Is(err, adaptor.ErrApprovalDenied) {
 		t.Fatalf("degraded retry must abort as a denial, got %v", err)
@@ -525,7 +525,7 @@ func TestApprovalRetryExhausted(t *testing.T) {
 		}),
 	)
 
-	_, err := agent.Run(context.Background(), "deploy")
+	_, err := agent.Send(context.Background(), "deploy").Result()
 	var runErr *adaptor.RunError
 	if !errors.As(err, &runErr) || !errors.Is(err, adaptor.ErrApprovalDenied) {
 		t.Fatalf("want *RunError(ErrApprovalDenied), got %v", err)
@@ -558,7 +558,7 @@ func TestApprovalRetryThenApprove(t *testing.T) {
 		}),
 	)
 
-	res, err := agent.Run(context.Background(), "deploy")
+	res, err := agent.Send(context.Background(), "deploy").Result()
 	if err != nil || res.Text != "approved-path" {
 		t.Fatalf("res=%v err=%v", res, err)
 	}
@@ -576,7 +576,7 @@ func TestApprovalEventFormApprove(t *testing.T) {
 	fake.runFunc = askOnce(driver.HumanDecisionPermission, nil)
 	agent := adaptor.New(fake)
 
-	st := agent.Stream(context.Background(), "deploy")
+	st := agent.Send(context.Background(), "deploy")
 	var captured *adaptor.ApprovalRequest
 	for ev := range st.Events() {
 		if req, ok := ev.(*adaptor.ApprovalRequest); ok {
@@ -613,7 +613,7 @@ func TestApprovalEventFormQuestion(t *testing.T) {
 		Approvals: adaptor.ApprovalPolicy{Question: adaptor.QuestionAsk},
 	}))
 
-	st := agent.Stream(context.Background(), "release?")
+	st := agent.Send(context.Background(), "release?")
 	for ev := range st.Events() {
 		if req, ok := ev.(*adaptor.ApprovalRequest); ok {
 			if err := req.Answer(context.Background(), "hold"); err != nil {
@@ -635,7 +635,7 @@ func TestApprovalEventFormConcurrentDuplicate(t *testing.T) {
 	fake.runFunc = askOnce(driver.HumanDecisionPermission, nil)
 	agent := adaptor.New(fake)
 
-	st := agent.Stream(context.Background(), "deploy")
+	st := agent.Send(context.Background(), "deploy")
 	var approveErr, denyErr error
 	for ev := range st.Events() {
 		if req, ok := ev.(*adaptor.ApprovalRequest); ok {
@@ -676,7 +676,7 @@ func TestApprovalCancelDuringPending(t *testing.T) {
 	fake.runFunc = askOnce(driver.HumanDecisionPermission, nil)
 	agent := adaptor.New(fake)
 
-	st := agent.Stream(context.Background(), "deploy")
+	st := agent.Send(context.Background(), "deploy")
 	var captured *adaptor.ApprovalRequest
 	for ev := range st.Events() {
 		if req, ok := ev.(*adaptor.ApprovalRequest); ok {
@@ -706,14 +706,14 @@ func TestOnApprovalNearerScopeWins(t *testing.T) {
 	fake.runFunc = askOnce(driver.HumanDecisionPermission, nil)
 	agent := adaptor.New(fake, adaptor.OnApproval(adaptor.DenyAll("default says no")))
 
-	res, err := agent.Run(context.Background(), "deploy", adaptor.OnApproval(adaptor.ApproveAll()))
+	res, err := agent.Send(context.Background(), "deploy", adaptor.OnApproval(adaptor.ApproveAll())).Result()
 	if err != nil || res.Text != "approved-path" {
 		t.Fatalf("call-site ApproveAll must win: res=%v err=%v", res, err)
 	}
 
 	// The agent default is untouched for the next run.
 	fake.runFunc = askOnce(driver.HumanDecisionPermission, nil)
-	_, err = agent.Run(context.Background(), "deploy")
+	_, err = agent.Send(context.Background(), "deploy").Result()
 	if !errors.Is(err, adaptor.ErrApprovalDenied) {
 		t.Fatalf("agent default DenyAll must still apply, got %v", err)
 	}

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	adaptertest "github.com/agent-dance/agent-adaptor/adaptertest"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptertest "github.com/agent-dance/agent-adaptor/v2/adaptertest"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // claudeLiveGate decides whether the live conformance probes (EVT-*,
@@ -73,6 +73,9 @@ func TestClaudeDriverConformance(t *testing.T) {
 		adaptertest.WithExpectedDetectedModel("claude-sonnet-4"),
 		adaptertest.WithRequiredConfigFields("command", "cwd", "model"),
 		adaptertest.ExpectRejectForeignConfig(),
+		adaptertest.WithMessageFixture("hooks", claudeMessageFixture("hooks")),
+		adaptertest.WithMessageFixture("resident", claudeMessageFixture("resident")),
+		adaptertest.WithMessageFixture("native", claudeMessageFixture("native")),
 		liveOpt,
 	}
 	if live {

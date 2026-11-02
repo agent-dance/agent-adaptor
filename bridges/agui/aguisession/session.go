@@ -18,22 +18,34 @@ import (
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 	wire "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/encoding/sse"
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/ssewire"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/bridgekey"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/ssewire"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 // ProjectionVersion identifies the persisted boundary and projection contract.
-// Unknown and older versions fail closed; recorded history requires migration.
-const ProjectionVersion = "agui-session/2"
+// Version 3 adds SupplementKind records. Version 2 recordings contain none and
+// remain readable; unknown versions fail closed and require migration.
+const ProjectionVersion = "agui-session/3"
+
+func supportedProjection(version string) bool {
+	return version == ProjectionVersion || version == "agui-session/2"
+}
 
 // BoundaryKind is the reserved Notice kind carrying identity, diagnostics and user input.
 const BoundaryKind = "agentAdaptor.agui.boundary"
 
 // TerminalKind is the reserved Notice kind carrying the authoritative outcome.
 const TerminalKind = "agentAdaptor.agui.terminal"
+
+// SupplementKind is the reserved Notice kind carrying admitted in-run user input.
+const SupplementKind = "agentAdaptor.agui.supplement"
+
+func reservedKind(kind string) bool {
+	return kind == BoundaryKind || kind == TerminalKind || kind == SupplementKind
+}
 
 // Op identifies an authorized session operation.
 type Op string
@@ -47,6 +59,8 @@ const (
 	OpFollow Op = "follow"
 	// OpCancel authorizes cancellation.
 	OpCancel Op = "cancel"
+	// OpMessage authorizes supplemental input to the active run.
+	OpMessage Op = "message"
 )
 
 // Access describes the public resource being accessed.
@@ -87,7 +101,7 @@ type Options struct {
 	Input agui.InputOptions
 	// Events configures deterministic projection, including ProjectionHook.
 	Events []agui.EventTranslatorOption
-	// CallOptions are passed to Runner.Stream.
+	// CallOptions are passed to Runner.Send.
 	CallOptions []adaptor.CallOption
 	// Observe receives successfully recorded source events, including live approvals.
 	// It runs synchronously in each run's sole drain and must return promptly.
@@ -109,6 +123,7 @@ type Session struct {
 	running           int
 	shutdownDone      chan struct{}
 	runs              map[string]*ownedRun
+	live              map[string]*liveRun
 	observers         map[string]map[uint64]context.CancelFunc
 	observerID        uint64
 	recordingFailures map[string]bool
@@ -138,7 +153,7 @@ func New(runner adaptor.Runner, opts Options) *Session {
 	lifetime, stop := context.WithCancel(base)
 	return &Session{
 		runner: runner, opts: opts, active: map[string]bool{},
-		lifetime: lifetime, stop: stop, runs: map[string]*ownedRun{},
+		lifetime: lifetime, stop: stop, runs: map[string]*ownedRun{}, live: map[string]*liveRun{},
 		observers:         map[string]map[uint64]context.CancelFunc{},
 		recordingFailures: map[string]bool{}, boundaries: map[string]sessionrecorder.HostSeq{},
 		revisions: map[string]uint64{}, shutdownDone: make(chan struct{}), changed: make(chan struct{}),
@@ -302,7 +317,7 @@ func (s *Session) reserve(ctx context.Context, key, runID string, run *ownedRun)
 	s.mu.Lock()
 	if s.active[key] {
 		s.mu.Unlock()
-		return conflict("agui.run_active", "thread already has an active run")
+		return conflict("agui.run_active", "thread already has an active run; send in-run input to the message endpoint")
 	}
 	s.active[key] = true
 	s.boundaries[key] = 0
@@ -492,10 +507,11 @@ func (s *Session) recordBoundary(ctx context.Context, key string, prepared *agui
 func (s *Session) streamResponse(w http.ResponseWriter, r *http.Request, key string, prepared *agui.PreparedRequest, boundary sessionrecorder.EventRecord) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	stream := prepared.Target.Stream(ctx, prepared.Prompt, s.opts.CallOptions...)
+	stream := prepared.Target.Send(ctx, prepared.Prompt, s.opts.CallOptions...)
 	defer stream.Cancel()
 	output := make(chan events.Event, 32)
-	go s.drain(ctx, key, prepared.Input, stream, boundary, output)
+	live := s.openLive(key, prepared.Input, stream)
+	go s.drain(ctx, key, prepared.Input, stream, live, boundary, output)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -547,13 +563,14 @@ func (s *Session) streamResponse(w http.ResponseWriter, r *http.Request, key str
 	}
 }
 
-func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput, stream adaptor.Stream, boundary sessionrecorder.EventRecord, out chan<- events.Event) {
+func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput, stream adaptor.Stream, live *liveRun, boundary sessionrecorder.EventRecord, out chan<- events.Event) {
 	if out != nil {
 		defer close(out)
 	}
 	if s.opts.OnRunEnd != nil {
 		defer s.opts.OnRunEnd(key)
 	}
+	defer s.closeLive(key, live)
 	p := newProjector(s.opts.Events)
 	send := func(es []events.Event) {
 		if out == nil {
@@ -569,9 +586,9 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 	}
 	send(p.apply(boundary))
 	failed := false
-	record := func(ev adaptor.Event, submittedUser bool) {
+	record := func(ev adaptor.Event, submittedUser bool) error {
 		if failed {
-			return
+			return errRecordingFailed
 		}
 		// Persist terminal state even after request cancellation, with bounded I/O.
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -592,7 +609,7 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 			s.mu.Unlock()
 			stream.Cancel()
 			send(p.fail("agui.recording_failed", "event recording failed"))
-			return
+			return errRecordingFailed
 		}
 		es := p.apply(rec)
 		if s.opts.Observe != nil {
@@ -602,33 +619,60 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 		// CONTENT appends to its content. The POST client already owns this user
 		// message, so echoing the recorded triple would double its text.
 		if submittedUser {
-			return
+			return nil
 		}
 		send(es)
+		return nil
 	}
 	for _, ev := range in.UserTurnEvents(in.RunID) {
 		ev = adaptor.WithEventMeta(ev, adaptor.EventMeta{
 			RunID: stream.RunID(), ThreadKey: key, Time: boundary.RecordedAt,
 		})
-		record(ev, true)
+		_ = record(ev, true)
 	}
 	text := false
 	var sourceErr error
-	for ev := range stream.Events() {
-		if n, ok := ev.(adaptor.Notice); ok && (n.Kind == BoundaryKind || n.Kind == TerminalKind) {
-			sourceErr = errors.New("source event used a reserved AG-UI session Notice kind")
-			stream.Cancel()
-		}
-		if sourceErr != nil {
-			continue
-		}
-		if t, ok := ev.(adaptor.TextDelta); ok && t.Role != adaptor.RoleUser &&
-			t.MessageID != "" && t.Phase != adaptor.PhaseStart && t.Phase != adaptor.PhaseEnd &&
-			strings.TrimSpace(t.Text) != "" {
-			text = true
-		}
-		record(ev, false)
+	// Done is the source stream's last event. Hold it until admitted supplements
+	// and any Result.Text fallback are recorded, so history stays Done-last.
+	var done []adaptor.Event
+	recordSupplement := func(sup supplement) {
+		sup.recorded <- record(adaptor.WithEventMeta(
+			adaptor.Notice{Kind: SupplementKind, Data: map[string]any{"messageId": sup.id, "text": sup.text}},
+			adaptor.EventMeta{RunID: stream.RunID(), ThreadKey: key},
+		), false)
 	}
+	source := stream.Events()
+	for source != nil {
+		select {
+		case sup := <-live.inbox:
+			recordSupplement(sup)
+		case ev, ok := <-source:
+			if !ok {
+				source = nil
+				continue
+			}
+			if n, ok := ev.(adaptor.Notice); ok && reservedKind(n.Kind) {
+				sourceErr = errors.New("source event used a reserved AG-UI session Notice kind")
+				stream.Cancel()
+			}
+			if sourceErr != nil {
+				continue
+			}
+			if _, ok := ev.(adaptor.Done); ok {
+				done = append(done, ev)
+				continue
+			}
+			if t, ok := ev.(adaptor.TextDelta); ok && t.Role != adaptor.RoleUser &&
+				t.MessageID != "" && t.Phase != adaptor.PhaseStart && t.Phase != adaptor.PhaseEnd &&
+				strings.TrimSpace(t.Text) != "" {
+				text = true
+			}
+			_ = record(ev, false)
+		}
+	}
+	// Events closed after Done: Stream.Send can no longer admit input. Record
+	// every supplement whose admission already succeeded before the terminal.
+	live.seal(recordSupplement)
 	result, runErr := stream.Result()
 	if sourceErr != nil {
 		runErr = &adaptor.RunError{Reason: "agui.reserved_notice", Message: sourceErr.Error()}
@@ -644,8 +688,11 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 			adaptor.TextDelta{MessageID: id, Phase: adaptor.PhaseContent, Text: result.Text},
 			adaptor.TextDelta{MessageID: id, Phase: adaptor.PhaseEnd},
 		} {
-			record(ev, false)
+			_ = record(ev, false)
 		}
+	}
+	for _, ev := range done {
+		_ = record(ev, false)
 	}
 	code, message := "", ""
 	if runErr != nil {
@@ -672,7 +719,7 @@ func (s *Session) drain(ctx context.Context, key string, in *agui.RunAgentInput,
 			message = cancellation.Error()
 		}
 	}
-	record(adaptor.WithEventMeta(
+	_ = record(adaptor.WithEventMeta(
 		adaptor.Notice{Kind: TerminalKind, Data: map[string]any{"code": code, "message": message}},
 		adaptor.EventMeta{RunID: stream.RunID(), ThreadKey: key},
 	), false)

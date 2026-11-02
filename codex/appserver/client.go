@@ -94,9 +94,10 @@ type NotificationHandler func(method string, params json.RawMessage)
 type Client struct {
 	conn *jsonrpc2.Conn
 
-	handlerMu sync.RWMutex
-	handler   NotificationHandler
-	closed    atomic.Bool
+	handlerMu      sync.RWMutex
+	handler        NotificationHandler
+	requestHandler func(*jsonrpc2.Conn, *jsonrpc2.Request)
+	closed         atomic.Bool
 }
 
 // NewClient takes ownership of the ObjectStream and spins up the
@@ -223,19 +224,23 @@ func (c *Client) TurnInterrupt(ctx context.Context, params TurnInterruptParams) 
 
 // connHandler implements jsonrpc2.Handler. It is the single place where
 // inbound frames are observed: notifications are forwarded to the
-// registered NotificationHandler, unsolicited server requests (for example,
-// approval prompts) are rejected to unblock the peer.
+// registered NotificationHandler. Server requests use the execution's bound
+// approval handler; unsupported/unbound requests receive an explicit error.
 type connHandler struct {
 	client *Client
 }
 
 func (h *connHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	if !req.Notif {
-		// codex app-server may emit ServerRequest frames for approval
-		// prompts. This client does not negotiate server-initiated approval
-		// requests, but it must reply to avoid leaking a pending request on
-		// the peer. Respond with "method not found" so the server fails fast
-		// instead of blocking.
+		h.client.handlerMu.RLock()
+		fn := h.client.requestHandler
+		if fn != nil {
+			fn(conn, req)
+		}
+		h.client.handlerMu.RUnlock()
+		if fn != nil {
+			return
+		}
 		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
 			Message: fmt.Sprintf("agent-adaptor does not accept server-initiated request %q", req.Method),

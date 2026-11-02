@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	"github.com/agent-dance/agent-adaptor/bridges/agui/aguisession"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui/aguisession"
 )
 
 type exampleWireEvent struct {

@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
 )
 
 // Compile-time proof that mcp.Server is the driver spec itself: constructor

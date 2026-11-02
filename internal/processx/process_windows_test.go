@@ -5,16 +5,20 @@ package processx
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/testutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/testutil"
+	"golang.org/x/sys/windows"
 )
 
 const processWindowsHelperEnv = "GO_WANT_AGENT_ADAPTOR_PROCESS_WINDOWS_HELPER"
@@ -114,6 +118,121 @@ func TestConfigureCancellationTerminatesWindowsProcessTree(t *testing.T) {
 	}
 	if testutil.ProcessAlive(childPID) {
 		t.Fatalf("descendant pid %d survived process-tree cancellation", childPID)
+	}
+}
+
+func TestWindowsCancellationRecognizesExitedUnreapedProcess(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, executable)
+	cmd.Env = append(os.Environ(), processWindowsHelperEnv+"=echo")
+	ConfigureCancellation(cmd)
+	cancelled := make(chan error, 1)
+	terminateCommand := cmd.Cancel
+	cmd.Cancel = func() error {
+		err := terminateCommand()
+		cancelled <- err
+		return err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(cmd.Process.Pid))
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(handle)
+	_, _ = io.Copy(io.Discard, stdout)
+	status, err := windows.WaitForSingleObject(handle, 5000)
+	if err != nil || status != windows.WAIT_OBJECT_0 {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("wait for exit: status=%d err=%v", status, err)
+	}
+	cancel()
+	select {
+	case err := <-cancelled:
+		if !errors.Is(err, os.ErrProcessDone) {
+			t.Errorf("cancel exited process: %v, want os.ErrProcessDone", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("CommandContext did not observe cancellation")
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("clean process outcome: %v", err)
+	}
+	if err := terminate(cmd); !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("cancel reaped process: %v, want os.ErrProcessDone", err)
+	}
+}
+
+func TestWindowsTerminationRetainsRealAccessDenied(t *testing.T) {
+	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(os.Getpid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(handle)
+	cause := &os.SyscallError{Syscall: "TerminateProcess", Err: windows.ERROR_ACCESS_DENIED}
+	if got := windowsTerminationError(cause, handle); got != cause {
+		t.Fatalf("live-process AccessDenied changed to %v", got)
+	}
+	if got := windowsTerminationError(cause, 0); got != cause {
+		t.Fatalf("unverified AccessDenied changed to %v", got)
+	}
+	if got := windowsTerminationError(syscall.EINVAL, handle); got != syscall.EINVAL {
+		t.Fatalf("live-process EINVAL changed to %v", got)
+	}
+	if got := windowsTerminationError(syscall.EINVAL, 0); got != syscall.EINVAL {
+		t.Fatalf("unverified EINVAL changed to %v", got)
+	}
+	other := errors.New("unrelated wait error")
+	if got := windowsTerminationError(other, handle); got != other {
+		t.Fatalf("unrelated failure changed to %v", got)
+	}
+	for _, err := range []error{other, os.ErrNoHandle, cause} {
+		if got := windowsProcessHandleError(err); got != err {
+			t.Fatalf("unknown handle failure %v changed to %v", err, got)
+		}
+	}
+}
+
+func TestWindowsTerminationRetainedHandleSurvivesWait(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(executable)
+	cmd.Env = append(os.Environ(), processWindowsHelperEnv+"=echo")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Retain the original handle before Wait releases os.Process's handle.
+	// This is the precise interleaving possible inside terminate's callback.
+	if err := cmd.Process.WithHandle(func(handle uintptr) {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("Wait: %v", err)
+		}
+		killErr := cmd.Process.Kill()
+		if !errors.Is(killErr, syscall.EINVAL) {
+			t.Fatalf("Kill after Wait=%v, want Windows released-process EINVAL", killErr)
+		}
+		if err := windowsTerminationError(killErr, windows.Handle(handle)); !errors.Is(err, os.ErrProcessDone) {
+			t.Fatalf("retained-handle exit check=%v, want os.ErrProcessDone", err)
+		}
+	}); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatal(err)
 	}
 }
 

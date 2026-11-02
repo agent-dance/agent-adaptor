@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 func TestClaudePersistentProcessReuse(t *testing.T) {
@@ -39,7 +39,7 @@ func TestClaudePersistentProcessReuse(t *testing.T) {
 }
 
 func runClaudePersistentTurn(ctx context.Context, thread *adaptor.Thread, prompt string) (*adaptor.Result, int, error) {
-	stream := thread.Stream(ctx, prompt)
+	stream := thread.Send(ctx, prompt)
 	spawns := 0
 	for event := range stream.Events() {
 		if process, ok := event.(adaptor.ProcessInfo); ok && process.Kind == adaptor.ProcessSpawn {

@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/bridgekey"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/bridgekey"
 )
 
 // RequestOptions controls shared HTTP request preparation.
@@ -38,9 +38,9 @@ type PreparedRequest struct {
 }
 
 // PrepareHTTPRequest decodes, resolves and prepares one AG-UI invocation.
-// Agents without a ThreadStore execute statelessly; accepting prior history
-// still requires HistoryFallback or a host verifier. Fixed Thread runners remain
-// host-bound. Execution-policy errors are rejected before callbacks or store I/O.
+// A public thread identity selects the Agent's Thread (v2 Agents always own a
+// store); accepting prior history without a usable checkpoint still requires
+// HistoryFallback or a host verifier. Fixed Thread runners remain host-bound. Execution-policy errors are rejected before callbacks or store I/O.
 // Hooks can return InputError to choose an HTTP status; other host/storage
 // failures return a wrapping InputError with status 500 and code agui.request_failed.
 func PrepareHTTPRequest(r *http.Request, runner adaptor.Runner, opts RequestOptions) (*PreparedRequest, error) {
@@ -76,18 +76,10 @@ func PrepareHTTPRequest(r *http.Request, runner adaptor.Runner, opts RequestOpti
 	}
 	state := InputState{}
 	hasPrior := len(input.Messages) > 1
-	stateless := false
 	var checkpointErr error
 	if thread, ok := request.Target.(*adaptor.Thread); ok {
 		_, checkpointErr = thread.Checkpoint(r.Context())
 		state.CheckpointUsable = checkpointErr == nil
-		if _, isAgent := runner.(*adaptor.Agent); isAgent &&
-			errors.Is(checkpointErr, adaptor.ErrThreadStoreRequired) {
-			// A public threadId does not require stateful execution when the
-			// Agent has no store. History still needs explicit fallback.
-			stateless = true
-			request.Target = runner
-		}
 	}
 	// The verifier sees every threaded request, including an empty history
 	// that could diverge from recorded history. A resolver may bind a legacy
@@ -102,15 +94,13 @@ func PrepareHTTPRequest(r *http.Request, runner adaptor.Runner, opts RequestOpti
 				Message: "a fixed Thread cannot switch keys; supply an Agent to resolve history branches"}
 		}
 		request.ThreadKey, state.CheckpointUsable = key, usable
-		if !stateless {
-			request.Target = runnerForKey(runner, key)
-		}
+		request.Target = runnerForKey(runner, key)
 	} else if hasPrior && checkpointErr != nil && !checkpointUnavailable(checkpointErr) {
 		return nil, requestPreparationError(checkpointErr)
 	}
 	// Compatibility is fully checked inside the sole execution pipeline.
 	// ResumeOnly prevents that later check from silently dropping history.
-	if hasPrior && state.CheckpointUsable && request.ThreadKey != "" && !stateless {
+	if hasPrior && state.CheckpointUsable && request.ThreadKey != "" {
 		if agent, ok := runner.(*adaptor.Agent); ok {
 			request.Target = agent.Thread(request.ThreadKey, adaptor.ResumeOnly())
 		}
@@ -157,7 +147,6 @@ func checkpointUnavailable(err error) bool {
 		adaptor.ErrThreadNotFound,
 		adaptor.ErrThreadCheckpointMissing,
 		adaptor.ErrThreadIncompatible,
-		adaptor.ErrThreadStoreRequired,
 	} {
 		if errors.Is(err, missing) {
 			return true

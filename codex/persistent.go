@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/codex/appserver"
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/codex/appserver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // errPersistentFallback is returned only while no user prompt has been sent
@@ -49,6 +49,7 @@ type persistentSpec struct {
 	approval     string
 	sandbox      string
 	outputSchema *driver.OutputSchema
+	messages     driver.MessagePort
 
 	profileFingerprint  string
 	settingsFingerprint string
@@ -79,6 +80,7 @@ func (s persistentSpec) turnOptions() appserver.Options {
 	opts.Approval = s.approval
 	opts.Effort = s.effort
 	opts.OutputSchema = s.outputSchema
+	opts.Messages = s.messages
 	return opts
 }
 
@@ -491,7 +493,7 @@ func codexResumeID(req driver.Request) string {
 }
 
 func persistentEligible(cfg Config, req driver.Request) bool {
-	if !req.Streaming || persistentSessionKey(req) == "" ||
+	if !usesCodexAppServer(req) || persistentSessionKey(req) == "" ||
 		(req.Session != nil && req.Session.Mode == driver.SessionFork) {
 		return false
 	}

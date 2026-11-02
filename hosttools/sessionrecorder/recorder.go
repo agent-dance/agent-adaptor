@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 // EventRecord is one persisted unified event together with the HostSeq
@@ -31,14 +31,18 @@ type EventRecord struct {
 	HostSeq    HostSeq
 	RecordedAt time.Time
 	Event      adaptor.Event
+	// Diagnostics retains only explicitly enabled terminal audit data.
+	Diagnostics *ResultDiagnostics
+	exposure    ExposurePolicy
 }
 
 type eventRecordWire struct {
-	HostSeq    HostSeq         `json:"host_seq"`
-	RecordedAt time.Time       `json:"recorded_at"`
-	Kind       string          `json:"kind"`
-	Meta       eventMetaWire   `json:"meta"`
-	Event      json.RawMessage `json:"event"`
+	HostSeq     HostSeq            `json:"host_seq"`
+	RecordedAt  time.Time          `json:"recorded_at"`
+	Kind        string             `json:"kind"`
+	Meta        eventMetaWire      `json:"meta"`
+	Event       json.RawMessage    `json:"event"`
+	Diagnostics *ResultDiagnostics `json:"diagnostics,omitempty"`
 }
 
 type eventMetaWire struct {
@@ -59,18 +63,23 @@ type eventSourceMetaWire struct {
 }
 
 // MarshalJSON encodes the record as
-// {host_seq, recorded_at, kind, meta, event}.
+// {host_seq, recorded_at, kind, meta, event}, plus explicitly enabled diagnostics.
 func (r EventRecord) MarshalJSON() ([]byte, error) {
-	kind, payload, err := encodeEvent(r.Event)
+	projected, extra := projectTerminal(r.Event, r.exposure)
+	if r.Diagnostics != nil {
+		extra = r.Diagnostics
+	}
+	kind, payload, err := encodeEvent(projected)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(eventRecordWire{
-		HostSeq:    r.HostSeq,
-		RecordedAt: r.RecordedAt,
-		Kind:       kind,
-		Meta:       eventMetaToWire(r.Event.Meta()),
-		Event:      payload,
+		HostSeq:     r.HostSeq,
+		RecordedAt:  r.RecordedAt,
+		Kind:        kind,
+		Meta:        eventMetaToWire(r.Event.Meta()),
+		Event:       payload,
+		Diagnostics: extra,
 	})
 }
 
@@ -85,6 +94,9 @@ func (r *EventRecord) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	r.Diagnostics = wire.Diagnostics
+	// Already projected at recording time; preserve opted-in small fields.
+	r.exposure = ExposurePolicy{IncludeMetadata: true, IncludeUsage: true}
 	r.HostSeq = wire.HostSeq
 	r.RecordedAt = wire.RecordedAt
 	r.Event = adaptor.WithEventMeta(ev, wire.Meta.eventMeta())
@@ -227,6 +239,7 @@ type eventRecorder struct {
 	backend       EventBackend
 	clock         func() time.Time
 	validate      KeyValidator
+	exposure      ExposurePolicy
 
 	mu       sync.Mutex
 	sessions map[string]*eventSessionState
@@ -262,11 +275,14 @@ func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adapto
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	projected, extra := projectTerminal(ev, r.exposure)
 	next := st.lastSeq + 1
 	rec := EventRecord{
-		HostSeq:    next,
-		RecordedAt: r.clock(),
-		Event:      ev,
+		HostSeq:     next,
+		RecordedAt:  r.clock(),
+		Event:       projected,
+		Diagnostics: extra,
+		exposure:    r.exposure,
 	}
 	if err := r.backend.Append(ctx, sessionKey, rec); err != nil {
 		// Roll back: the next Record call must retry the same HostSeq.
@@ -486,6 +502,9 @@ const (
 	eventKindToolResult      = "tool.result"
 	eventKindRunStarted      = "run.started"
 	eventKindRunFinished     = "run.finished"
+	eventKindDone            = "done"
+	eventKindTurnEnd         = "turn.end"
+	eventKindMessageUpdate   = "message.update"
 	eventKindProcessInfo     = "process.info"
 	eventKindNotice          = "notice"
 	eventKindDropped         = "dropped"
@@ -496,6 +515,14 @@ const (
 func encodeEvent(ev adaptor.Event) (string, json.RawMessage, error) {
 	var kind string
 	switch typed := ev.(type) {
+	case adaptor.Done:
+		payload, err := json.Marshal(terminalEventRecord{Result: recordResult(typed.Result), Err: recordTerminalError(typed.Err)})
+		return eventKindDone, payload, err
+	case adaptor.TurnEnd:
+		payload, err := json.Marshal(terminalEventRecord{Result: recordResult(typed.Result), Err: recordTerminalError(typed.Err), Turn: typed.Turn, MessageIDs: typed.MessageIDs})
+		return eventKindTurnEnd, payload, err
+	case adaptor.MessageUpdate:
+		kind = eventKindMessageUpdate
 	case adaptor.TextDelta:
 		kind = eventKindTextDelta
 	case adaptor.Thinking:
@@ -520,7 +547,11 @@ func encodeEvent(ev adaptor.Event) (string, json.RawMessage, error) {
 		if typed == nil {
 			return "", nil, errors.New("sessionrecorder: cannot record a nil approval request")
 		}
-		kind = eventKindApprovalRequest
+		payload, err := json.Marshal(struct {
+			*adaptor.ApprovalRequest
+			Origin adaptor.Origin
+		}{typed, typed.Origin()})
+		return eventKindApprovalRequest, payload, err
 	case nil:
 		return "", nil, errors.New("sessionrecorder: cannot record a nil event")
 	default:
@@ -544,6 +575,19 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 		return decoder.Decode(v)
 	}
 	switch kind {
+	case eventKindDone, eventKindTurnEnd:
+		var wire terminalEventRecord
+		if err := unmarshal(&wire); err != nil {
+			return nil, err
+		}
+		runErr := wire.Err.restore()
+		if kind == eventKindDone {
+			return adaptor.Done{Result: wire.Result.restore(), Err: runErr}, nil
+		}
+		return adaptor.TurnEnd{Turn: wire.Turn, Result: wire.Result.restore(), Err: runErr, MessageIDs: wire.MessageIDs}, nil
+	case eventKindMessageUpdate:
+		var ev adaptor.MessageUpdate
+		return ev, unmarshal(&ev)
 	case eventKindTextDelta:
 		var ev adaptor.TextDelta
 		return ev, unmarshal(&ev)
@@ -577,9 +621,83 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 	case eventKindApprovalRequest:
 		// Descriptive fields only: a replayed request has no live
 		// responder (Approve/Deny/Answer are meaningless after the fact).
-		ev := &adaptor.ApprovalRequest{}
-		return ev, unmarshal(ev)
+		wire := struct {
+			*adaptor.ApprovalRequest
+			Origin adaptor.Origin
+		}{ApprovalRequest: &adaptor.ApprovalRequest{}}
+		if err := unmarshal(&wire); err != nil {
+			return nil, err
+		}
+		return wire.ApprovalRequest.Forward(wire.Origin), nil
 	default:
 		return nil, fmt.Errorf("sessionrecorder: unknown event kind %q", kind)
 	}
+}
+
+// Terminal records retain the safe Result projection and a descriptive error.
+// Live responders, private audit payloads, and arbitrary Go error implementations
+// cannot be serialized. Business errors and context sentinels retain identity.
+type terminalEventRecord struct {
+	Result     *recordedResult
+	Err        *terminalErrorRecord
+	Turn       int      `json:",omitempty"`
+	MessageIDs []string `json:",omitempty"`
+}
+type terminalErrorRecord struct {
+	Message string
+	Kind    string
+	Reason  adaptor.FailureReason `json:",omitempty"`
+	Details map[string]any        `json:",omitempty"`
+	Result  *recordedResult       `json:",omitempty"`
+	// Cancellation may wrap a business error without replacing its identity.
+	Cancelled bool `json:",omitempty"`
+	TimedOut  bool `json:",omitempty"`
+}
+
+func recordTerminalError(err error) *terminalErrorRecord {
+	if err == nil {
+		return nil
+	}
+	out := &terminalErrorRecord{
+		Message:   err.Error(),
+		Cancelled: errors.Is(err, context.Canceled),
+		TimedOut:  errors.Is(err, context.DeadlineExceeded),
+	}
+	var business *adaptor.RunError
+	switch {
+	case errors.As(err, &business):
+		out.Kind = "business"
+		out.Message = business.Message
+		out.Reason = business.Reason
+		out.Details = business.Details
+		out.Result = recordResult(business.Result)
+	case errors.Is(err, context.Canceled):
+		out.Kind = "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		out.Kind = "timeout"
+	}
+	return out
+}
+func (e *terminalErrorRecord) restore() error {
+	if e == nil {
+		return nil
+	}
+	var restored error
+	switch e.Kind {
+	case "business":
+		restored = &adaptor.RunError{Message: e.Message, Reason: e.Reason, Details: e.Details, Result: e.Result.restore()}
+	case "cancelled":
+		restored = fmt.Errorf("%s: %w", e.Message, context.Canceled)
+	case "timeout":
+		restored = fmt.Errorf("%s: %w", e.Message, context.DeadlineExceeded)
+	default:
+		restored = errors.New(e.Message)
+	}
+	if e.Cancelled && !errors.Is(restored, context.Canceled) {
+		restored = errors.Join(restored, context.Canceled)
+	}
+	if e.TimedOut && !errors.Is(restored, context.DeadlineExceeded) {
+		restored = errors.Join(restored, context.DeadlineExceeded)
+	}
+	return restored
 }

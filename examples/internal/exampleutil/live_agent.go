@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/claude"
-	"github.com/agent-dance/agent-adaptor/codebuddy"
-	"github.com/agent-dance/agent-adaptor/codex"
-	"github.com/agent-dance/agent-adaptor/cursor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/claude"
+	"github.com/agent-dance/agent-adaptor/v2/codebuddy"
+	"github.com/agent-dance/agent-adaptor/v2/codex"
+	"github.com/agent-dance/agent-adaptor/v2/cursor"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 const (
@@ -255,7 +255,7 @@ func NonInteractivePolicy(agent string, sandbox adaptor.SandboxLevel) adaptor.Po
 }
 
 // NonInteractive returns the policy as a SharedOption, so the same value works
-// as an adaptor.New default and as a per-call Run/Stream override.
+// as an adaptor.New default and as a per-call Send override.
 func NonInteractive(agent string, sandbox adaptor.SandboxLevel) adaptor.SharedOption {
 	return adaptor.WithPolicy(NonInteractivePolicy(agent, sandbox))
 }

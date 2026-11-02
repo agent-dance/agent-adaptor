@@ -3,7 +3,7 @@ package engine
 // Driver SPI aliases keep engine algorithms concise while preserving package
 // driver as the sole owner of extension contracts.
 
-import "github.com/agent-dance/agent-adaptor/driver"
+import "github.com/agent-dance/agent-adaptor/v2/driver"
 
 // --- Driver SPI -----------------------------------------------------------
 

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
 	schema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -25,11 +25,8 @@ type conformanceRunner struct {
 	prompt string
 }
 
-func (r *conformanceRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
-	panic("handler must Stream")
-}
 
-func (r *conformanceRunner) Stream(_ context.Context, p string, _ ...adaptor.CallOption) adaptor.Stream {
+func (r *conformanceRunner) Send(_ context.Context, p string, _ ...adaptor.CallOption) adaptor.Stream {
 	r.calls++
 	r.prompt = p
 	ch := make(chan adaptor.Event, 60)

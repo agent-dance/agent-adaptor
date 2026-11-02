@@ -1,0 +1,45 @@
+{
+  "sources": [
+    {
+      "sha256": "a905854661bd21f4cdb39845c9ba2b7110c0613b39bccd3255bb4e99f0fb494b",
+      "name": "agent-adaptor-shadow.acceptance.spec.ts"
+    },
+    {
+      "sha256": "b11d2b327a59fb646c3a795bb1dd79fbdea04f9509d4e013834ab06439accf5f",
+      "name": "agent-adaptor-shadow.acceptance.ts"
+    },
+    {
+      "sha256": "550b3c554747a54387e16583fba4b818747a57c8b7736f878051c560f725c79f",
+      "name": "agent-adaptor-shadow.browser.spec.ts"
+    },
+    {
+      "sha256": "aa38aa9684f526395bfedd4c83fbe077d11042d775c721c31b5d2eee7889ce33",
+      "name": "agent-adaptor-shadow.browser.ts"
+    },
+    {
+      "sha256": "4ba9cdd72bd71f4e55b02c70f7cd2fad40d5f6a5b0982aea0166cec5092b7994",
+      "name": "agent-adaptor-shadow.evidence.spec.ts"
+    },
+    {
+      "sha256": "7571bd7da3b8b322098dfcc77339e9d5f343981520acabed01ba46f0b511d039",
+      "name": "agent-adaptor-shadow.evidence.ts"
+    },
+    {
+      "sha256": "9bb698485f47f0ffd82f2ba8f4553e0f2e7f11c6a6c43adfe289fc4342aec62c",
+      "name": "agent-adaptor-shadow.md"
+    },
+    {
+      "sha256": "647cfa3b11dd8093810e83b2518a773e09e4be7091aa84e9117fade393404650",
+      "name": "agent-adaptor-shadow.report.spec.ts"
+    },
+    {
+      "sha256": "662b689bef2bc33a5782e31e3e057753a13e8488883a4db939e6db50b280a223",
+      "name": "agent-adaptor-shadow.report.ts"
+    },
+    {
+      "sha256": "4aaee60f27b6635ca606b78460f8e68542c4f04131e7a809b5a02b4d115a471e",
+      "name": "agent-adaptor-shadow.spec.ts"
+    }
+  ],
+  "at": "2026-11-01T18:43:53.5936161Z"
+}

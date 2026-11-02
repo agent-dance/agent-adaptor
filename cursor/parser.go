@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // cursorParser consumes the official Cursor Agent CLI stream-json protocol.
@@ -19,7 +19,8 @@ import (
 type cursorParser struct {
 	mu sync.Mutex
 
-	sink driver.EventSink
+	sink  driver.EventSink
+	hooks *cursorHooks
 
 	stdoutLine bytes.Buffer
 	stderrLine bytes.Buffer
@@ -35,6 +36,7 @@ type cursorParser struct {
 	terminal          *driver.TerminalPayload
 	errorMessage      string
 	terminalSeen      bool
+	completedAt       time.Time
 	terminalSuccess   bool
 	protocolMalformed bool
 }
@@ -123,6 +125,9 @@ func (p *cursorParser) handlePayload(raw string, payload map[string]any) {
 			return
 		}
 		p.captureSession(payload)
+		if p.hooks != nil && !p.protocolMalformed {
+			p.hooks.activate(p.sessionID)
+		}
 		p.emit(driver.TranscriptItem{
 			Kind:      driver.TranscriptInit,
 			Model:     cursorString(payload, "model"),
@@ -200,7 +205,10 @@ func (p *cursorParser) handleToolCall(payload map[string]any, subtype string) bo
 	if subtype != "started" && subtype != "completed" {
 		return false
 	}
-	callID := cursorString(payload, "call_id")
+	callID := cursorCallID(cursorString(payload, "call_id"))
+	if callID == "" {
+		callID = cursorCallID(cursorString(cursorObject(payload, "tool_call"), "toolCallId"))
+	}
 	name, call, ok := cursorNestedToolCall(payload)
 	if !ok || callID == "" {
 		p.protocolMalformed = true
@@ -222,6 +230,9 @@ func (p *cursorParser) handleToolCall(payload map[string]any, subtype string) bo
 	if !exists {
 		p.protocolMalformed = true
 		return false
+	}
+	if p.hooks != nil {
+		p.hooks.receipt(callID, cursorObject(payload, "tool_call"))
 	}
 	item := driver.TranscriptItem{
 		Kind:      driver.TranscriptToolResult,
@@ -305,6 +316,10 @@ func cursorCompactJSON(value any) string {
 }
 
 func (p *cursorParser) handleSuccessResult(raw string, payload map[string]any) {
+	p.completedAt = time.Now().UTC()
+	if p.hooks != nil {
+		p.hooks.end()
+	}
 	p.captureSession(payload)
 	p.terminalSeen = true
 	isError, hasErrorFlag := payload["is_error"].(bool)

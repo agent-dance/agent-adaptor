@@ -9,7 +9,7 @@ package adaptor_test
 //	    adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.ReadOnly}),   // 评审者天然只读
 //	)
 //
-//	patch, err := coder.Run(ctx, "implement the fix")
+//	patch, err := coder.Send(ctx, "implement the fix").Result()
 //	if err != nil { return err }
 //
 //	review, _, err := adaptor.RunAs[Review](ctx, reviewer,
@@ -25,8 +25,8 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 type Review struct {
@@ -59,7 +59,7 @@ func TestScenarioS2MultiAgentPipeline(t *testing.T) {
 		adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.ReadOnly}), // 评审者天然只读
 	)
 
-	patch, err := coder.Run(ctx, "implement the fix")
+	patch, err := coder.Send(ctx, "implement the fix").Result()
 	if err != nil {
 		t.Fatalf("coder.Run: %v", err)
 	}

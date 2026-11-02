@@ -4,15 +4,15 @@ import (
 	"context"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/codex/appserver"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/driverutil"
-	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
+	"github.com/agent-dance/agent-adaptor/v2/codex/appserver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions"
 )
 
-// runAppServer handles provider-streaming invocations and SessionFork. Forks
-// use the official app-server thread/fork method even when the public caller
-// selected Run; the unified event pipeline drains the provider stream.
+// runAppServer handles invocations resolved to the app-server transport and
+// SessionFork. Forks use the official app-server thread/fork method; the
+// unified event pipeline preserves the provider stream for either result reader.
 //
 // The function mirrors the existing exec --json path for session resume
 // validation (CWD / workspace-id consistency) and checkpoint construction so
@@ -66,6 +66,13 @@ func buildAppServerOptions(
 	if err != nil {
 		return appserver.Options{}, err
 	}
+	mcpArgs, err := codexMCPPolicyArgs(req.MCP, req.Policy)
+	if err != nil {
+		return appserver.Options{}, err
+	}
+	// Codex applies config overrides in order. Establish the complete server
+	// table before constructor overrides for exact server/tool settings.
+	extraArgs = append(mcpArgs, extraArgs...)
 	model, effort, serviceTier := codexAppServerConfigProjection(cfg)
 
 	opts := appserver.Options{
@@ -88,8 +95,9 @@ func buildAppServerOptions(
 		Effort:      effort,
 		ServiceTier: serviceTier,
 		RunID:       req.RunID,
+		Messages:    req.Messages,
 	}
-	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
+	if codexNativeSchema(req) {
 		opts.OutputSchema = req.OutputSchema
 	}
 

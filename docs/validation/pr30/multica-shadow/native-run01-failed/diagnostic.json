@@ -1,0 +1,945 @@
+[
+  {
+    "host": "127.0.0.1",
+    "console": [
+      {
+        "type": "info",
+        "text": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"
+      },
+      {
+        "type": "error",
+        "text": "WebSocket connection to 'ws://127.0.0.1:13934/_next/hmr?id=0-e7FdPB-mPfcePEhzfIq' failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+      },
+      {
+        "type": "error",
+        "text": "WebSocket connection to 'ws://127.0.0.1:13934/_next/hmr?id=0-e7FdPB-mPfcePEhzfIq' failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+      },
+      {
+        "type": "error",
+        "text": "WebSocket connection to 'ws://127.0.0.1:13934/_next/hmr?id=0-e7FdPB-mPfcePEhzfIq' failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+      },
+      {
+        "type": "error",
+        "text": "WebSocket connection to 'ws://127.0.0.1:13934/_next/hmr?id=0-e7FdPB-mPfcePEhzfIq' failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+      },
+      {
+        "type": "warning",
+        "text": "The resource http://127.0.0.1:13934/_next/static/css/app/%5BworkspaceSlug%5D/(dashboard)/layout.css?v=1793554483524 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      },
+      {
+        "type": "warning",
+        "text": "The resource http://127.0.0.1:13934/_next/static/media/32b04a225cda6443-s.p.woff2?v=1793554483524 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      },
+      {
+        "type": "warning",
+        "text": "The resource http://127.0.0.1:13934/_next/static/media/7d4881bb7e1bf84d-s.p.woff2?v=1793554483524 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      },
+      {
+        "type": "warning",
+        "text": "The resource http://127.0.0.1:13934/_next/static/media/31a001caa4a891ac-s.p.woff2?v=1793554483524 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      },
+      {
+        "type": "warning",
+        "text": "The resource http://127.0.0.1:13934/_next/static/media/597b6a5d799c44de-s.p.woff2?v=1793554483524 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      },
+      {
+        "type": "warning",
+        "text": "The resource http://127.0.0.1:13934/_next/static/css/app/%5BworkspaceSlug%5D/(dashboard)/issues/%5Bid%5D/page.css?v=1793554483524 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      },
+      {
+        "type": "warning",
+        "text": "The resource http://127.0.0.1:13934/_next/static/media/85ef47686bd56cf6-s.p.woff2?v=1793554483524 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally."
+      },
+      {
+        "type": "error",
+        "text": "WebSocket connection to 'ws://127.0.0.1:13934/_next/hmr?id=0-e7FdPB-mPfcePEhzfIq' failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+      },
+      {
+        "type": "error",
+        "text": "WebSocket connection to 'ws://127.0.0.1:13934/_next/hmr?id=0-e7FdPB-mPfcePEhzfIq' failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+      },
+      {
+        "type": "error",
+        "text": "WebSocket connection to 'ws://127.0.0.1:13934/_next/hmr?id=0-e7FdPB-mPfcePEhzfIq' failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+      },
+      {
+        "type": "error",
+        "text": "WebSocket connection to 'ws://127.0.0.1:13934/_next/hmr?id=0-e7FdPB-mPfcePEhzfIq' failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+      }
+    ],
+    "pageErrors": [],
+    "requests": [
+      {
+        "url": "http://127.0.0.1:13934/pr30-shadow/issues/01a19829-0853-73c6-b459-2ae504dba3b6",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/css/app/layout.css",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/media/7d4881bb7e1bf84d-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/media/597b6a5d799c44de-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/media/31a001caa4a891ac-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/media/32b04a225cda6443-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/css/app/%5BworkspaceSlug%5D/(dashboard)/layout.css",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/media/85ef47686bd56cf6-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/css/app/%5BworkspaceSlug%5D/(dashboard)/issues/%5Bid%5D/page.css",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/webpack.js",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/app-pages-internals.js",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/app/global-error.js",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/app/%5BworkspaceSlug%5D/layout.js",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/main-app.js",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/media/32b04a225cda6443-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/app/not-found.js",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/app/layout.js",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/app/%5BworkspaceSlug%5D/(dashboard)/issues/%5Bid%5D/page.js",
+        "status": 200
+      },
+      {
+        "url": "http://127.0.0.1:13934/_next/static/chunks/app/%5BworkspaceSlug%5D/(dashboard)/layout.js",
+        "status": 200
+      }
+    ],
+    "failures": [],
+    "titleVisible": false,
+    "error": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('PR30 development comparison 363ede66', { exact: true }).first() to be visible\u001b[22m\n",
+    "url": "http://127.0.0.1:13934/pr30-shadow/issues/01a19829-0853-73c6-b459-2ae504dba3b6",
+    "pending": [],
+    "body": ""
+  },
+  {
+    "host": "localhost",
+    "console": [
+      {
+        "type": "info",
+        "text": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"
+      },
+      {
+        "type": "log",
+        "text": "[HMR] connected"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.910 [api] color:#2196F3 → GET /api/config {rid: 04e99ffe}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.912 [api] color:#2196F3 → GET /api/me {rid: 3020e3e1}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.917 [api] color:#2196F3 → GET /api/me {rid: 0d49d1cd}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.922 [api] color:#2196F3 ← 200 /api/config {rid: 04e99ffe, duration: 12ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.924 [api] color:#2196F3 ← 200 /api/me {rid: 3020e3e1, duration: 12ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.927 [api] color:#2196F3 ← 200 /api/me {rid: 0d49d1cd, duration: 10ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.937 [api] color:#2196F3 → POST /api/auth/refresh {rid: 6abf7ec8}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.939 [api] color:#2196F3 → GET /api/workspaces {rid: 8de8d80a}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.950 [api] color:#2196F3 → POST /api/client-usage {rid: 973cf94d}"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 400 (Bad Request)"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.955 [api] color:#2196F3 ← 200 /api/workspaces {rid: 8de8d80a, duration: 16ms}"
+      },
+      {
+        "type": "error",
+        "text": "%c17:35:04.957 [api] color:#F44336;font-weight:bold ← 400 /api/auth/refresh {rid: 6abf7ec8, duration: 20ms, error: only interactive sessions can be refreshed}"
+      },
+      {
+        "type": "log",
+        "text": "%c17:35:04.958 [auth] color:#888 session renewal did not complete; keeping the current session {error: only interactive sessions can be refreshed, retryInMs: 1000}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.965 [chat.store] color:#2196F3 workspace rehydration {prevSession: null, nextSession: null, prevAgent: null, nextAgent: null, prevProject: null}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.969 [api] color:#2196F3 ← 204 /api/client-usage {rid: 973cf94d, duration: 19ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:04.993 [ws] color:#2196F3 connected"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.033 [api] color:#2196F3 → GET /api/search-index/manifest {rid: e05008fa}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.038 [api] color:#2196F3 ← 200 /api/search-index/manifest {rid: e05008fa, duration: 5ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.040 [api] color:#2196F3 → GET /api/search-index/snapshot?after_number=0&limit=200 {rid: ce65f0e0}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.045 [api] color:#2196F3 ← 200 /api/search-index/snapshot?after_number=0&limit=200 {rid: ce65f0e0, duration: 5ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.048 [api] color:#2196F3 → POST /api/search-index/changes {rid: 2ce6017b}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.053 [api] color:#2196F3 ← 200 /api/search-index/changes {rid: 2ce6017b, duration: 5ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.659 [api] color:#2196F3 → GET /api/agents?workspace_id=a25b1ca8-15be-4485-9ab2-0abf04a09ad8&include_archived=true {rid: 8b518dd6}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.661 [api] color:#2196F3 → GET /api/runtimes?workspace_id=a25b1ca8-15be-4485-9ab2-0abf04a09ad8 {rid: 37990abb}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.663 [api] color:#2196F3 → GET /api/agent-task-snapshot {rid: f7b8cb82}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.664 [api] color:#2196F3 → GET /api/squads {rid: f3f15aa9}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.667 [api] color:#2196F3 → GET /api/invitations {rid: 08781f4d}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.669 [api] color:#2196F3 → GET /api/inbox/unread-summary {rid: aed1d189}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.671 [api] color:#2196F3 → GET /api/chat/sessions?status=all {rid: 4534a739}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.673 [api] color:#2196F3 → GET /api/autopilots? {rid: 031863b3}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.676 [api] color:#2196F3 → GET /api/issue-statuses?include_archived=true {rid: 639f41b3}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.678 [api] color:#2196F3 → GET /api/issue-view-preferences?scope_type=sidebar_projects {rid: cba6166a}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.682 [api] color:#2196F3 → GET /api/workspaces/a25b1ca8-15be-4485-9ab2-0abf04a09ad8/members {rid: e4d53d5c}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.684 [api] color:#2196F3 → GET /api/issue-views?scope_type=all {rid: d374a307}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.685 [api] color:#2196F3 → GET /api/issue-view-preferences?scope_type=sidebar {rid: 1bdc96db}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.687 [api] color:#2196F3 → GET /api/pins?include=view {rid: 37ddd18e}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.689 [api] color:#2196F3 → GET /api/projects? {rid: c7c637f6}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.692 [api] color:#2196F3 → GET /api/issues?limit=50 {rid: 4d58d843}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.695 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 3e64f498}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.698 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/timeline {rid: 8e92566d}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.700 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/task-runs {rid: 017a3606}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.702 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 735eee7f}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.704 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/subscribers {rid: 8f15f74f}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.706 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/attachments {rid: 1e0eb7c1}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.708 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/labels {rid: 7033ee88}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.711 [api] color:#2196F3 → GET /api/properties?include_archived=true {rid: e940d188}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.714 [api] color:#2196F3 → GET /api/chat/pending-tasks {rid: a2a1fb25}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.733 [chat.ui] color:#2196F3 ChatWindow mount {isOpen: false, activeSessionId: null, pendingTaskId: null, selectedAgentId: null, wsId: a25b1ca8-15be-4485-9ab2-0abf04a09ad8}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.755 [api] color:#2196F3 → GET /api/chat/pending-tasks/has-any {rid: c8c19aa5}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.762 [chat.ui] color:#2196F3 ChatWindow unmount {activeSessionId: null, pendingTaskId: null}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.768 [chat.ui] color:#2196F3 ChatWindow mount {isOpen: false, activeSessionId: null, pendingTaskId: null, selectedAgentId: null, wsId: a25b1ca8-15be-4485-9ab2-0abf04a09ad8}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.846 [api] color:#2196F3 ← 200 /api/runtimes?workspace_id=a25b1ca8-15be-4485-9ab2-0abf04a09ad8 {rid: 37990abb, duration: 185ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.847 [api] color:#2196F3 ← 200 /api/agents?workspace_id=a25b1ca8-15be-4485-9ab2-0abf04a09ad8&include_archived=true {rid: 8b518dd6, duration: 188ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.847 [api] color:#2196F3 ← 200 /api/squads {rid: f3f15aa9, duration: 183ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.847 [api] color:#2196F3 ← 200 /api/agent-task-snapshot {rid: f7b8cb82, duration: 184ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.847 [api] color:#2196F3 ← 200 /api/invitations {rid: 08781f4d, duration: 180ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.847 [api] color:#2196F3 ← 200 /api/inbox/unread-summary {rid: aed1d189, duration: 178ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.847 [api] color:#2196F3 ← 200 /api/chat/sessions?status=all {rid: 4534a739, duration: 176ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.847 [api] color:#2196F3 ← 200 /api/autopilots? {rid: 031863b3, duration: 174ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.848 [api] color:#2196F3 ← 200 /api/issue-statuses?include_archived=true {rid: 639f41b3, duration: 172ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.848 [api] color:#2196F3 ← 200 /api/issue-view-preferences?scope_type=sidebar_projects {rid: cba6166a, duration: 170ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.848 [api] color:#2196F3 ← 200 /api/workspaces/a25b1ca8-15be-4485-9ab2-0abf04a09ad8/members {rid: e4d53d5c, duration: 166ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.848 [api] color:#2196F3 ← 200 /api/issue-views?scope_type=all {rid: d374a307, duration: 164ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.848 [api] color:#2196F3 ← 200 /api/issue-view-preferences?scope_type=sidebar {rid: 1bdc96db, duration: 163ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.848 [api] color:#2196F3 ← 200 /api/pins?include=view {rid: 37ddd18e, duration: 161ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.848 [api] color:#2196F3 ← 200 /api/projects? {rid: c7c637f6, duration: 159ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.848 [api] color:#2196F3 ← 200 /api/issues?limit=50 {rid: 4d58d843, duration: 156ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.849 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 3e64f498, duration: 154ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.849 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/timeline {rid: 8e92566d, duration: 151ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.849 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/task-runs {rid: 017a3606, duration: 149ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.849 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 735eee7f, duration: 147ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.849 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/subscribers {rid: 8f15f74f, duration: 145ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.849 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/attachments {rid: 1e0eb7c1, duration: 143ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.849 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/labels {rid: 7033ee88, duration: 141ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.849 [api] color:#2196F3 ← 200 /api/properties?include_archived=true {rid: e940d188, duration: 138ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.850 [api] color:#2196F3 ← 200 /api/chat/pending-tasks {rid: a2a1fb25, duration: 136ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:05.851 [api] color:#2196F3 ← 200 /api/chat/pending-tasks/has-any {rid: c8c19aa5, duration: 96ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.036 [api] color:#2196F3 → GET /api/labels?resource_type=issue {rid: 3f983152}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.038 [api] color:#2196F3 → GET /api/properties {rid: 3f22106a}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.040 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/wakeups {rid: 93f7979b}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.042 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/system-wakeups {rid: b969dffa}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.044 [api] color:#2196F3 → GET /api/inbox/archived/page?limit=50&group_id=01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 9e049c5a}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.047 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/duplicates {rid: cae008eb}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.056 [api] color:#2196F3 → GET /api/quick-actions {rid: a4e7e4ce}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.059 [api] color:#2196F3 → GET /api/issue-workflows {rid: 228b44ea}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.061 [api] color:#2196F3 → GET /api/assignee-frequency {rid: f5b0acbb}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.064 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/pull-requests {rid: 073813cd}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.073 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/children {rid: 54ecd960}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.082 [api] color:#2196F3 → GET /api/inbox/archived/page?limit=50&group_id=01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 6dfcda2e}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.359 [api] color:#2196F3 ← 200 /api/labels?resource_type=issue {rid: 3f983152, duration: 323ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.359 [api] color:#2196F3 ← 200 /api/properties {rid: 3f22106a, duration: 321ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.359 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/system-wakeups {rid: b969dffa, duration: 317ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.359 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/wakeups {rid: 93f7979b, duration: 319ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.367 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/duplicates {rid: cae008eb, duration: 320ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.367 [api] color:#2196F3 ← 200 /api/quick-actions {rid: a4e7e4ce, duration: 311ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.368 [api] color:#2196F3 ← 200 /api/assignee-frequency {rid: f5b0acbb, duration: 307ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.368 [api] color:#2196F3 ← 200 /api/issue-workflows {rid: 228b44ea, duration: 309ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.368 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/pull-requests {rid: 073813cd, duration: 304ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.368 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/children {rid: 54ecd960, duration: 295ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.368 [api] color:#2196F3 ← 200 /api/inbox/archived/page?limit=50&group_id=01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 6dfcda2e, duration: 286ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.464 [api] color:#2196F3 → GET /api/agent-run-counts {rid: 736db60c}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.464 [api] color:#2196F3 → GET /api/agent-activity-30d {rid: 303a6215}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.465 [api] color:#2196F3 → GET /api/skills {rid: d2fa4dbd}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.468 [api] color:#2196F3 ← 200 /api/skills {rid: d2fa4dbd, duration: 4ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.469 [api] color:#2196F3 ← 200 /api/agent-run-counts {rid: 736db60c, duration: 5ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.469 [api] color:#2196F3 ← 200 /api/agent-activity-30d {rid: 303a6215, duration: 5ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.583 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/duplicates {rid: eeb4d1ac}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.592 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 0437930a}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.594 [api] color:#2196F3 → GET /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/children {rid: b7258e98}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.725 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/duplicates {rid: eeb4d1ac, duration: 142ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.726 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6 {rid: 0437930a, duration: 134ms}"
+      },
+      {
+        "type": "info",
+        "text": "%c17:35:06.726 [api] color:#2196F3 ← 200 /api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/children {rid: b7258e98, duration: 132ms}"
+      }
+    ],
+    "pageErrors": [],
+    "requests": [
+      {
+        "url": "http://localhost:13934/pr30-shadow/issues/01a19829-0853-73c6-b459-2ae504dba3b6",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/css/app/layout.css",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/media/7d4881bb7e1bf84d-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/media/597b6a5d799c44de-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/media/31a001caa4a891ac-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/media/32b04a225cda6443-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/media/85ef47686bd56cf6-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/css/app/%5BworkspaceSlug%5D/(dashboard)/layout.css",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/css/app/%5BworkspaceSlug%5D/(dashboard)/issues/%5Bid%5D/page.css",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/webpack.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/app-pages-internals.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/app/global-error.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/app/%5BworkspaceSlug%5D/layout.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/main-app.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/media/32b04a225cda6443-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/app/not-found.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/app/layout.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/config",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/me",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/me",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/auth/refresh",
+        "status": 400
+      },
+      {
+        "url": "http://localhost:19014/api/workspaces",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/client-usage",
+        "status": 204
+      },
+      {
+        "url": "http://localhost:13934/__nextjs_font/geist-latin.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/__nextjs_original-stack-frames",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/search-index/manifest",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/search-index/snapshot",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/search-index/changes",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/app/%5BworkspaceSlug%5D/(dashboard)/issues/%5Bid%5D/page.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/chunks/app/%5BworkspaceSlug%5D/(dashboard)/layout.js",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/runtimes",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/agents",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/squads",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/agent-task-snapshot",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/invitations",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/inbox/unread-summary",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/chat/sessions",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/autopilots",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issue-statuses",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issue-view-preferences",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/workspaces/a25b1ca8-15be-4485-9ab2-0abf04a09ad8/members",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issue-views",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issue-view-preferences",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/pins",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/projects",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/timeline",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/task-runs",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/subscribers",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/attachments",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/labels",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/properties",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/chat/pending-tasks",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/chat/pending-tasks/has-any",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/media/7d4881bb7e1bf84d-s.p.woff2",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/labels",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/properties",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/system-wakeups",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/wakeups",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/inbox/archived/page",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/duplicates",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/quick-actions",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/assignee-frequency",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issue-workflows",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/pull-requests",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/children",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/inbox/archived/page",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/skills",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/agent-run-counts",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/agent-activity-30d",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/pr30-shadow/issues/PR30-1",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:13934/_next/static/css/app/%5BworkspaceSlug%5D/(dashboard)/issues/%5Bid%5D/page.css",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/duplicates",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6",
+        "status": 200
+      },
+      {
+        "url": "http://localhost:19014/api/issues/01a19829-0853-73c6-b459-2ae504dba3b6/children",
+        "status": 200
+      }
+    ],
+    "failures": [
+      {
+        "url": "http://localhost:19014/api/client-usage",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "http://localhost:19014/api/inbox/archived/page",
+        "error": "net::ERR_ABORTED"
+      }
+    ],
+    "titleVisible": true,
+    "url": "http://localhost:13934/pr30-shadow/issues/01a19829-0853-73c6-b459-2ae504dba3b6",
+    "pending": [
+      "http://localhost:13934/_next/static/chunks/multica-search-index.js",
+      "http://localhost:13934/pr30-shadow/issues/PR30-1"
+    ],
+    "body": "P\nInbox\nWork\nTeam\nChat\nAuto\nP\nWork\nViews\nMy Issues\nMy agents' work\nAll issues\nAll views\n3\nProjects\nAll 0 projects\nPR30-1 PR30 development comparison 363ede66\nPR30 development comparison 363ede66\n\n\n\n\nAdd sub-issues\nActivity\nUnsubscribe\nPS\n🐨\n1 activity\nPS\nPR30 Shadow\n5m ago\n\n@PR30 native ab668af6 Implement shadow_math.py with a pure add(a,b) function returning a+b. This narrow fixture file may contain only an optional module docstring and def add(a,b): with an optional function docstring and a return of pure arithmetic; no imports, annotations, decorators, defaults, global assignments, top-level execution or other definitions. Implement test_shadow_math.py using unittest with at least two actually executed positive and negative addition tests, without skips or expected failures. Run python3 -m unittest -v test_shadow_math.py and then python3 -c 'from shadow_math import add; assert add(-2,5)==3; print(\"SHADOW_TEST_OK\")'. Keep changes inside your provided task workspace. Report the file names and actual test result. The host will independently check actual source and run both fixed acceptance cases and your generated unittest; printing a marker does not establish success. Do not inspect credentials or change Multica itself.\n\n🐨\nPR30 native ab668af6\n4m ago\n\nImplemented shadow_math.py with only def add(a, b): return a + b, and test_shadow_math.py with unittest tests for positive, negative, and mixed-sign addition.\n\npython3 -m unittest -v test_shadow_math.py: all 3 tests ran and passed, with no skips or expected failures (exit 0).\n\nThe requested python3 -c assertion passed (exit 0) and printed SHADOW_TEST_OK.\n\nPS\n\nLeave a reply...\n\n2 activities\nPR30 native ab668af6\nchanged status from In Progress to In Review\n×2\n4m ago\n🐨\nPR30 native ab668af6\ncompleted a run\n4m ago\n\nLeave a comment...\n\nProperties\nStatus\nIn Review\nAssignee\nUnassigned\nProject\nNo project\nAdd property\nWakeups\nPull requests\n\nLoading…\n\nExecution log\n1\nSpent\n$0.10\nTokens\n208.2K\nAgent time\n55s\n🐨\n@PR30 native ab668af6 Implement shadow_math.py with a pure add(a,b) function returning a+b. This narrow fixture file may contain only an optiona…\nCompleted · 4m ago\n$0.10\nDetails\nNew chat\n\n\n\n\n🐨\nPR30 native ab668af6"
+  }
+]

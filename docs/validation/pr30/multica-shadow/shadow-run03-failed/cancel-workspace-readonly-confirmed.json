@@ -1,0 +1,13 @@
+{
+  "at": "2026-11-01T18:44:35.856Z",
+  "purpose": "Read-only collection diagnostic; original run03 remains failed",
+  "taskID": "01a19867-eb21-71dd-aa63-54c176c528cb",
+  "path": "/home/buthim/multica_workspaces_pr30-shadow-sdk/pr30-shadow-0abf04a09ad8/pr30-11-54c176c528cb/workdir",
+  "line": "02:38:29.723 INF starting agent component=daemon task=01a19867-eb21-71dd-aa63-54c176c528cb provider=codex workdir=/home/buthim/multica_workspaces_pr30-shadow-sdk/pr30-shadow-0abf04a09ad8/pr30-11-54c176c528cb/workdir model=gpt-6.1-sol resume_reachable=false",
+  "artifact": {
+    "name": "stopped.txt",
+    "text": "STARTED\n",
+    "bytes": 8,
+    "sha256": "971fe3d6a96d8ce5b303aab72695067bd4549537ea98fb4601308e37c0626c88"
+  }
+}

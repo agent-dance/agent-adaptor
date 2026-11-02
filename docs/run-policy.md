@@ -1,261 +1,191 @@
 # Run policy and approvals
 
-`adaptor.Policy` is the public execution-guardrail value used by
-`adaptor.WithPolicy`. It controls the provider sandbox, optional features,
-and the single human-in-the-loop approval model. Drivers translate this value
-to their native controls; it is never a list of CLI flags.
+`adaptor.Policy`, installed through `WithPolicy`, controls sandbox, optional search/browser features, approvals, and supplemental messages. Drivers translate supported dimensions to native controls; core owns message limits and the single approval policy. All SDK imports use `github.com/agent-dance/agent-adaptor/v2`.
 
 ## Policy value and replacement rule
 
-```go
-type Policy struct {
-	Sandbox   SandboxLevel
-	WebSearch FeatureLevel
-	Browser   FeatureLevel
-	Approvals ApprovalPolicy
-}
-```
-
-| Dimension | Values | Zero value |
+| Field | Type and values | Zero value |
 |---|---|---|
-| `Sandbox` | `ReadOnly`, `WorkspaceWrite`, `Unrestricted` | `SandboxInherit` |
-| `WebSearch` | `FeatureAllow`, `FeatureDeny` | `FeatureInherit` |
-| `Browser` | `FeatureAllow`, `FeatureDeny` | `FeatureInherit` |
-| `Approvals` | per-kind modes and timeout/fallback settings | portable defaults described below |
+| Sandbox | SandboxLevel: ReadOnly, WorkspaceWrite, Unrestricted | SandboxInherit |
+| WebSearch | FeatureLevel: FeatureAllow, FeatureDeny | FeatureInherit |
+| Browser | FeatureLevel: FeatureAllow, FeatureDeny | FeatureInherit |
+| Approvals | ApprovalPolicy | Portable defaults below |
+| Messages | MessagePolicy | Enabled, default framing, 32 pending messages, 20 turns |
 
-The sandbox-only presets are `PolicyReadOnly`, `PolicyWorkspaceWrite`, and
-`PolicyUnrestricted`.
+The sandbox-only presets are PolicyReadOnly, PolicyWorkspaceWrite, and PolicyUnrestricted. They do not select approval modes.
 
-`WithPolicy` is a `SharedOption`: it can establish the Agent default or
-override one invocation. The nearer policy replaces the entire farther
-policy; fields are not merged independently.
+WithPolicy is a SharedOption for construction defaults or one execution. The nearer value replaces the **entire** policy, including Messages and Approvals:
 
 ```go
-agent := adaptor.New(d,
+agent := adaptor.New(codex.Driver(codex.Config{}),
 	adaptor.WithPolicy(adaptor.Policy{
 		Sandbox:   adaptor.ReadOnly,
 		WebSearch: adaptor.FeatureDeny,
+		Messages:  adaptor.MessagePolicy{MaxTurns: 5},
 	}),
 )
 
-// This call has WorkspaceWrite and inherited WebSearch, because the whole
-// call-site value replaces the Agent default.
-result, err := agent.Run(ctx, prompt,
+result, err := agent.Send(ctx, "Update the tests",
 	adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.WorkspaceWrite}),
-)
+).Result()
+if err != nil {
+	return err
+}
+fmt.Println(result.Text)
 ```
 
-An all-zero `Policy` delegates the non-approval dimensions to the Driver and
-uses the SDK approval defaults.
+That call inherits Driver search behavior and SDK message defaults, because the call-site policy replaces the constructor value. An all-zero policy leaves non-approval provider controls unspecified, applies SDK approval defaults, and enables supplemental messages.
+
+`WithTimeout` bounds an execution across its provider turns. For Standby, its lifetime context bounds the conversation; per-send execution options such as WithTimeout queue a separate execution instead of reconfiguring active work. Agent/Thread Send contexts govern their execution; Stream.Send contexts can withdraw unclaimed messages; Standby.Send contexts bound admission only.
 
 ## Approval policy
 
-`ApprovalPolicy` contains three routing modes and the common fallback rules:
+ApprovalPolicy aliases the Driver's HumanDecisionPolicy:
+
+| Field | Values / default |
+|---|---|
+| Permission, PlanReview | ApprovalInherit, ApprovalAsk, ApprovalAutoApprove, ApprovalAutoDeny; default Ask |
+| Question | QuestionInherit, QuestionAsk, QuestionAutoDeny; default auto-deny |
+| Timeout | time.Duration; default 30 seconds, negative means no practical deadline |
+| OnTimeout, OnReject | FallbackInherit, FallbackAbort, FallbackContinue, FallbackRetry; default abort |
+| MaxRetries | Default 3; negative is invalid |
+
+Questions have no auto-approve mode: a question needs an actual answer. ApprovalsAutoDeny explicitly selects auto-deny for all three kinds and requires all three capabilities; it is not portable across every Driver.
+
+FallbackAbort terminates the execution with a business error. FallbackContinue forwards the rejection/timeout so the Driver can continue. FallbackRetry creates a fresh request ID and asks again within MaxRetries. If the Driver does not support retry, a NoticeLifecycle with `Data["warning"] == "human_decision_retry_unsupported"` reports degradation to abort.
+
+If an Ask request arrives when Events has never been called and there is no OnApproval handler, core immediately applies the timeout fallback and emits a lifecycle notice. A Result-only caller does not wait for an approval timeout. Call Events early for a UI, install a callback, or select a supported automatic mode.
+
+Standby internally drains its execution streams, but that internal drain does not count as a host approval subscription. Without an external Events subscriber or OnApproval handler, a new Ask request takes the immediate timeout fallback. Configure a handler or a supported automatic policy for unattended operation.
+
+## Message policy
 
 ```go
-type ApprovalPolicy struct {
-	Permission ApprovalMode
-	PlanReview ApprovalMode
-	Question   QuestionMode
-	Timeout    time.Duration
-	OnTimeout  FallbackAction
-	OnReject   FallbackAction
-	MaxRetries int
+policy := adaptor.Policy{
+	Messages: adaptor.MessagePolicy{
+		MaxPending: 32,
+		MaxTurns:   20,
+	},
 }
+agent := adaptor.New(codex.Driver(codex.Config{}), adaptor.WithPolicy(policy))
 ```
 
-Permission and plan review accept:
+MessagePolicy fields:
 
-- `ApprovalInherit`
-- `ApprovalAsk`
-- `ApprovalAutoApprove`
-- `ApprovalAutoDeny`
+- Disabled: omit the Driver's supplemental message port and reject Stream.Send with ErrMessageUnsupported. Starting prompts still execute.
+- Format: optional `func(adaptor.MessageContext) string`; nil uses built-in framing. Context contains ID, original Text, From, and Timing.
+- MaxPending: unclaimed queue capacity; zero means 32. Full queues block Send until space or cancellation, never silently drop input.
+- MaxTurns: provider turns per execution; zero means 20. Negative limits are invalid.
 
-Questions accept `QuestionInherit`, `QuestionAsk`, or `QuestionAutoDeny`.
-There is no question auto-approve mode because a question requires an actual
-answer.
+Before any Driver.Run dispatch, an execution preparation failure returns every already admitted input as failed/provider_rejected with its original text. Standby does not carry these inputs into a later execution with different options. Policy/schema errors that can be checked synchronously reject with MessageError and emit no MessageUpdate. Once a Driver has been dispatched, ordinary failures use run_failed and the documented Standby carry/retry rules.
 
-Zero-valued fields materialize to these portable defaults:
+Framing distinguishes AuthorHuman, AuthorAgent, and AuthorSystem, preserves the original objective, and asks the model to incorporate input into one final answer. Only supplemental input is framed; a starting prompt remains raw. A custom Format controls that text and must retain whatever author/authority guidance the host requires. Driver size limits apply to the framed text.
 
-| Field | Default |
-|---|---|
-| `Permission` | `ApprovalAsk` |
-| `PlanReview` | `ApprovalAsk` |
-| `Question` | `QuestionAutoDeny` |
-| `Timeout` | 30 seconds |
-| `OnTimeout` | `FallbackAbort` |
-| `OnReject` | `FallbackAbort` |
-| `MaxRetries` | 3 |
+When MaxTurns is at least 2 and continuation is available, core emits `Notice{Kind: "limit.approaching"}` after `min(ceil(0.8 * MaxTurns), MaxTurns - 1)` completed turns. A system wrap-up message can accompany an existing continuation batch; it never starts a turn by itself or displaces host input. If the framed batch would exceed the Driver's resolved size limit, guidance is deferred or omitted while the Notice remains observable. At the limit, core starts no more turns. Pending input fails with MessageLimitExceeded and remains in Result.Undelivered; the execution itself can succeed. MaxTurns does not bound one provider turn's internal tool/model steps; use WithTimeout and provider configuration where appropriate.
 
-A negative timeout means no approval deadline. A negative `MaxRetries` is
-invalid. `ApprovalsAutoDeny` is a strict capability-dependent preset, not a
-portable unattended default: it explicitly selects auto-deny for all three
-kinds and therefore requires the bound Driver to advertise all three modes.
-For a more portable unattended policy, explicitly select auto-approve for
-permission and plan review where the Driver advertises it, and leave questions
-at `QuestionInherit`; the SDK default for questions then materializes to
-auto-deny.
-
-`FallbackAbort` ends the run with a business failure. `FallbackContinue`
-forwards the reject/timeout outcome so the Driver can continue. `FallbackRetry`
-renews the request ID and asks again up to `MaxRetries`. If the Driver does not
-advertise retry for that kind, the SDK emits one lifecycle `Notice` with
-`Data["warning"] == "human_decision_retry_unsupported"` and safely degrades to
-abort.
+When selects Soon, Interrupt, or AfterTurn per message; it does not replace Policy. Unsupported Interrupt requests fail explicitly rather than degrading. See the [Driver message matrix](./streaming.md#12-message-delivery-capabilities).
 
 ## Capability validation
 
-The public `driver.Descriptor.RunPolicyCaps` is the source of truth. Keep the
-Driver value if the host wants to disable unsupported controls before Agent
-construction:
+Descriptor.RunPolicyCaps is authoritative for explicit provider controls. Preserve the Driver value to inspect its declaration before construction:
 
 ```go
-d := claude.Driver(claude.Config{Model: "claude-sonnet-4"})
+d := claude.Driver(claude.Config{})
 caps := d.Descriptor().RunPolicyCaps
 agent := adaptor.New(d)
-
-if !caps.Question.Ask {
-	// Do not offer a QuestionAsk control for this Driver.
-}
+fmt.Println(caps.Permission.Ask, caps.Question.Ask)
 ```
 
-Before acquiring run resources or invoking the Driver, the SDK rejects:
+Before Driver dispatch, invalid enum/action/retry/message-limit values produce ErrInvalidPolicy and `*InvalidPolicyError{Driver, Field, Value}`. A valid unsupported sandbox/search/browser selection produces ErrPolicyCapabilityUnsupported and `*PolicyCapabilityUnsupportedError{Driver, Dimension, Value}`. An explicit unsupported approval mode produces ErrHumanDecisionModeUnsupported and `*HumanDecisionModeUnsupportedError{Driver, Kind, Mode}`.
 
-- out-of-domain sandbox, feature, approval-mode, fallback-action, or retry
-  values with `adaptor.ErrInvalidPolicy` and
-  `*adaptor.InvalidPolicyError` (`Driver`, `Field`, `Value`);
-- a valid, explicitly selected sandbox, web-search, or browser value which the
-  Driver does not model with `adaptor.ErrPolicyCapabilityUnsupported` and
-  `*adaptor.PolicyCapabilityUnsupportedError` (`Driver`, `Dimension`,
-  `Value`);
-- an explicitly selected approval mode absent from the capability matrix with
-  `adaptor.ErrHumanDecisionModeUnsupported` and
-  `*adaptor.HumanDecisionModeUnsupportedError` (`Driver`, `Kind`, `Mode`).
+Inherit is not an explicit capability request. A zero approval policy therefore remains usable on Drivers that never emit a given kind. Callbacks do not override these capability checks.
 
-Unset approval modes are not treated as explicit capability requests. This
-keeps a zero policy usable for a Driver which never emits that request kind.
-The same explicit-value rule applies to non-approval dimensions: inherit
-values are portable, while selected values require the corresponding
-`Isolation`, `WebSearch`, or `Browser` capability. Hosts can inspect those
-booleans before running to keep unsupported choices out of their UI.
+Current built-in declarations:
 
-Current built-in approval declarations are:
+| Driver | Sandbox | Web search | Browser | Permission | Plan review | Question | Approval retry |
+|---|---:|---:|---:|---|---|---|---:|
+| Codex | yes | yes | no | ask, auto-approve, auto-deny | none | none | no |
+| Claude | no | no | yes | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
+| Cursor | no | no | no | auto-approve | none | none | no |
+| CodeBuddy | no | no | no | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
 
-| Driver | Permission | Plan review | Question | Retry |
-|---|---|---|---|---:|
-| Codex | auto-approve | none | none | no |
-| Claude | auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
-| Cursor | auto-approve | none | none | no |
-| CodeBuddy | ask, auto-approve, auto-deny | ask, auto-approve, auto-deny | ask, auto-deny | no |
+An unsupported SDK sandbox control does not describe the strength of an externally configured provider environment. The SDK reports only controls it can honor. Validate against the captured Driver used by the Agent.
 
-These are descriptor declarations, not promises that every future provider
-version has the same matrix. Validate against the Driver value used to build
-the Agent.
+Codex Permission Ask and auto-deny select app-server. MCP permission requests reach the same ApprovalRequest responder as command/file approvals. Input-requiring MCP elicitation is not a supported Question capability. SDK-declared MCP servers remain enabled under every sandbox level: auto-approve renders a server default of `approve`, while Ask and auto-deny render `prompt` and use the approval decision path. ReadOnly constrains the provider filesystem/shell sandbox; it does not disable host-defined tools. Servers inherited from a native profile retain their own configuration.
+
+Message capabilities are independent of this table: Codex app-server supports Interrupt; Claude, Cursor, and CodeBuddy do not. Built-in Codex, Claude, and Cursor resolvers compare the detected CLI version with MinVersion, disable in-run delivery on known older versions, and retain checkpoint-resume continuation. Environment reports include the detected Version and effective Messages; unknown versions warn and keep the declaration. See [streaming](./streaming.md#12-message-delivery-capabilities).
 
 ## Callback form
 
-`OnApproval` is a `SharedOption`. It installs an Agent default handler or a
-nearer per-invocation override. Every `Ask` request invokes the handler with a
-live `*ApprovalRequest`.
+OnApproval is a SharedOption. Every Ask request routed to the handler carries the live responder:
 
 ```go
-agent := adaptor.New(d,
+agent := adaptor.New(claude.Driver(claude.Config{}),
 	adaptor.WithPolicy(adaptor.Policy{
-		Approvals: adaptor.ApprovalPolicy{
-			PlanReview: adaptor.ApprovalAsk,
-			Question:   adaptor.QuestionAsk,
-		},
+		Approvals: adaptor.ApprovalPolicy{Question: adaptor.QuestionAsk},
 	}),
 	adaptor.OnApproval(func(ctx context.Context, req *adaptor.ApprovalRequest) error {
-		switch req.Kind {
-		case adaptor.ApprovalQuestion:
-			return req.Answer(ctx, "proceed")
-		default:
-			return req.Approve(ctx)
+		if req.Kind == adaptor.ApprovalQuestion {
+			return req.Answer(ctx, "Use the existing implementation")
 		}
+		return req.Approve(ctx)
 	}),
 )
 ```
 
-The callback must call exactly one of `Approve`, `Deny`, or `Answer` and then
-return nil. Returning an error aborts the invocation with that infrastructure
-error. A panic or a nil return without resolving the request is classified as
-an agent business failure. `ApproveAll()` and `DenyAll(reason)` provide common
-handlers; `ApproveAll` denies questions because it cannot synthesize an answer.
+The handler resolves exactly once and returns nil, or returns an error to abort. A panic or nil return without a response is an agent business failure. ApproveAll approves binary requests and denies questions; DenyAll(reason) denies all kinds. Both handle requests already routed as Ask and cannot enable unsupported modes.
 
 ## Event responder form
 
-Without an `OnApproval` handler, an `Ask` request is a reliable event on the
-same Stream as all other typed events:
-
 ```go
-stream := agent.Stream(ctx, prompt,
-	adaptor.WithPolicy(adaptor.Policy{
-		Approvals: adaptor.ApprovalPolicy{PlanReview: adaptor.ApprovalAsk},
-	}),
-)
-
+stream := agent.Send(ctx, "Review the proposed plan")
+defer stream.Cancel()
 for event := range stream.Events() {
-	switch req := event.(type) {
-	case *adaptor.ApprovalRequest:
-		if err := req.Approve(ctx); err != nil {
+	if req, ok := event.(*adaptor.ApprovalRequest); ok {
+		if err := req.Deny(ctx, "The plan needs a smaller scope"); err != nil {
 			stream.Cancel()
 			return err
 		}
 	}
 }
 result, err := stream.Result()
+if err != nil {
+	return err
+}
+fmt.Println(result.Text)
 ```
 
-The event includes `ID`, `RunID`, `Kind`, `Title`, `Source`, `ToolCallID`,
-`Choices`, `Details`, `CreatedAt`, `Deadline`, `Attempt`, and the standard
-`Event.Meta()` envelope. Approval events are not eligible for drop-mode loss.
-Consumers must keep draining the stream; a consumer that abandons it must call
-`Cancel`.
+A UI can retain the request and respond from another goroutine or request. Fields include ID, RunID, Kind, Title, Source, ToolCallID, Choices, Details, CreatedAt, Deadline, Attempt, and Meta. Notices broadcast approval resolution with request_id for retiring a pending card. Persisting an audit record does not persist the live responder.
 
-The responder is exactly-once and shared by copies of the request:
+Origin returns `Origin{Member, Task string}`, zero for a single Agent. Forward attributes a copy while preserving the shared exactly-once responder; answering either copy resolves both. The host handles approvals with the same methods regardless of Origin.
 
 | Response error | Meaning |
 |---|---|
-| `ErrApprovalResolved` | A response already won. |
-| `ErrApprovalExpired` | The deadline or owning invocation ended; it also matches `ErrApprovalResolved`. |
-| `ErrApprovalKindMismatch` | `Approve` was used for a question, or `Answer` for a binary request. |
-| `ErrApprovalUnavailable` | The request is nil, zero-valued, or detached from its run-owned responder. |
+| ErrApprovalResolved | Another response already won. |
+| ErrApprovalExpired | Deadline or execution ended; also matches ErrApprovalResolved. |
+| ErrApprovalKindMismatch | Approve on a Question or Answer on a binary kind. |
+| ErrApprovalUnavailable | Nil, zero-valued, or unbound request. |
 
-These methods always return promptly for invalid or expired requests; they do
-not send to a nil channel.
-
-For `Agent.Run`, no external consumer sees drained events. An invocation that
-can ask must therefore install `OnApproval`, use an auto mode, or intentionally
-accept the timeout fallback. Interactive hosts normally use `Stream`.
+All return promptly. Approve applies to Permission/PlanReview; Answer applies to Question; Deny applies to all three. A consumer leaving the event loop should cancel and drain remaining critical events.
 
 ## Run errors
 
-Approval denial and timeout are business failures on the single Go error path:
+Read the same verdict through Result or terminal Done:
 
 ```go
-result, err := agent.Run(ctx, prompt)
+result, err := agent.Send(ctx, prompt).Result()
 if err != nil {
 	var runErr *adaptor.RunError
 	if errors.As(err, &runErr) {
-		switch {
-		case errors.Is(err, adaptor.ErrApprovalDenied):
-			result = runErr.Result
-		case errors.Is(err, adaptor.ErrApprovalTimeout):
-			result = runErr.Result
-		}
+		result = runErr.Result
+		fmt.Println(runErr.Reason, result.Text)
 	}
 	return err
 }
 ```
 
-`RunError.Result` retains the available text, raw streams, transcript, usage,
-and service reports. Handler errors, process/protocol failures, and context
-cancellation remain ordinary wrapped infrastructure errors unless the Driver
-classifies them as a business failure. See [Public errors](./public-errors.md)
-for the complete matching matrix.
+RunError.Result retains available text, raw streams, transcript, usage, services, and message outcomes. ErrApprovalDenied and ErrApprovalTimeout identify aborting fallbacks. Configuration/resource/context failures remain wrapped errors unless the Driver classifies a business failure. Supplemental admission errors use MessageError; later failed message outcomes do not necessarily fail the execution.
 
-Structured output combined with an explicit `Ask` mode also requires the
-Driver's structured-output `WorksWithHITL` capability. The current built-in
-Drivers do not advertise that combination; see
-[Structured output](./structured-output.md).
+Standby execution retries are separate from approval retries. Only classified rate-limit/network/provider-server failures with undelivered work retry once; run_failed input carries to the next execution under the same IDs and can later report delivered. See [Streaming](./streaming.md#13-standby-conversations) and [Public errors](./public-errors.md).
+
+Structured output with an explicit Ask mode additionally needs WorksWithHITL. No built-in Driver currently advertises that combination; see [Structured output](./structured-output.md).

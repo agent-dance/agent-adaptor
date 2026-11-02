@@ -15,10 +15,10 @@ import (
 	"runtime"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 const (
@@ -77,9 +77,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	writerRes, err := writer.Run(ctx, "Reply with 'writer agent ok' and one short sentence.")
+	writerRes, err := writer.Send(ctx, "Reply with 'writer agent ok' and one short sentence.").Result()
 	exampleutil.Must(err, "run writer agent")
-	reviewRes, err := reviewer.Run(ctx, "Reply with 'review agent ok' and one short sentence.")
+	reviewRes, err := reviewer.Send(ctx, "Reply with 'review agent ok' and one short sentence.").Result()
 	exampleutil.Must(err, "run reviewer agent")
 
 	// Inspect() is the read-only panel: it never mutates and it degrades
@@ -108,10 +108,10 @@ func main() {
 
 	// SelectSkills is a control-plane *verb* and therefore lives on the Agent,
 	// not on the read-only Inspector. It returns the same snapshot shape.
-	selected, err := reviewer.SelectSkills(ctx, []string{writeSkillName})
+	selected, err := reviewer.SelectSkills(ctx, []string{reviewSkillName})
 	exampleutil.Must(err, "select reviewer skills")
-	exampleutil.Check(len(selected.Selected) == 1 && selected.Selected[0] == writeSkillName,
-		"expected the reviewer selection to be [%s], got %#v", writeSkillName, selected.Selected)
+	exampleutil.Check(len(selected.Selected) == 1 && selected.Selected[0] == reviewSkillName,
+		"expected the reviewer selection to be [%s], got %#v", reviewSkillName, selected.Selected)
 
 	// ProfileState reports desired-vs-observed for the cloned profile; nothing
 	// is written. SyncProfile is the mutating twin.

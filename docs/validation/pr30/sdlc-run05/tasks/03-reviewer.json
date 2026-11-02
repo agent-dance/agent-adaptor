@@ -1,0 +1,472 @@
+{
+  "id": "4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5",
+  "member": "reviewer",
+  "state": "succeeded",
+  "created_at": "2026-11-01T17:21:29.1912205Z",
+  "updated_at": "2026-11-01T17:23:33.056171Z",
+  "conversation": "",
+  "objective": "Independently review the CURRENT frozen candidate hash 07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d at C:\\Users\\buthim\\AppData\\Local\\Temp\\agent-adaptor-pr30-sdlc-run05\\candidates\\01 against authoritative specification hash 2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0, round 1. Start with your required workflow_begin so it rendezvous with the concurrent verifier. Review all R1–R8 and exact API/source restrictions; do not edit or execute verification for the verifier. Obtain the required host review receipt and return complete structured review evidence for this exact candidate. This is a complete independent PerTask assignment; keep full results in task evidence and commentary concise.",
+  "summary": "",
+  "reason": "",
+  "usage": {
+    "CachedInputTokens": 34048,
+    "EstimatedCostMilli": 0,
+    "InputTokens": 60567,
+    "OutputTokens": 3481
+  },
+  "result": {
+    "Metadata": {
+      "transport": "app-server"
+    },
+    "Model": "gpt-6.1-sol",
+    "Provider": "openai",
+    "RunID": "run_705f8f46643ce65a",
+    "Summary": "",
+    "Text": "{\n  \"candidate_hash\": \"07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d\",\n  \"check_receipts\": [],\n  \"findings\": [],\n  \"manifest\": [],\n  \"requirement_evidence\": [\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Extract rejects invalid UTF-8 text. validKey rejects empty, invalid UTF-8, whitespace, controls, @, backslash and backtick. Matching uses literal string prefixes without normalization. Registered keys are copied into a fresh slice; caller keys are never modified.\",\n      \"id\": \"R1\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"mentionStart decodes the preceding rune and rejects the specified left-boundary characters. identifierRune checks Unicode letters, numbers and marks plus underscore and hyphen. Each candidate receives a decoded right-boundary check; the longest eligible prefix wins, then scanning advances beyond it.\",\n      \"id\": \"R2\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"registered removes duplicate keys. Lines and positions are scanned in source order; seen suppresses repeated results without affecting mention selection or advancement. Results append only at the first eligible occurrence, independently of registration order. No matches return nil.\",\n      \"id\": \"R3\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"extractLine counts maximal backtick runs. A run opens a span when spanWidth is zero; only an equal-width run closes it. Mentions are suppressed while inside the span. spanWidth is local to each line, so unmatched spans stop hiding content at the newline.\",\n      \"id\": \"R4\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"fenceRun accepts only backticks or tildes following zero to three ASCII spaces. Extract ignores opening lines and fenced content. Closing requires the same marker, sufficient width and exclusively space/tab trailing content. LF splitting and trailing CR removal handle CRLF; an unclosed fence suppresses all remaining content.\",\n      \"id\": \"R5\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Extract skips lines whose first character after ASCII spaces/tabs is > before processing fence state. mentionStart counts consecutive preceding backslashes and rejects odd parity before checking the ordinary boundary. Email prefixes fail that boundary. Ordinary quote marks receive no special processing.\",\n      \"id\": \"R6\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Route maps Human Pending to start, Busy to soon and Finished to new. It calls Extract and appends exactly one Delivery for each returned key in the same order. An empty extraction produces no deliveries or implicit target.\",\n      \"id\": \"R7\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Route permits Agent only when state equals Busy, assigning soon. Other agent states and unknown authors or human states return nil. Every delivery comes directly from Extract. Extract has no routing dependency, and all mutable slices, maps and parser state are local to each call.\",\n      \"id\": \"R8\"\n    }\n  ],\n  \"requirements\": [\n    \"R1\",\n    \"R2\",\n    \"R3\",\n    \"R4\",\n    \"R5\",\n    \"R6\",\n    \"R7\",\n    \"R8\"\n  ],\n  \"review_receipt\": \"read-round-01-4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5\",\n  \"role\": \"reviewer\",\n  \"spec_hash\": \"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\n  \"summary\": \"Reviewed every frozen project file through the host read receipt. No unresolved correctness findings. router.go exposes the exact API, uses only permitted imports, contains no prohibited initialization or directives, and keeps mutable state local. No files were modified and no verification commands were executed; runtime acceptance remains the independent verifier's responsibility.\",\n  \"verdict\": \"approve\"\n}",
+    "Turns": 1,
+    "Usage": {
+      "CachedInputTokens": 34048,
+      "EstimatedCostMilli": 0,
+      "InputTokens": 60567,
+      "OutputTokens": 3481
+    }
+  },
+  "spec_hash": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+  "decoded": {
+    "candidate_hash": "07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d",
+    "check_receipts": [],
+    "findings": [],
+    "manifest": [],
+    "requirement_evidence": [
+      {
+        "assessment": "Meets by source inspection.",
+        "evidence": "Extract rejects invalid UTF-8 text. validKey rejects empty, invalid UTF-8, whitespace, controls, @, backslash and backtick. Matching uses literal string prefixes without normalization. Registered keys are copied into a fresh slice; caller keys are never modified.",
+        "id": "R1"
+      },
+      {
+        "assessment": "Meets by source inspection.",
+        "evidence": "mentionStart decodes the preceding rune and rejects the specified left-boundary characters. identifierRune checks Unicode letters, numbers and marks plus underscore and hyphen. Each candidate receives a decoded right-boundary check; the longest eligible prefix wins, then scanning advances beyond it.",
+        "id": "R2"
+      },
+      {
+        "assessment": "Meets by source inspection.",
+        "evidence": "registered removes duplicate keys. Lines and positions are scanned in source order; seen suppresses repeated results without affecting mention selection or advancement. Results append only at the first eligible occurrence, independently of registration order. No matches return nil.",
+        "id": "R3"
+      },
+      {
+        "assessment": "Meets by source inspection.",
+        "evidence": "extractLine counts maximal backtick runs. A run opens a span when spanWidth is zero; only an equal-width run closes it. Mentions are suppressed while inside the span. spanWidth is local to each line, so unmatched spans stop hiding content at the newline.",
+        "id": "R4"
+      },
+      {
+        "assessment": "Meets by source inspection.",
+        "evidence": "fenceRun accepts only backticks or tildes following zero to three ASCII spaces. Extract ignores opening lines and fenced content. Closing requires the same marker, sufficient width and exclusively space/tab trailing content. LF splitting and trailing CR removal handle CRLF; an unclosed fence suppresses all remaining content.",
+        "id": "R5"
+      },
+      {
+        "assessment": "Meets by source inspection.",
+        "evidence": "Extract skips lines whose first character after ASCII spaces/tabs is > before processing fence state. mentionStart counts consecutive preceding backslashes and rejects odd parity before checking the ordinary boundary. Email prefixes fail that boundary. Ordinary quote marks receive no special processing.",
+        "id": "R6"
+      },
+      {
+        "assessment": "Meets by source inspection.",
+        "evidence": "Route maps Human Pending to start, Busy to soon and Finished to new. It calls Extract and appends exactly one Delivery for each returned key in the same order. An empty extraction produces no deliveries or implicit target.",
+        "id": "R7"
+      },
+      {
+        "assessment": "Meets by source inspection.",
+        "evidence": "Route permits Agent only when state equals Busy, assigning soon. Other agent states and unknown authors or human states return nil. Every delivery comes directly from Extract. Extract has no routing dependency, and all mutable slices, maps and parser state are local to each call.",
+        "id": "R8"
+      }
+    ],
+    "requirements": [
+      "R1",
+      "R2",
+      "R3",
+      "R4",
+      "R5",
+      "R6",
+      "R7",
+      "R8"
+    ],
+    "review_receipt": "read-round-01-4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5",
+    "role": "reviewer",
+    "spec_hash": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+    "summary": "Reviewed every frozen project file through the host read receipt. No unresolved correctness findings. router.go exposes the exact API, uses only permitted imports, contains no prohibited initialization or directives, and keeps mutable state local. No files were modified and no verification commands were executed; runtime acceptance remains the independent verifier's responsibility.",
+    "verdict": "approve"
+  },
+  "decode_error": "",
+  "transcript": [
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "init",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "01a19821-6bd4-7930-a922-f16ad61b3a49",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "assistant",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "I’ll rendezvous with the verifier, then read the frozen candidate and review it against R1–R8 and the source restrictions.",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": {},
+      "IsError": false,
+      "Kind": "tool_call",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "agent-adaptor-tools/workflow_begin",
+      "ToolUseID": "exec-e1a35c48-b1c5-424c-a45d-a71a24311e25",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "error": null,
+        "result": {
+          "_meta": null,
+          "content": [
+            {
+              "text": "{\"candidate_hash\":\"07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d\",\"check_receipts\":[],\"manifest\":[{\"path\":\"acceptance_test.go\",\"sha256\":\"3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1\"},{\"path\":\"go.mod\",\"sha256\":\"8e7cb46679d52fc477d4f99d40c8bb88706ab0a2ce9cff5ed5eccd46dd29671d\"},{\"path\":\"router.go\",\"sha256\":\"e9b724906451ff41c89dfce512486fe67731f30589cb3e7c872b8c6a24085b6b\"}],\"project\":\"C:\\\\Users\\\\buthim\\\\AppData\\\\Local\\\\Temp\\\\agent-adaptor-pr30-sdlc-run05\\\\candidates\\\\01\",\"round\":1,\"spec_hash\":\"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\"stage\":\"review\",\"task\":\"4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5\",\"violations\":[]}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "candidate_hash": "07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d",
+            "check_receipts": [],
+            "manifest": [
+              {
+                "path": "acceptance_test.go",
+                "sha256": "3ed3c7aaa646b08d8d3ddfd37ccbbf5a2f3276dd6c521dd1df0f4de8969810a1"
+              },
+              {
+                "path": "go.mod",
+                "sha256": "8e7cb46679d52fc477d4f99d40c8bb88706ab0a2ce9cff5ed5eccd46dd29671d"
+              },
+              {
+                "path": "router.go",
+                "sha256": "e9b724906451ff41c89dfce512486fe67731f30589cb3e7c872b8c6a24085b6b"
+              }
+            ],
+            "project": "C:\\Users\\buthim\\AppData\\Local\\Temp\\agent-adaptor-pr30-sdlc-run05\\candidates\\01",
+            "round": 1,
+            "spec_hash": "2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0",
+            "stage": "review",
+            "task": "4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5",
+            "violations": []
+          }
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "tool_result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "exec-e1a35c48-b1c5-424c-a45d-a71a24311e25",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": {
+        "candidate_hash": "07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d"
+      },
+      "IsError": false,
+      "Kind": "tool_call",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "agent-adaptor-tools/workflow_read_candidate",
+      "ToolUseID": "exec-63d713b6-e002-4eb3-8a6f-fed85d0ace58",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "error": null,
+        "result": {
+          "_meta": null,
+          "content": [
+            {
+              "text": "{\"candidate_hash\":\"07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d\",\"files\":[{\"content\":\"package mentionroute\\n\\nimport (\\n\\t\\\"fmt\\\"\\n\\t\\\"reflect\\\"\\n\\t\\\"strings\\\"\\n\\t\\\"sync\\\"\\n\\t\\\"testing\\\"\\n)\\n\\nfunc checkKeys(t *testing.T, text string, keys, want []string) {\\n\\tt.Helper()\\n\\tbefore := append([]string(nil), keys...)\\n\\tgot := Extract(text, keys)\\n\\tif len(got) != len(want) || len(want) != 0 \\u0026\\u0026 !reflect.DeepEqual(got, want) {\\n\\t\\tt.Fatalf(\\\"Extract(%q, %q) = %q; want %q\\\", text, keys, got, want)\\n\\t}\\n\\tif len(keys) != len(before) || len(keys) != 0 \\u0026\\u0026 !reflect.DeepEqual(keys, before) {\\n\\t\\tt.Fatalf(\\\"Extract changed input keys: before %q, after %q\\\", before, keys)\\n\\t}\\n}\\n\\nfunc TestAcceptanceR1LiteralUTF8(t *testing.T) {\\n\\tkeys := []string{\\\"Dev\\\", \\\"dev\\\", \\\"dev.ops+\\\", \\\"工程師\\\", \\\"🧪\\\", \\\"café\\\", \\\"cafe\\\\u0301\\\", \\\"\\\", \\\"bad key\\\", \\\"a@b\\\", \\\"bad\\\\\\\\key\\\", string([]byte{255})}\\n\\tcheckKeys(t, \\\"@工程師 @Dev @dev.ops+ @🧪 @cafe\\\\u0301 @café @dev @DEV\\\", keys,\\n\\t\\t[]string{\\\"工程師\\\", \\\"Dev\\\", \\\"dev.ops+\\\", \\\"🧪\\\", \\\"cafe\\\\u0301\\\", \\\"café\\\", \\\"dev\\\"})\\n\\tcheckKeys(t, \\\"@bad key @a@b @bad\\\\\\\\key\\\", keys, nil)\\n\\tcheckKeys(t, \\\"@dev \\\"+string([]byte{255})+\\\" @Dev\\\", keys, nil)\\n\\tcheckKeys(t, \\\"@dev\\\", nil, nil)\\n}\\n\\nfunc TestAcceptanceR2BoundariesAndLongest(t *testing.T) {\\n\\tkeys := []string{\\\"dev\\\", \\\"dev.ops\\\", \\\"dev.ops+\\\", \\\"工程\\\", \\\"工程師\\\", \\\"é\\\", \\\"alice\\\"}\\n\\tcheckKeys(t, \\\"(@dev), @dev.ops+! @工程師 @é?\\\", keys, []string{\\\"dev\\\", \\\"dev.ops+\\\", \\\"工程師\\\", \\\"é\\\"})\\n\\tcheckKeys(t, \\\"x@alice 7@alice _@alice -@alice .@alice +@alice @@alice 字@alice \\\\u0301@alice\\\", keys, nil)\\n\\tcheckKeys(t, \\\"@alice2 @alice-x @alice_ @alice字 @alice\\\\u0301 @工程師字\\\", keys, nil)\\n\\tcheckKeys(t, \\\"@alice. @é+\\\", keys, []string{\\\"alice\\\", \\\"é\\\"})\\n\\tcheckKeys(t, \\\"@devX @dev-ops @dev_ops @dev.ops+\\\", keys, []string{\\\"dev.ops+\\\"})\\n}\\n\\nfunc TestAcceptanceR3DeduplicationOrder(t *testing.T) {\\n\\tcheckKeys(t, \\\"@c @b @c @a @b\\\", []string{\\\"a\\\", \\\"b\\\", \\\"c\\\", \\\"b\\\"}, []string{\\\"c\\\", \\\"b\\\", \\\"a\\\"})\\n\\tcheckKeys(t, \\\"no explicit target\\\", []string{\\\"a\\\", \\\"b\\\"}, nil)\\n\\tcheckKeys(t, \\\"\\\", []string{\\\"a\\\"}, nil)\\n}\\n\\nfunc TestAcceptanceR4InlineCode(t *testing.T) {\\n\\tbt := \\\"\\\\x60\\\"\\n\\tkeys := []string{\\\"a\\\", \\\"b\\\", \\\"c\\\"}\\n\\tcheckKeys(t, \\\"@a \\\"+bt+\\\"@b\\\"+bt+\\\" @c\\\", keys, []string{\\\"a\\\", \\\"c\\\"})\\n\\tcheckKeys(t, bt+bt+\\\"@b \\\"+bt+\\\"@c\\\"+bt+\\\" \\\"+bt+bt+\\\" @a\\\", keys, []string{\\\"a\\\"})\\n\\tcheckKeys(t, \\\"@a \\\"+bt+\\\"@b\\\\n@c\\\", keys, []string{\\\"a\\\", \\\"c\\\"})\\n\\tcheckKeys(t, bt+\\\"@a\\\"+bt+bt+\\\" @b\\\"+bt+\\\" @c\\\", keys, []string{\\\"c\\\"})\\n}\\n\\nfunc TestAcceptanceR5FencedCode(t *testing.T) {\\n\\tbt := \\\"\\\\x60\\\"\\n\\tkeys := []string{\\\"a\\\", \\\"b\\\", \\\"c\\\"}\\n\\ttext := strings.Join([]string{\\n\\t\\t\\\"@a\\\", bt+bt+bt+\\\"go @b\\\", \\\"@b\\\", \\\"  \\\"+bt+bt+bt+\\\"  \\\", \\\"@c\\\",\\n\\t}, \\\"\\\\n\\\")\\n\\tcheckKeys(t, text, keys, []string{\\\"a\\\", \\\"c\\\"})\\n\\tcheckKeys(t, \\\"~~~txt\\\\r\\\\n@b\\\\r\\\\n   ~~~~\\\\t\\\\r\\\\n@a\\\", keys, []string{\\\"a\\\"})\\n\\ttext = strings.Join([]string{\\n\\t\\tbt+bt+bt+bt, \\\"@b\\\", bt+bt+bt, \\\"@c\\\", bt+bt+bt+bt+\\\" trailing\\\", \\\"@a\\\", bt+bt+bt+bt+bt, \\\"@c\\\",\\n\\t}, \\\"\\\\n\\\")\\n\\tcheckKeys(t, text, keys, []string{\\\"c\\\"})\\n\\tcheckKeys(t, \\\"@a\\\\n~~~\\\\n@b\\\\n\\\"+bt+bt+bt+\\\"\\\\n@c\\\", keys, []string{\\\"a\\\"})\\n}\\n\\nfunc TestAcceptanceR6QuotesEmailEscapes(t *testing.T) {\\n\\tkeys := []string{\\\"a\\\", \\\"b\\\", \\\"example\\\", \\\"dev\\\"}\\n\\tcheckKeys(t, \\\"\\u003e @a\\\\n \\\\t\\u003e @b\\\\n@dev\\\\n'@a'\\\", keys, []string{\\\"dev\\\", \\\"a\\\"})\\n\\tcheckKeys(t, \\\"alice@example alice+tag@example x.y@example @dev\\\", keys, []string{\\\"dev\\\"})\\n\\tcheckKeys(t, \\\"\\\\\\\\@a \\\\\\\\\\\\\\\\@b \\\\\\\\\\\\\\\\\\\\\\\\@dev\\\", keys, []string{\\\"b\\\"})\\n\\tbt := \\\"\\\\x60\\\"\\n\\tcheckKeys(t, \\\"\\u003e \\\"+bt+bt+bt+\\\"\\\\n@a\\\", keys, []string{\\\"a\\\"})\\n\\tcheckKeys(t, bt+bt+bt+\\\"\\\\n\\u003e \\\"+bt+bt+bt+\\\"\\\\n@b\\\\n\\\"+bt+bt+bt+\\\"\\\\n@a\\\", keys, []string{\\\"a\\\"})\\n}\\n\\nfunc checkDeliveries(t *testing.T, state State, author Author, text string, keys []string, want []Delivery) {\\n\\tt.Helper()\\n\\tgot := Route(state, author, text, keys)\\n\\tif len(got) != len(want) || len(want) != 0 \\u0026\\u0026 !reflect.DeepEqual(got, want) {\\n\\t\\tt.Fatalf(\\\"Route(%q,%q,%q) = %+v; want %+v\\\", state, author, text, got, want)\\n\\t}\\n}\\n\\nfunc TestAcceptanceR7HumanRouting(t *testing.T) {\\n\\tkeys := []string{\\\"a\\\", \\\"b\\\"}\\n\\tfor _, tt := range []struct { state State; when string }{\\n\\t\\t{Pending, \\\"start\\\"}, {Busy, \\\"soon\\\"}, {Finished, \\\"new\\\"},\\n\\t} {\\n\\t\\tt.Run(string(tt.state), func(t *testing.T) {\\n\\t\\t\\tcheckDeliveries(t, tt.state, Human, \\\"@b @a @b\\\", keys,\\n\\t\\t\\t\\t[]Delivery{{Key: \\\"b\\\", When: tt.when}, {Key: \\\"a\\\", When: tt.when}})\\n\\t\\t\\tcheckDeliveries(t, tt.state, Human, \\\"plain comment\\\", keys, nil)\\n\\t\\t\\tcheckDeliveries(t, tt.state, Human, \\\"alice@a\\\", keys, nil)\\n\\t\\t})\\n\\t}\\n}\\n\\nfunc TestAcceptanceR8AgentAuthority(t *testing.T) {\\n\\tkeys := []string{\\\"a\\\", \\\"b\\\"}\\n\\tcheckDeliveries(t, Busy, Agent, \\\"@b @a\\\", keys, []Delivery{{Key: \\\"b\\\", When: \\\"soon\\\"}, {Key: \\\"a\\\", When: \\\"soon\\\"}})\\n\\tfor _, tt := range []struct { state State; author Author }{\\n\\t\\t{Pending, Agent}, {Finished, Agent}, {State(\\\"unknown\\\"), Human},\\n\\t\\t{State(\\\"\\\"), Human}, {Busy, Author(\\\"unknown\\\")}, {Busy, Author(\\\"\\\")},\\n\\t\\t{State(\\\"unknown\\\"), Agent},\\n\\t} {\\n\\t\\tcheckDeliveries(t, tt.state, tt.author, \\\"@a\\\", keys, nil)\\n\\t}\\n\\tcheckKeys(t, \\\"@a\\\", keys, []string{\\\"a\\\"})\\n}\\n\\nfunc TestAcceptanceConcurrentIndependentCalls(t *testing.T) {\\n\\tvar workers sync.WaitGroup\\n\\tfor i := 0; i \\u003c 24; i++ {\\n\\t\\tworkers.Add(1)\\n\\t\\tgo func(i int) {\\n\\t\\t\\tdefer workers.Done()\\n\\t\\t\\tkey := fmt.Sprintf(\\\"worker%d\\\", i)\\n\\t\\t\\tfor n := 0; n \\u003c 20; n++ {\\n\\t\\t\\t\\tgot := Route(Busy, Agent, \\\"@\\\"+key+\\\" @other\\\", []string{key})\\n\\t\\t\\t\\tif len(got) != 1 || got[0] != (Delivery{Key: key, When: \\\"soon\\\"}) {\\n\\t\\t\\t\\t\\tt.Errorf(\\\"independent call %d produced %+v\\\", i, got)\\n\\t\\t\\t\\t\\treturn\\n\\t\\t\\t\\t}\\n\\t\\t\\t}\\n\\t\\t}(i)\\n\\t}\\n\\tworkers.Wait()\\n}\\n\",\"path\":\"acceptance_test.go\"},{\"content\":\"module example.test/mentionroute\\n\\ngo 1.23\\n\",\"path\":\"go.mod\"},{\"content\":\"package mentionroute\\n\\nimport (\\n\\t\\\"strings\\\"\\n\\t\\\"unicode\\\"\\n\\t\\\"unicode/utf8\\\"\\n)\\n\\ntype State string\\n\\nconst (\\n\\tPending  State = \\\"pending\\\"\\n\\tBusy     State = \\\"busy\\\"\\n\\tFinished State = \\\"finished\\\"\\n)\\n\\ntype Author string\\n\\nconst (\\n\\tHuman Author = \\\"human\\\"\\n\\tAgent Author = \\\"agent\\\"\\n)\\n\\ntype Delivery struct {\\n\\tKey  string\\n\\tWhen string\\n}\\n\\n// Extract returns the eligible literal mentions in source order.\\nfunc Extract(text string, keys []string) []string {\\n\\tif !utf8.ValidString(text) {\\n\\t\\treturn nil\\n\\t}\\n\\n\\tknown := make([]string, 0, len(keys))\\n\\tregistered := make(map[string]bool)\\n\\tfor _, key := range keys {\\n\\t\\tif validKey(key) \\u0026\\u0026 !registered[key] {\\n\\t\\t\\tknown = append(known, key)\\n\\t\\t\\tregistered[key] = true\\n\\t\\t}\\n\\t}\\n\\tif len(known) == 0 {\\n\\t\\treturn nil\\n\\t}\\n\\n\\tvar result []string\\n\\tseen := make(map[string]bool)\\n\\tvar fence byte\\n\\tfenceWidth := 0\\n\\tfor _, line := range strings.Split(text, \\\"\\\\n\\\") {\\n\\t\\tline = strings.TrimSuffix(line, \\\"\\\\r\\\")\\n\\t\\t// Quoted lines cannot change fence state, even inside a fence.\\n\\t\\tif strings.HasPrefix(strings.TrimLeft(line, \\\" \\\\t\\\"), \\\"\\u003e\\\") {\\n\\t\\t\\tcontinue\\n\\t\\t}\\n\\t\\tmarker, width, tail := fenceRun(line)\\n\\t\\tif fence != 0 {\\n\\t\\t\\tif marker == fence \\u0026\\u0026 width \\u003e= fenceWidth \\u0026\\u0026 strings.Trim(tail, \\\" \\\\t\\\") == \\\"\\\" {\\n\\t\\t\\t\\tfence = 0\\n\\t\\t\\t}\\n\\t\\t\\tcontinue\\n\\t\\t}\\n\\t\\tif width \\u003e= 3 {\\n\\t\\t\\tfence, fenceWidth = marker, width\\n\\t\\t\\tcontinue\\n\\t\\t}\\n\\t\\tresult = extractLine(line, known, seen, result)\\n\\t}\\n\\treturn result\\n}\\n\\nfunc validKey(key string) bool {\\n\\tif key == \\\"\\\" || !utf8.ValidString(key) {\\n\\t\\treturn false\\n\\t}\\n\\tfor _, r := range key {\\n\\t\\tif unicode.IsSpace(r) || unicode.IsControl(r) || r == '@' || r == '\\\\\\\\' || r == '`' {\\n\\t\\t\\treturn false\\n\\t\\t}\\n\\t}\\n\\treturn true\\n}\\n\\n// fenceRun reads a possible fence after at most three ASCII spaces.\\nfunc fenceRun(line string) (marker byte, width int, tail string) {\\n\\ti := 0\\n\\tfor i \\u003c len(line) \\u0026\\u0026 line[i] == ' ' {\\n\\t\\ti++\\n\\t}\\n\\tif i \\u003e 3 || i == len(line) || (line[i] != '`' \\u0026\\u0026 line[i] != '~') {\\n\\t\\treturn 0, 0, \\\"\\\"\\n\\t}\\n\\tmarker = line[i]\\n\\tj := i\\n\\tfor j \\u003c len(line) \\u0026\\u0026 line[j] == marker {\\n\\t\\tj++\\n\\t}\\n\\treturn marker, j - i, line[j:]\\n}\\n\\nfunc extractLine(line string, keys []string, seen map[string]bool, result []string) []string {\\n\\tspanWidth := 0\\n\\tfor i := 0; i \\u003c len(line); {\\n\\t\\tif line[i] == '`' {\\n\\t\\t\\tj := i\\n\\t\\t\\tfor j \\u003c len(line) \\u0026\\u0026 line[j] == '`' {\\n\\t\\t\\t\\tj++\\n\\t\\t\\t}\\n\\t\\t\\tif spanWidth == 0 {\\n\\t\\t\\t\\tspanWidth = j - i\\n\\t\\t\\t} else if j-i == spanWidth {\\n\\t\\t\\t\\tspanWidth = 0\\n\\t\\t\\t}\\n\\t\\t\\ti = j\\n\\t\\t\\tcontinue\\n\\t\\t}\\n\\t\\tif spanWidth != 0 || line[i] != '@' || !mentionStart(line, i) {\\n\\t\\t\\ti++\\n\\t\\t\\tcontinue\\n\\t\\t}\\n\\n\\t\\tbest := \\\"\\\"\\n\\t\\tfor _, key := range keys {\\n\\t\\t\\tif len(key) \\u003c= len(best) || !strings.HasPrefix(line[i+1:], key) {\\n\\t\\t\\t\\tcontinue\\n\\t\\t\\t}\\n\\t\\t\\tend := i + 1 + len(key)\\n\\t\\t\\tif end \\u003c len(line) {\\n\\t\\t\\t\\tr, _ := utf8.DecodeRuneInString(line[end:])\\n\\t\\t\\t\\tif identifierRune(r) {\\n\\t\\t\\t\\t\\tcontinue\\n\\t\\t\\t\\t}\\n\\t\\t\\t}\\n\\t\\t\\tbest = key\\n\\t\\t}\\n\\t\\tif best == \\\"\\\" {\\n\\t\\t\\ti++\\n\\t\\t\\tcontinue\\n\\t\\t}\\n\\t\\tif !seen[best] {\\n\\t\\t\\tseen[best] = true\\n\\t\\t\\tresult = append(result, best)\\n\\t\\t}\\n\\t\\ti += 1 + len(best)\\n\\t}\\n\\treturn result\\n}\\n\\nfunc identifierRune(r rune) bool {\\n\\treturn unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r) || r == '_' || r == '-'\\n}\\n\\nfunc mentionStart(line string, at int) bool {\\n\\t// Escape parity is checked before the ordinary left boundary.\\n\\tslashes := 0\\n\\tfor i := at - 1; i \\u003e= 0 \\u0026\\u0026 line[i] == '\\\\\\\\'; i-- {\\n\\t\\tslashes++\\n\\t}\\n\\tif slashes%2 != 0 {\\n\\t\\treturn false\\n\\t}\\n\\tif at == 0 {\\n\\t\\treturn true\\n\\t}\\n\\tr, _ := utf8.DecodeLastRuneInString(line[:at])\\n\\treturn !identifierRune(r) \\u0026\\u0026 r != '.' \\u0026\\u0026 r != '+' \\u0026\\u0026 r != '@'\\n}\\n\\n// Route applies the state and author permissions to eligible mentions.\\nfunc Route(state State, author Author, text string, keys []string) []Delivery {\\n\\tvar when string\\n\\tswitch author {\\n\\tcase Human:\\n\\t\\tswitch state {\\n\\t\\tcase Pending:\\n\\t\\t\\twhen = \\\"start\\\"\\n\\t\\tcase Busy:\\n\\t\\t\\twhen = \\\"soon\\\"\\n\\t\\tcase Finished:\\n\\t\\t\\twhen = \\\"new\\\"\\n\\t\\tdefault:\\n\\t\\t\\treturn nil\\n\\t\\t}\\n\\tcase Agent:\\n\\t\\tif state != Busy {\\n\\t\\t\\treturn nil\\n\\t\\t}\\n\\t\\twhen = \\\"soon\\\"\\n\\tdefault:\\n\\t\\treturn nil\\n\\t}\\n\\n\\tmentions := Extract(text, keys)\\n\\tvar deliveries []Delivery\\n\\tfor _, key := range mentions {\\n\\t\\tdeliveries = append(deliveries, Delivery{Key: key, When: when})\\n\\t}\\n\\treturn deliveries\\n}\\n\",\"path\":\"router.go\"}],\"read_receipt\":\"read-round-01-4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5\"}",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "candidate_hash": "07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d",
+            "files": [
+              {
+                "content": "package mentionroute\n\nimport (\n\t\"fmt\"\n\t\"reflect\"\n\t\"strings\"\n\t\"sync\"\n\t\"testing\"\n)\n\nfunc checkKeys(t *testing.T, text string, keys, want []string) {\n\tt.Helper()\n\tbefore := append([]string(nil), keys...)\n\tgot := Extract(text, keys)\n\tif len(got) != len(want) || len(want) != 0 && !reflect.DeepEqual(got, want) {\n\t\tt.Fatalf(\"Extract(%q, %q) = %q; want %q\", text, keys, got, want)\n\t}\n\tif len(keys) != len(before) || len(keys) != 0 && !reflect.DeepEqual(keys, before) {\n\t\tt.Fatalf(\"Extract changed input keys: before %q, after %q\", before, keys)\n\t}\n}\n\nfunc TestAcceptanceR1LiteralUTF8(t *testing.T) {\n\tkeys := []string{\"Dev\", \"dev\", \"dev.ops+\", \"工程師\", \"🧪\", \"café\", \"cafe\\u0301\", \"\", \"bad key\", \"a@b\", \"bad\\\\key\", string([]byte{255})}\n\tcheckKeys(t, \"@工程師 @Dev @dev.ops+ @🧪 @cafe\\u0301 @café @dev @DEV\", keys,\n\t\t[]string{\"工程師\", \"Dev\", \"dev.ops+\", \"🧪\", \"cafe\\u0301\", \"café\", \"dev\"})\n\tcheckKeys(t, \"@bad key @a@b @bad\\\\key\", keys, nil)\n\tcheckKeys(t, \"@dev \"+string([]byte{255})+\" @Dev\", keys, nil)\n\tcheckKeys(t, \"@dev\", nil, nil)\n}\n\nfunc TestAcceptanceR2BoundariesAndLongest(t *testing.T) {\n\tkeys := []string{\"dev\", \"dev.ops\", \"dev.ops+\", \"工程\", \"工程師\", \"é\", \"alice\"}\n\tcheckKeys(t, \"(@dev), @dev.ops+! @工程師 @é?\", keys, []string{\"dev\", \"dev.ops+\", \"工程師\", \"é\"})\n\tcheckKeys(t, \"x@alice 7@alice _@alice -@alice .@alice +@alice @@alice 字@alice \\u0301@alice\", keys, nil)\n\tcheckKeys(t, \"@alice2 @alice-x @alice_ @alice字 @alice\\u0301 @工程師字\", keys, nil)\n\tcheckKeys(t, \"@alice. @é+\", keys, []string{\"alice\", \"é\"})\n\tcheckKeys(t, \"@devX @dev-ops @dev_ops @dev.ops+\", keys, []string{\"dev.ops+\"})\n}\n\nfunc TestAcceptanceR3DeduplicationOrder(t *testing.T) {\n\tcheckKeys(t, \"@c @b @c @a @b\", []string{\"a\", \"b\", \"c\", \"b\"}, []string{\"c\", \"b\", \"a\"})\n\tcheckKeys(t, \"no explicit target\", []string{\"a\", \"b\"}, nil)\n\tcheckKeys(t, \"\", []string{\"a\"}, nil)\n}\n\nfunc TestAcceptanceR4InlineCode(t *testing.T) {\n\tbt := \"\\x60\"\n\tkeys := []string{\"a\", \"b\", \"c\"}\n\tcheckKeys(t, \"@a \"+bt+\"@b\"+bt+\" @c\", keys, []string{\"a\", \"c\"})\n\tcheckKeys(t, bt+bt+\"@b \"+bt+\"@c\"+bt+\" \"+bt+bt+\" @a\", keys, []string{\"a\"})\n\tcheckKeys(t, \"@a \"+bt+\"@b\\n@c\", keys, []string{\"a\", \"c\"})\n\tcheckKeys(t, bt+\"@a\"+bt+bt+\" @b\"+bt+\" @c\", keys, []string{\"c\"})\n}\n\nfunc TestAcceptanceR5FencedCode(t *testing.T) {\n\tbt := \"\\x60\"\n\tkeys := []string{\"a\", \"b\", \"c\"}\n\ttext := strings.Join([]string{\n\t\t\"@a\", bt+bt+bt+\"go @b\", \"@b\", \"  \"+bt+bt+bt+\"  \", \"@c\",\n\t}, \"\\n\")\n\tcheckKeys(t, text, keys, []string{\"a\", \"c\"})\n\tcheckKeys(t, \"~~~txt\\r\\n@b\\r\\n   ~~~~\\t\\r\\n@a\", keys, []string{\"a\"})\n\ttext = strings.Join([]string{\n\t\tbt+bt+bt+bt, \"@b\", bt+bt+bt, \"@c\", bt+bt+bt+bt+\" trailing\", \"@a\", bt+bt+bt+bt+bt, \"@c\",\n\t}, \"\\n\")\n\tcheckKeys(t, text, keys, []string{\"c\"})\n\tcheckKeys(t, \"@a\\n~~~\\n@b\\n\"+bt+bt+bt+\"\\n@c\", keys, []string{\"a\"})\n}\n\nfunc TestAcceptanceR6QuotesEmailEscapes(t *testing.T) {\n\tkeys := []string{\"a\", \"b\", \"example\", \"dev\"}\n\tcheckKeys(t, \"> @a\\n \\t> @b\\n@dev\\n'@a'\", keys, []string{\"dev\", \"a\"})\n\tcheckKeys(t, \"alice@example alice+tag@example x.y@example @dev\", keys, []string{\"dev\"})\n\tcheckKeys(t, \"\\\\@a \\\\\\\\@b \\\\\\\\\\\\@dev\", keys, []string{\"b\"})\n\tbt := \"\\x60\"\n\tcheckKeys(t, \"> \"+bt+bt+bt+\"\\n@a\", keys, []string{\"a\"})\n\tcheckKeys(t, bt+bt+bt+\"\\n> \"+bt+bt+bt+\"\\n@b\\n\"+bt+bt+bt+\"\\n@a\", keys, []string{\"a\"})\n}\n\nfunc checkDeliveries(t *testing.T, state State, author Author, text string, keys []string, want []Delivery) {\n\tt.Helper()\n\tgot := Route(state, author, text, keys)\n\tif len(got) != len(want) || len(want) != 0 && !reflect.DeepEqual(got, want) {\n\t\tt.Fatalf(\"Route(%q,%q,%q) = %+v; want %+v\", state, author, text, got, want)\n\t}\n}\n\nfunc TestAcceptanceR7HumanRouting(t *testing.T) {\n\tkeys := []string{\"a\", \"b\"}\n\tfor _, tt := range []struct { state State; when string }{\n\t\t{Pending, \"start\"}, {Busy, \"soon\"}, {Finished, \"new\"},\n\t} {\n\t\tt.Run(string(tt.state), func(t *testing.T) {\n\t\t\tcheckDeliveries(t, tt.state, Human, \"@b @a @b\", keys,\n\t\t\t\t[]Delivery{{Key: \"b\", When: tt.when}, {Key: \"a\", When: tt.when}})\n\t\t\tcheckDeliveries(t, tt.state, Human, \"plain comment\", keys, nil)\n\t\t\tcheckDeliveries(t, tt.state, Human, \"alice@a\", keys, nil)\n\t\t})\n\t}\n}\n\nfunc TestAcceptanceR8AgentAuthority(t *testing.T) {\n\tkeys := []string{\"a\", \"b\"}\n\tcheckDeliveries(t, Busy, Agent, \"@b @a\", keys, []Delivery{{Key: \"b\", When: \"soon\"}, {Key: \"a\", When: \"soon\"}})\n\tfor _, tt := range []struct { state State; author Author }{\n\t\t{Pending, Agent}, {Finished, Agent}, {State(\"unknown\"), Human},\n\t\t{State(\"\"), Human}, {Busy, Author(\"unknown\")}, {Busy, Author(\"\")},\n\t\t{State(\"unknown\"), Agent},\n\t} {\n\t\tcheckDeliveries(t, tt.state, tt.author, \"@a\", keys, nil)\n\t}\n\tcheckKeys(t, \"@a\", keys, []string{\"a\"})\n}\n\nfunc TestAcceptanceConcurrentIndependentCalls(t *testing.T) {\n\tvar workers sync.WaitGroup\n\tfor i := 0; i < 24; i++ {\n\t\tworkers.Add(1)\n\t\tgo func(i int) {\n\t\t\tdefer workers.Done()\n\t\t\tkey := fmt.Sprintf(\"worker%d\", i)\n\t\t\tfor n := 0; n < 20; n++ {\n\t\t\t\tgot := Route(Busy, Agent, \"@\"+key+\" @other\", []string{key})\n\t\t\t\tif len(got) != 1 || got[0] != (Delivery{Key: key, When: \"soon\"}) {\n\t\t\t\t\tt.Errorf(\"independent call %d produced %+v\", i, got)\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t}\n\t\t}(i)\n\t}\n\tworkers.Wait()\n}\n",
+                "path": "acceptance_test.go"
+              },
+              {
+                "content": "module example.test/mentionroute\n\ngo 1.23\n",
+                "path": "go.mod"
+              },
+              {
+                "content": "package mentionroute\n\nimport (\n\t\"strings\"\n\t\"unicode\"\n\t\"unicode/utf8\"\n)\n\ntype State string\n\nconst (\n\tPending  State = \"pending\"\n\tBusy     State = \"busy\"\n\tFinished State = \"finished\"\n)\n\ntype Author string\n\nconst (\n\tHuman Author = \"human\"\n\tAgent Author = \"agent\"\n)\n\ntype Delivery struct {\n\tKey  string\n\tWhen string\n}\n\n// Extract returns the eligible literal mentions in source order.\nfunc Extract(text string, keys []string) []string {\n\tif !utf8.ValidString(text) {\n\t\treturn nil\n\t}\n\n\tknown := make([]string, 0, len(keys))\n\tregistered := make(map[string]bool)\n\tfor _, key := range keys {\n\t\tif validKey(key) && !registered[key] {\n\t\t\tknown = append(known, key)\n\t\t\tregistered[key] = true\n\t\t}\n\t}\n\tif len(known) == 0 {\n\t\treturn nil\n\t}\n\n\tvar result []string\n\tseen := make(map[string]bool)\n\tvar fence byte\n\tfenceWidth := 0\n\tfor _, line := range strings.Split(text, \"\\n\") {\n\t\tline = strings.TrimSuffix(line, \"\\r\")\n\t\t// Quoted lines cannot change fence state, even inside a fence.\n\t\tif strings.HasPrefix(strings.TrimLeft(line, \" \\t\"), \">\") {\n\t\t\tcontinue\n\t\t}\n\t\tmarker, width, tail := fenceRun(line)\n\t\tif fence != 0 {\n\t\t\tif marker == fence && width >= fenceWidth && strings.Trim(tail, \" \\t\") == \"\" {\n\t\t\t\tfence = 0\n\t\t\t}\n\t\t\tcontinue\n\t\t}\n\t\tif width >= 3 {\n\t\t\tfence, fenceWidth = marker, width\n\t\t\tcontinue\n\t\t}\n\t\tresult = extractLine(line, known, seen, result)\n\t}\n\treturn result\n}\n\nfunc validKey(key string) bool {\n\tif key == \"\" || !utf8.ValidString(key) {\n\t\treturn false\n\t}\n\tfor _, r := range key {\n\t\tif unicode.IsSpace(r) || unicode.IsControl(r) || r == '@' || r == '\\\\' || r == '`' {\n\t\t\treturn false\n\t\t}\n\t}\n\treturn true\n}\n\n// fenceRun reads a possible fence after at most three ASCII spaces.\nfunc fenceRun(line string) (marker byte, width int, tail string) {\n\ti := 0\n\tfor i < len(line) && line[i] == ' ' {\n\t\ti++\n\t}\n\tif i > 3 || i == len(line) || (line[i] != '`' && line[i] != '~') {\n\t\treturn 0, 0, \"\"\n\t}\n\tmarker = line[i]\n\tj := i\n\tfor j < len(line) && line[j] == marker {\n\t\tj++\n\t}\n\treturn marker, j - i, line[j:]\n}\n\nfunc extractLine(line string, keys []string, seen map[string]bool, result []string) []string {\n\tspanWidth := 0\n\tfor i := 0; i < len(line); {\n\t\tif line[i] == '`' {\n\t\t\tj := i\n\t\t\tfor j < len(line) && line[j] == '`' {\n\t\t\t\tj++\n\t\t\t}\n\t\t\tif spanWidth == 0 {\n\t\t\t\tspanWidth = j - i\n\t\t\t} else if j-i == spanWidth {\n\t\t\t\tspanWidth = 0\n\t\t\t}\n\t\t\ti = j\n\t\t\tcontinue\n\t\t}\n\t\tif spanWidth != 0 || line[i] != '@' || !mentionStart(line, i) {\n\t\t\ti++\n\t\t\tcontinue\n\t\t}\n\n\t\tbest := \"\"\n\t\tfor _, key := range keys {\n\t\t\tif len(key) <= len(best) || !strings.HasPrefix(line[i+1:], key) {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tend := i + 1 + len(key)\n\t\t\tif end < len(line) {\n\t\t\t\tr, _ := utf8.DecodeRuneInString(line[end:])\n\t\t\t\tif identifierRune(r) {\n\t\t\t\t\tcontinue\n\t\t\t\t}\n\t\t\t}\n\t\t\tbest = key\n\t\t}\n\t\tif best == \"\" {\n\t\t\ti++\n\t\t\tcontinue\n\t\t}\n\t\tif !seen[best] {\n\t\t\tseen[best] = true\n\t\t\tresult = append(result, best)\n\t\t}\n\t\ti += 1 + len(best)\n\t}\n\treturn result\n}\n\nfunc identifierRune(r rune) bool {\n\treturn unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r) || r == '_' || r == '-'\n}\n\nfunc mentionStart(line string, at int) bool {\n\t// Escape parity is checked before the ordinary left boundary.\n\tslashes := 0\n\tfor i := at - 1; i >= 0 && line[i] == '\\\\'; i-- {\n\t\tslashes++\n\t}\n\tif slashes%2 != 0 {\n\t\treturn false\n\t}\n\tif at == 0 {\n\t\treturn true\n\t}\n\tr, _ := utf8.DecodeLastRuneInString(line[:at])\n\treturn !identifierRune(r) && r != '.' && r != '+' && r != '@'\n}\n\n// Route applies the state and author permissions to eligible mentions.\nfunc Route(state State, author Author, text string, keys []string) []Delivery {\n\tvar when string\n\tswitch author {\n\tcase Human:\n\t\tswitch state {\n\t\tcase Pending:\n\t\t\twhen = \"start\"\n\t\tcase Busy:\n\t\t\twhen = \"soon\"\n\t\tcase Finished:\n\t\t\twhen = \"new\"\n\t\tdefault:\n\t\t\treturn nil\n\t\t}\n\tcase Agent:\n\t\tif state != Busy {\n\t\t\treturn nil\n\t\t}\n\t\twhen = \"soon\"\n\tdefault:\n\t\treturn nil\n\t}\n\n\tmentions := Extract(text, keys)\n\tvar deliveries []Delivery\n\tfor _, key := range mentions {\n\t\tdeliveries = append(deliveries, Delivery{Key: key, When: when})\n\t}\n\treturn deliveries\n}\n",
+                "path": "router.go"
+              }
+            ],
+            "read_receipt": "read-round-01-4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5"
+          }
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "tool_result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "exec-63d713b6-e002-4eb3-8a6f-fed85d0ace58",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "thinking",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": null,
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "assistant",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "",
+      "Text": "{\n  \"candidate_hash\": \"07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d\",\n  \"check_receipts\": [],\n  \"findings\": [],\n  \"manifest\": [],\n  \"requirement_evidence\": [\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Extract rejects invalid UTF-8 text. validKey rejects empty, invalid UTF-8, whitespace, controls, @, backslash and backtick. Matching uses literal string prefixes without normalization. Registered keys are copied into a fresh slice; caller keys are never modified.\",\n      \"id\": \"R1\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"mentionStart decodes the preceding rune and rejects the specified left-boundary characters. identifierRune checks Unicode letters, numbers and marks plus underscore and hyphen. Each candidate receives a decoded right-boundary check; the longest eligible prefix wins, then scanning advances beyond it.\",\n      \"id\": \"R2\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"registered removes duplicate keys. Lines and positions are scanned in source order; seen suppresses repeated results without affecting mention selection or advancement. Results append only at the first eligible occurrence, independently of registration order. No matches return nil.\",\n      \"id\": \"R3\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"extractLine counts maximal backtick runs. A run opens a span when spanWidth is zero; only an equal-width run closes it. Mentions are suppressed while inside the span. spanWidth is local to each line, so unmatched spans stop hiding content at the newline.\",\n      \"id\": \"R4\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"fenceRun accepts only backticks or tildes following zero to three ASCII spaces. Extract ignores opening lines and fenced content. Closing requires the same marker, sufficient width and exclusively space/tab trailing content. LF splitting and trailing CR removal handle CRLF; an unclosed fence suppresses all remaining content.\",\n      \"id\": \"R5\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Extract skips lines whose first character after ASCII spaces/tabs is > before processing fence state. mentionStart counts consecutive preceding backslashes and rejects odd parity before checking the ordinary boundary. Email prefixes fail that boundary. Ordinary quote marks receive no special processing.\",\n      \"id\": \"R6\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Route maps Human Pending to start, Busy to soon and Finished to new. It calls Extract and appends exactly one Delivery for each returned key in the same order. An empty extraction produces no deliveries or implicit target.\",\n      \"id\": \"R7\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Route permits Agent only when state equals Busy, assigning soon. Other agent states and unknown authors or human states return nil. Every delivery comes directly from Extract. Extract has no routing dependency, and all mutable slices, maps and parser state are local to each call.\",\n      \"id\": \"R8\"\n    }\n  ],\n  \"requirements\": [\n    \"R1\",\n    \"R2\",\n    \"R3\",\n    \"R4\",\n    \"R5\",\n    \"R6\",\n    \"R7\",\n    \"R8\"\n  ],\n  \"review_receipt\": \"read-round-01-4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5\",\n  \"role\": \"reviewer\",\n  \"spec_hash\": \"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\n  \"summary\": \"Reviewed every frozen project file through the host read receipt. No unresolved correctness findings. router.go exposes the exact API, uses only permitted imports, contains no prohibited initialization or directives, and keeps mutable state local. No files were modified and no verification commands were executed; runtime acceptance remains the independent verifier's responsibility.\",\n  \"verdict\": \"approve\"\n}",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": null
+    },
+    {
+      "CostUSD": null,
+      "Data": {
+        "payload": {
+          "threadId": "01a19821-6bd4-7930-a922-f16ad61b3a49",
+          "turn": {
+            "completedAt": 1793553813,
+            "durationMs": 123416,
+            "error": null,
+            "id": "01a19821-6c00-7033-b46b-dbaca6dfad54",
+            "items": [
+              {
+                "completedAtMs": 1793553812643,
+                "delivery": null,
+                "id": "msg_011c184b76a810da016ae775828d6c8191b7c9cf47fbdffe2e",
+                "memoryCitation": null,
+                "phase": "final_answer",
+                "questions": null,
+                "startedAtMs": 1793553794757,
+                "text": "{\n  \"candidate_hash\": \"07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d\",\n  \"check_receipts\": [],\n  \"findings\": [],\n  \"manifest\": [],\n  \"requirement_evidence\": [\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Extract rejects invalid UTF-8 text. validKey rejects empty, invalid UTF-8, whitespace, controls, @, backslash and backtick. Matching uses literal string prefixes without normalization. Registered keys are copied into a fresh slice; caller keys are never modified.\",\n      \"id\": \"R1\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"mentionStart decodes the preceding rune and rejects the specified left-boundary characters. identifierRune checks Unicode letters, numbers and marks plus underscore and hyphen. Each candidate receives a decoded right-boundary check; the longest eligible prefix wins, then scanning advances beyond it.\",\n      \"id\": \"R2\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"registered removes duplicate keys. Lines and positions are scanned in source order; seen suppresses repeated results without affecting mention selection or advancement. Results append only at the first eligible occurrence, independently of registration order. No matches return nil.\",\n      \"id\": \"R3\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"extractLine counts maximal backtick runs. A run opens a span when spanWidth is zero; only an equal-width run closes it. Mentions are suppressed while inside the span. spanWidth is local to each line, so unmatched spans stop hiding content at the newline.\",\n      \"id\": \"R4\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"fenceRun accepts only backticks or tildes following zero to three ASCII spaces. Extract ignores opening lines and fenced content. Closing requires the same marker, sufficient width and exclusively space/tab trailing content. LF splitting and trailing CR removal handle CRLF; an unclosed fence suppresses all remaining content.\",\n      \"id\": \"R5\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Extract skips lines whose first character after ASCII spaces/tabs is > before processing fence state. mentionStart counts consecutive preceding backslashes and rejects odd parity before checking the ordinary boundary. Email prefixes fail that boundary. Ordinary quote marks receive no special processing.\",\n      \"id\": \"R6\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Route maps Human Pending to start, Busy to soon and Finished to new. It calls Extract and appends exactly one Delivery for each returned key in the same order. An empty extraction produces no deliveries or implicit target.\",\n      \"id\": \"R7\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Route permits Agent only when state equals Busy, assigning soon. Other agent states and unknown authors or human states return nil. Every delivery comes directly from Extract. Extract has no routing dependency, and all mutable slices, maps and parser state are local to each call.\",\n      \"id\": \"R8\"\n    }\n  ],\n  \"requirements\": [\n    \"R1\",\n    \"R2\",\n    \"R3\",\n    \"R4\",\n    \"R5\",\n    \"R6\",\n    \"R7\",\n    \"R8\"\n  ],\n  \"review_receipt\": \"read-round-01-4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5\",\n  \"role\": \"reviewer\",\n  \"spec_hash\": \"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\n  \"summary\": \"Reviewed every frozen project file through the host read receipt. No unresolved correctness findings. router.go exposes the exact API, uses only permitted imports, contains no prohibited initialization or directives, and keeps mutable state local. No files were modified and no verification commands were executed; runtime acceptance remains the independent verifier's responsibility.\",\n  \"verdict\": \"approve\"\n}",
+                "type": "agentMessage"
+              }
+            ],
+            "itemsView": "summary",
+            "rootTurnId": "01a19821-6c00-7033-b46b-dbaca6dfad54",
+            "startedAt": 1793553689,
+            "status": "completed"
+          }
+        }
+      },
+      "Delta": false,
+      "Errors": null,
+      "Input": null,
+      "IsError": false,
+      "Kind": "result",
+      "Message": null,
+      "Metadata": null,
+      "Model": "",
+      "SessionID": "",
+      "Subtype": "completed",
+      "Text": "",
+      "ToolName": "",
+      "ToolUseID": "",
+      "Usage": {
+        "CachedInputTokens": 34048,
+        "EstimatedCostMilli": 0,
+        "InputTokens": 60567,
+        "OutputTokens": 3481
+      }
+    }
+  ],
+  "original_audit": {
+    "bytes": 394448,
+    "path": "C:\\Users\\buthim\\AppData\\Local\\Temp\\agent-adaptor-pr30-sdlc-run05\\tasks\\03-reviewer.json",
+    "sha256": "1cec6afffb3afab084647a326c1757a9d3acdeeb446615c718b2ba5084e46779"
+  },
+  "raw": {
+    "stdout_bytes": 302307,
+    "stderr_bytes": 2353,
+    "terminal": {
+      "Event": "turn/completed",
+      "JSON": {
+        "threadId": "01a19821-6bd4-7930-a922-f16ad61b3a49",
+        "turn": {
+          "completedAt": 1793553813,
+          "durationMs": 123416,
+          "error": null,
+          "id": "01a19821-6c00-7033-b46b-dbaca6dfad54",
+          "items": [
+            {
+              "completedAtMs": 1793553812643,
+              "delivery": null,
+              "id": "msg_011c184b76a810da016ae775828d6c8191b7c9cf47fbdffe2e",
+              "memoryCitation": null,
+              "phase": "final_answer",
+              "questions": null,
+              "startedAtMs": 1793553794757,
+              "text": "{\n  \"candidate_hash\": \"07a128e64f74e9116a0348293e9c192dd464417a69f90218157f7b175050513d\",\n  \"check_receipts\": [],\n  \"findings\": [],\n  \"manifest\": [],\n  \"requirement_evidence\": [\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Extract rejects invalid UTF-8 text. validKey rejects empty, invalid UTF-8, whitespace, controls, @, backslash and backtick. Matching uses literal string prefixes without normalization. Registered keys are copied into a fresh slice; caller keys are never modified.\",\n      \"id\": \"R1\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"mentionStart decodes the preceding rune and rejects the specified left-boundary characters. identifierRune checks Unicode letters, numbers and marks plus underscore and hyphen. Each candidate receives a decoded right-boundary check; the longest eligible prefix wins, then scanning advances beyond it.\",\n      \"id\": \"R2\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"registered removes duplicate keys. Lines and positions are scanned in source order; seen suppresses repeated results without affecting mention selection or advancement. Results append only at the first eligible occurrence, independently of registration order. No matches return nil.\",\n      \"id\": \"R3\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"extractLine counts maximal backtick runs. A run opens a span when spanWidth is zero; only an equal-width run closes it. Mentions are suppressed while inside the span. spanWidth is local to each line, so unmatched spans stop hiding content at the newline.\",\n      \"id\": \"R4\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"fenceRun accepts only backticks or tildes following zero to three ASCII spaces. Extract ignores opening lines and fenced content. Closing requires the same marker, sufficient width and exclusively space/tab trailing content. LF splitting and trailing CR removal handle CRLF; an unclosed fence suppresses all remaining content.\",\n      \"id\": \"R5\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Extract skips lines whose first character after ASCII spaces/tabs is > before processing fence state. mentionStart counts consecutive preceding backslashes and rejects odd parity before checking the ordinary boundary. Email prefixes fail that boundary. Ordinary quote marks receive no special processing.\",\n      \"id\": \"R6\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Route maps Human Pending to start, Busy to soon and Finished to new. It calls Extract and appends exactly one Delivery for each returned key in the same order. An empty extraction produces no deliveries or implicit target.\",\n      \"id\": \"R7\"\n    },\n    {\n      \"assessment\": \"Meets by source inspection.\",\n      \"evidence\": \"Route permits Agent only when state equals Busy, assigning soon. Other agent states and unknown authors or human states return nil. Every delivery comes directly from Extract. Extract has no routing dependency, and all mutable slices, maps and parser state are local to each call.\",\n      \"id\": \"R8\"\n    }\n  ],\n  \"requirements\": [\n    \"R1\",\n    \"R2\",\n    \"R3\",\n    \"R4\",\n    \"R5\",\n    \"R6\",\n    \"R7\",\n    \"R8\"\n  ],\n  \"review_receipt\": \"read-round-01-4243f583ac656a15db6d061016c6dae8f5ce6a7ddd63bddfc226f96253a224e5\",\n  \"role\": \"reviewer\",\n  \"spec_hash\": \"2b8c630fccf8720b1cb3e0dd12b6f691031ec9873371f033dd4b5fdeff70c7e0\",\n  \"summary\": \"Reviewed every frozen project file through the host read receipt. No unresolved correctness findings. router.go exposes the exact API, uses only permitted imports, contains no prohibited initialization or directives, and keeps mutable state local. No files were modified and no verification commands were executed; runtime acceptance remains the independent verifier's responsibility.\",\n  \"verdict\": \"approve\"\n}",
+              "type": "agentMessage"
+            }
+          ],
+          "itemsView": "summary",
+          "rootTurnId": "01a19821-6c00-7033-b46b-dbaca6dfad54",
+          "startedAt": 1793553689,
+          "status": "completed"
+        }
+      }
+    }
+  },
+  "audit_caveat": "This run includes the SDLC-012 correction. All ten successful member MCP calls have matching Transcript results with IsError=false; original audit files are unmodified."
+}

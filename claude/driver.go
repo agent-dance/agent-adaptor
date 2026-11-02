@@ -10,18 +10,18 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/clihelper"
-	"github.com/agent-dance/agent-adaptor/internal/configprobe"
-	"github.com/agent-dance/agent-adaptor/internal/driverutil"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/mcpruntime"
-	"github.com/agent-dance/agent-adaptor/internal/profileagents"
-	"github.com/agent-dance/agent-adaptor/internal/profileconfig"
-	"github.com/agent-dance/agent-adaptor/internal/profilehooks"
-	"github.com/agent-dance/agent-adaptor/internal/profileinstructions"
-	"github.com/agent-dance/agent-adaptor/internal/profilesnapshot"
-	"github.com/agent-dance/agent-adaptor/internal/skillruntime"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/clihelper"
+	"github.com/agent-dance/agent-adaptor/v2/internal/configprobe"
+	"github.com/agent-dance/agent-adaptor/v2/internal/driverutil"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/mcpruntime"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileagents"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileconfig"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilehooks"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profileinstructions"
+	"github.com/agent-dance/agent-adaptor/v2/internal/profilesnapshot"
+	"github.com/agent-dance/agent-adaptor/v2/internal/skillruntime"
 )
 
 // jsonMarshalInteractive is a pin-point JSON encoder used only for the few
@@ -79,6 +79,7 @@ func (adapter) Descriptor() driver.Descriptor {
 		Instructions: driver.InstructionsCapability{Supported: true},
 		Workspace:    driver.WorkspaceCapability{Supported: true},
 		Process:      driver.ProcessCapability{Persistent: true},
+		Messages:     claudeMessageCapability(),
 		RunPolicyCaps: driver.RunPolicyCapabilities{
 			Isolation: false, WebSearch: false, Browser: true,
 			// Interactive mode uses stdio permission prompting
@@ -115,7 +116,7 @@ func (adapter) ValidateConfig(cfg any) error {
 	}
 }
 
-func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentReport, error) {
+func (adapter) CheckEnvironment(ctx context.Context, cfg any) (driver.EnvironmentReport, error) {
 	config := readConfig(cfg)
 	command := config.Command
 	if command == "" {
@@ -125,12 +126,12 @@ func (adapter) CheckEnvironment(_ context.Context, cfg any) (driver.EnvironmentR
 	bindings, err := effectiveClaudeBindings(config.CommonConfig, nil)
 	if err != nil {
 		checks = append(checks, driver.EnvironmentCheck{Code: "claude_profile_error", Level: "fail", Message: "Claude profile resolution failed.", Detail: err.Error()})
-		return driverutil.SummarizeEnvironment(DriverType, checks), nil
+		return claudeVersion(ctx, config).Environment(DriverType, claudeMessageCapability(), checks), nil
 	}
 	checks = append(checks, claudeAuthChecks(bindings)...)
 	checks = append(checks, claudeModelCompatibilityChecks(config)...)
 	checks = append(checks, claudeConfigChecks(bindings)...)
-	return driverutil.SummarizeEnvironment(DriverType, checks), nil
+	return claudeVersion(ctx, config).Environment(DriverType, claudeMessageCapability(), checks), nil
 }
 
 func (adapter) ListModels(_ context.Context, cfg any) ([]driver.ModelInfo, error) {
@@ -331,6 +332,13 @@ func (adapter) SyncProfileResources(ctx context.Context, cfg any, _ driver.Agent
 
 func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
 	cfg := readConfig(req.Config)
+	if req.Messages != nil {
+		var err error
+		req, err = claudeVersion(ctx, cfg).PrepareRun(ctx, req, sink, DriverType, claudeMessageCapability())
+		if err != nil {
+			return driver.Response{}, err
+		}
+	}
 	if err := validateClaudeSessionRequest(req); err != nil {
 		return driver.Response{}, err
 	}
@@ -399,6 +407,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	}
 
 	interactive := wantsInteractiveClaude(req.Policy.HumanDecision)
+	messages := req.Messages != nil && a.ResolveMessageCapability(req).Continue == driver.ContinueInRun
 	if req.OutputSchema != nil && req.StructuredOutputSource == driver.StructuredOutputSourceNative {
 		if interactive {
 			return driver.Response{}, &engine.StructuredOutputUnsupportedError{Driver: DriverType, Reason: "Claude native structured output is not supported with interactive HITL"}
@@ -431,6 +440,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		skipPerms: req.Policy.HumanDecision.Permission == driver.HumanDecisionAutoApprove,
 		browser:   req.Policy.Browser == driver.FeatureAllow,
 		streaming: req.Streaming && !interactive, interactive: interactive,
+		messages: messages,
 		resumeID: resumeID, engineID: persistentSessionKey(req), previousID: persistentPreviousSessionKey(req), prompt: rawPrompt,
 		profileFingerprint:  req.ProfilePayload.SessionFingerprint(),
 		settingsFingerprint: claudeSettingsFingerprint(bindings, effectiveCWD, effectiveProfile.Dir),
@@ -440,6 +450,9 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	if writer != nil && !req.Spawn && persistentEligible(cfg, req) {
 		pparser := newClaudeParser(sink)
 		pparser.setHITLContext(req.RunID, req.Policy.HumanDecision)
+		if messages {
+			pparser.messages = newMessageSession(ctx, req.Messages)
+		}
 		if req.Streaming || interactive {
 			pparser.enableStreaming(req.RunID)
 		}
@@ -457,7 +470,10 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 			return buildClaudeResponse(req, pparser, praw, 0, "", false, reportedModel, effectiveCWD, profileFingerprint)
 		}
 		if !errors.Is(persistentErr, errPersistentFallback) {
-			return driver.Response{}, persistentErr
+			if messages {
+				pparser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: persistentErr.Error()}, 0, "", false)
+			}
+			return claudeErrorResponse(req, pparser, praw, reportedModel, 0, "", errors.Is(ctx.Err(), context.DeadlineExceeded)), persistentErr
 		}
 	} else if writer != nil {
 		if err := writer.suspendAndWait(resumeID, persistentSessionKey(req), persistentPreviousSessionKey(req)); err != nil {
@@ -467,55 +483,70 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 
 	parser := newClaudeParser(sink)
 	parser.setHITLContext(req.RunID, req.Policy.HumanDecision)
+	if messages {
+		parser.messages = newMessageSession(ctx, req.Messages)
+	}
 	if req.Streaming || interactive {
 		// Interactive mode always streams (we need the partial_json deltas
 		// to reconstruct tool_use inputs), even when the resolved invocation
 		// did not otherwise select the rich provider transport. HITL requests
 		// and resolutions still travel through the same decision-capable Event
-		// sink used by every Agent.Run and Agent.Stream invocation.
+		// sink used by every Agent.Send invocation.
 		parser.enableStreaming(req.RunID)
 	}
-
-	runReq := clihelper.CommandRequest{
-		Command: command,
-		Args:    args,
-		CWD:     effectiveCWD,
-		Env:     ensureRootSandboxEnv(args, effectiveEnv),
-		Observe: parser.onChunk,
-	}
-
-	if interactive {
-		// Encode the initial user message as an NDJSON user frame rather
-		// than a raw text prompt: --input-format stream-json expects a
-		// protocol envelope.
-		initial, err := encodeInteractiveUserFrame(rawPrompt)
-		if err != nil {
-			return driver.Response{}, err
-		}
-		runReq.Prompt = initial
-		runReq.Stdin = clihelper.NewStdinController()
-
-		// Bind the parser to the interactive sink and stdin so tool_use
-		// frames route through sink.RequestDecision and the response is
-		// injected back via stdin.Write.
-		ic, ok := sink.(driver.DecisionCapableSink)
-		if !ok {
-			return driver.Response{}, errClaudeInteractiveSinkRequired
-		}
-		parser.enableInteractive(ctx, ic, runReq.Stdin)
+	var driverResult driver.Response
+	if messages {
+		// This path needs actual pipe-write completion, whereas the shared
+		// StdinController acknowledges enqueueing only. Both lifecycle modes
+		// therefore share the Claude control-process writer and parser.
+		driverResult, err = runMessageProcess(ctx, chatSpec, args, req, sink, parser, reportedModel, effectiveCWD, profileFingerprint)
 	} else {
-		runReq.Prompt = rawPrompt
-	}
+		runReq := clihelper.CommandRequest{
+			Command: command,
+			Args:    args,
+			CWD:     effectiveCWD,
+			Env:     ensureRootSandboxEnv(args, effectiveEnv),
+			Observe: parser.onChunk,
+		}
 
-	result, err := clihelper.Run(ctx, runReq, sink)
-	if err != nil {
-		return driver.Response{}, err
+		if interactive {
+			// Encode the initial user message as an NDJSON user frame rather
+			// than a raw text prompt: --input-format stream-json expects a
+			// protocol envelope.
+			initial, err := encodeInteractiveUserFrame(rawPrompt)
+			if err != nil {
+				return driver.Response{}, err
+			}
+			runReq.Prompt = initial
+			runReq.Stdin = clihelper.NewStdinController()
+
+			// Bind the parser to the interactive sink and stdin so tool_use
+			// frames route through sink.RequestDecision and the response is
+			// injected back via stdin.Write.
+			ic, ok := sink.(driver.DecisionCapableSink)
+			if !ok {
+				return driver.Response{}, errClaudeInteractiveSinkRequired
+			}
+			parser.enableInteractive(ctx, ic, runReq.Stdin)
+		} else {
+			runReq.Prompt = rawPrompt
+		}
+
+		result, runErr := clihelper.Run(ctx, runReq, sink)
+		parser.finalize()
+		raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
+		if runErr != nil {
+			code := driver.FailureAgentError
+			if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+				code = driver.FailureCancelled
+			}
+			parser.completeStream(&driver.RunFailure{Code: code, Message: runErr.Error()}, result.ExitCode, result.Signal, result.TimedOut)
+			return claudeErrorResponse(req, parser, raw, reportedModel, result.ExitCode, result.Signal, result.TimedOut), runErr
+		}
+		driverResult, err = buildClaudeResponse(req, parser, raw, result.ExitCode, result.Signal, result.TimedOut, reportedModel, effectiveCWD, profileFingerprint)
 	}
-	parser.finalize()
-	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
-	driverResult, err := buildClaudeResponse(req, parser, raw, result.ExitCode, result.Signal, result.TimedOut, reportedModel, effectiveCWD, profileFingerprint)
 	if err != nil {
-		return driver.Response{}, err
+		return driverResult, err
 	}
 	if writer != nil && !req.Spawn && persistentPreWarmEligible(cfg, req) &&
 		driverResult.ExitCode == 0 && driverResult.Failure == nil &&
@@ -542,11 +573,11 @@ func buildClaudeResponse(
 	if parser.interactiveErr != nil {
 		failure := &driver.RunFailure{Code: driver.FailureAgentError, Message: parser.interactiveErr.Error()}
 		parser.completeStream(failure, exitCode, signal, timedOut)
-		return driver.Response{}, parser.interactiveErr
+		return claudeErrorResponse(req, parser, raw, reportedModel, exitCode, signal, timedOut), parser.interactiveErr
 	}
 	if err := validateClaudeForkOutcome(req, parser); err != nil {
 		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, exitCode, signal, timedOut)
-		return driver.Response{}, err
+		return claudeErrorResponse(req, parser, raw, reportedModel, exitCode, signal, timedOut), err
 	}
 	if req.Session != nil && req.Session.State != nil && strings.TrimSpace(req.Session.State.ResumeID) != "" &&
 		!parser.terminalSuccess && isClaudeResumeRejected(raw.Stdout, raw.Stderr, parser.errorMessage) {
@@ -556,7 +587,7 @@ func buildClaudeResponse(
 		}
 		err := &engine.ResumeRejectedError{Reason: reason}
 		parser.completeStream(&driver.RunFailure{Code: driver.FailureAgentError, Message: err.Error()}, exitCode, signal, timedOut)
-		return driver.Response{}, err
+		return claudeErrorResponse(req, parser, raw, reportedModel, exitCode, signal, timedOut), err
 	}
 	failure := parser.failureForOutcome(exitCode, signal, timedOut)
 	var structuredOutput *driver.StructuredOutput
@@ -598,6 +629,26 @@ func buildClaudeResponse(
 		RuntimeServices:  driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
 		Failure:          failure,
 	}, nil
+}
+
+// claudeErrorResponse retains observations when transport or validation fails.
+// The error remains authoritative, and no unhealthy checkpoint is returned.
+func claudeErrorResponse(req driver.Request, parser *claudeParser, raw driver.RawStreams, model string, exitCode int, signal string, timedOut bool) driver.Response {
+	parser.ensureAggregateUsage()
+	raw.Terminal = parser.terminal
+	return driver.Response{
+		Output:          parser.buildOutput(),
+		RawStreams:      &raw,
+		Transcript:      parser.transcript,
+		ExitCode:        exitCode,
+		Signal:          signal,
+		TimedOut:        timedOut,
+		Usage:           parser.usage,
+		Provider:        "anthropic",
+		Model:           model,
+		Summary:         parser.finalSummary(),
+		RuntimeServices: driverutil.RuntimeReportsFromRefs(req.Runtime.Ensured, req.Agent),
+	}
 }
 
 func persistentSessionKey(req driver.Request) string {
@@ -745,6 +796,13 @@ func buildClaudeExecArgs(cfg Config, req driver.Request, interactive bool) ([]st
 			"--replay-user-messages",
 			"--permission-prompt-tool", "stdio",
 		)
+	} else if req.Messages != nil && (!nativeStructured || req.Streaming) {
+		// Hooks need bidirectional input, but do not change permission policy
+		// or rich-event selection. Only explicit HITL uses stdio prompting.
+		args = append(args, "--input-format", "stream-json")
+		if req.Streaming {
+			args = append(args, "--include-partial-messages")
+		}
 	} else {
 		// One-shot observational mode reads the prompt as plain text from stdin.
 		args = append(args, "-")

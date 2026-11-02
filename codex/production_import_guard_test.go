@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-const moduleRootImport = "github.com/agent-dance/agent-adaptor"
+const moduleRootImport = "github.com/agent-dance/agent-adaptor/v2"
 
 const engineImport = moduleRootImport + "/internal/engine"
 

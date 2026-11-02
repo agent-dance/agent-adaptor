@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/bridges/sse"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/sse"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 func TestAGUIHandlerCheckpointHistory(t *testing.T) {
@@ -62,12 +62,15 @@ func TestAGUIHandlerCheckpointHistory(t *testing.T) {
 	}
 }
 
-func TestAGUIHandlerStatelessAgentHistoryFallback(t *testing.T) {
+func TestAGUIHandlerHistoryFallbackWithoutCheckpoint(t *testing.T) {
+	// v2 Agents always own a store. A fresh process (or an Agent whose store has
+	// no checkpoint for this Thread) must not silently drop the client history.
 	fake := &fakeDriver{runFunc: func(_ context.Context, req driver.Request, _ driver.EventSink) (driver.Response, error) {
-		if req.Session != nil {
-			t.Error("stateless Agent received a Thread session")
+		if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" {
+			t.Error("history fallback resumed a checkpoint that does not exist")
 		}
-		return driver.Response{Output: "answer"}, nil
+		return driver.Response{Output: "answer", Checkpoint: &driver.Checkpoint{
+			State: &driver.SessionState{ResumeID: "fresh"}, Valid: true}}, nil
 	}}
 	agent := adaptor.New(fake)
 	defer agent.Close(context.Background())
@@ -84,19 +87,19 @@ func TestAGUIHandlerStatelessAgentHistoryFallback(t *testing.T) {
 				t.Fatalf("default silently discarded history: %d %s", w.Code, w.Body)
 			}
 		} else if w.Code != 200 || !strings.Contains(w.Body.String(), `"type":"RUN_FINISHED"`) {
-			t.Fatalf("fallback failed on Agent without store: %d %s", w.Code, w.Body)
+			t.Fatalf("fallback failed without checkpoint: %d %s", w.Code, w.Body)
 		}
 	}
 	if got := fake.request(t, 0).Prompt; !strings.Contains(got, `"text":"first"`) ||
 		!strings.HasSuffix(got, "second") {
 		t.Fatalf("history not rehydrated: %s", got)
 	}
-	// A lone user request also runs statelessly, without requiring fallback.
+	// A lone user request on a new public thread starts without fallback.
 	w := httptest.NewRecorder()
 	sse.Handler(agent, sse.Options{}).ServeHTTP(w, httptest.NewRequest("POST", "/",
-		strings.NewReader(`{"threadId":"public","runId":"first","messages":[{"id":"u","role":"user","content":"first"}]}`)))
+		strings.NewReader(`{"threadId":"other","runId":"first","messages":[{"id":"u","role":"user","content":"first"}]}`)))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"type":"RUN_FINISHED"`) {
-		t.Fatalf("first stateless turn failed: %d %s", w.Code, w.Body)
+		t.Fatalf("first turn failed: %d %s", w.Code, w.Body)
 	}
 }
 

@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
-	"github.com/agent-dance/agent-adaptor/tool"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 )
 
 // ---- Positive scope assertions (compile-time) ----
@@ -67,13 +67,13 @@ var (
 // rejected by the compiler, which is the whole point. Error texts below are
 // representative go1.26 outputs.
 //
-//	agent.Run(ctx, "p", adaptor.WithThreadStore(store))
+//	agent.Send(ctx, "p", adaptor.WithThreadStore(store))
 //	  → cannot use adaptor.WithThreadStore(store) (value of interface type
 //	    adaptor.Option) as adaptor.CallOption value in argument to agent.Run:
 //	    adaptor.Option does not implement adaptor.CallOption
 //	    (missing method ApplyRun)
 //
-//	agent.Run(ctx, "p", adaptor.WithEventBuffer(64))
+//	agent.Send(ctx, "p", adaptor.WithEventBuffer(64))
 //	  → same shape: missing method ApplyRun.
 //
 //	var _ adaptor.CallOption = adaptor.WithThreadStore(store)
@@ -112,13 +112,13 @@ func TestOptionMergeSemantics(t *testing.T) {
 	)
 
 	// Run 1: override a subset at the call site.
-	if _, err := agent.Run(ctx, "run-1",
+	if _, err := agent.Send(ctx, "run-1",
 		adaptor.WithModel("override-model"),
 		adaptor.WithInstructions("override instructions"),
 		adaptor.WithPolicy(adaptor.Policy{Sandbox: adaptor.WorkspaceWrite}),
 		adaptor.WithMetadata("team", "app"),
 		adaptor.WithSkills(skill.Inline("run/extra", "# extra\n")),
-	); err != nil {
+	).Result(); err != nil {
 		t.Fatalf("run-1: %v", err)
 	}
 	req1 := fake.request(t, 0)
@@ -157,7 +157,7 @@ func TestOptionMergeSemantics(t *testing.T) {
 	}
 
 	// Run 2: no overrides — defaults intact, run-1 overrides gone.
-	if _, err := agent.Run(ctx, "run-2"); err != nil {
+	if _, err := agent.Send(ctx, "run-2").Result(); err != nil {
 		t.Fatalf("run-2: %v", err)
 	}
 	req2 := fake.request(t, 1)
@@ -188,7 +188,7 @@ func TestIdentityContextInjection(t *testing.T) {
 	}
 
 	agent := adaptor.New(fake, adaptor.WithIdentity(adaptor.Identity{Tenant: "acme", Profile: "p-9"}))
-	if _, err := agent.Run(context.Background(), "p"); err != nil {
+	if _, err := agent.Send(context.Background(), "p").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if !ok {
@@ -205,7 +205,7 @@ func TestIdentityContextInjection(t *testing.T) {
 		_, ok2 = adaptor.IdentityFromContext(ctx)
 		return driver.Response{Output: "ok"}, nil
 	}
-	if _, err := adaptor.New(fake2).Run(context.Background(), "p"); err != nil {
+	if _, err := adaptor.New(fake2).Send(context.Background(), "p").Result(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if ok2 {

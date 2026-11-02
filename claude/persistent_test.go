@@ -3,6 +3,7 @@ package claude
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,16 +14,27 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/testutil"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/tool"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/testutil"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 )
 
 const claudePersistentHelperEnv = "GO_WANT_AGENT_ADAPTOR_CLAUDE_PERSISTENT_HELPER"
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "--version" &&
+		(os.Getenv(messageHelperEnv) == "1" || os.Getenv(claudePersistentHelperEnv) == "1") {
+		fmt.Println("2.1.110 (Claude Code)")
+		os.Exit(0)
+	}
+	if len(os.Args) > 1 && os.Args[1] == claudeScriptedHelperArg {
+		os.Exit(runClaudeScriptedHelper())
+	}
+	if os.Getenv(messageHelperEnv) == "1" {
+		os.Exit(messageHelper())
+	}
 	if os.Getenv(claudePersistentHelperEnv) == "1" {
 		os.Exit(runClaudePersistentHelper())
 	}
@@ -102,7 +114,7 @@ func TestPersistentClaudePreDeliveryFallbackAndPostDeliveryNoReplay(t *testing.T
 
 	failing := newPersistentClaudeFixture(t, []driver.EnvBinding{{Name: "FAIL_AFTER_PERSISTENT_READ", Value: "1"}})
 	defer failing.close()
-	_, err := failing.thread.Run(context.Background(), "unknown outcome")
+	_, err := failing.thread.Send(context.Background(), "unknown outcome").Result()
 	if err == nil {
 		t.Fatal("post-delivery disconnect must surface an infrastructure error")
 	}
@@ -122,7 +134,7 @@ func TestPersistentClaudeCloseAndIdleLifecycle(t *testing.T) {
 	if err := fx.agent.Close(ctx); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if _, err := fx.thread.Run(context.Background(), "closed"); !errors.Is(err, adaptor.ErrAgentClosed) {
+	if _, err := fx.thread.Send(context.Background(), "closed").Result(); !errors.Is(err, adaptor.ErrAgentClosed) {
 		t.Fatalf("run after close=%v, want ErrAgentClosed", err)
 	}
 
@@ -194,7 +206,7 @@ func (f *persistentClaudeFixture) run(t *testing.T, prompt string, opts ...adapt
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	result, err := f.thread.Run(ctx, prompt, opts...)
+	result, err := f.thread.Send(ctx, prompt, opts...).Result()
 	if err != nil {
 		t.Fatalf("run %q: %v", prompt, err)
 	}
@@ -255,6 +267,19 @@ func runClaudePersistentHelper() int {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
 	for scanner.Scan() {
+		var frame map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
+			return 20
+		}
+		if handled, err := acknowledgeClaudeInitialize(frame, json.NewEncoder(writer)); handled {
+			if err != nil || writer.Flush() != nil {
+				return 21
+			}
+			continue
+		}
+		if claudeTopLevelString(frame, "type") != "user" {
+			return 22
+		}
 		if os.Getenv("FAIL_AFTER_PERSISTENT_READ") == "1" {
 			return 23
 		}

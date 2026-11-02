@@ -8,16 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
 )
 
 type preparationRunner struct{}
 
-func (preparationRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
-	panic("preparation must not execute")
-}
 
-func (preparationRunner) Stream(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
+func (preparationRunner) Send(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
 	panic("preparation must not execute")
 }
 

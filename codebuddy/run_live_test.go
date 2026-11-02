@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 func envOr(key, fallback string) string {
@@ -96,7 +96,7 @@ var livePolicyHeadless = adaptor.Policy{
 }
 
 func collectLiveStream(ctx context.Context, runner adaptor.Runner, prompt string, opts ...adaptor.CallOption) (*adaptor.Result, []adaptor.Event, error) {
-	stream := runner.Stream(ctx, prompt, opts...)
+	stream := runner.Send(ctx, prompt, opts...)
 	events := make([]adaptor.Event, 0, 32)
 	for event := range stream.Events() {
 		events = append(events, event)

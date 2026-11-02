@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/tool"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/tool"
 )
 
 type echoInput struct {
@@ -62,7 +62,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	res, err := ai.Run(ctx, `Call the host_echo tool exactly once with {"message":"hello"}, then report its returned message.`)
+	res, err := ai.Send(ctx, `Call the host_echo tool exactly once with {"message":"hello"}, then report its returned message.`).Result()
 	if err != nil {
 		var runErr *adaptor.RunError
 		if errors.As(err, &runErr) {

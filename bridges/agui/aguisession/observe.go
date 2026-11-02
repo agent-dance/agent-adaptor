@@ -13,9 +13,9 @@ import (
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 	wire "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/encoding/sse"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/bridges/internal/ssewire"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/ssewire"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 // Observe delivers whole projected records after a cursor, then follows the
@@ -334,9 +334,9 @@ func (s *Session) unattendedResponse(
 		defer s.finishAdmission()
 		defer run.cancel()
 		defer s.release(key)
-		stream := prepared.Target.Stream(run.ctx, prepared.Prompt, s.opts.CallOptions...)
+		stream := prepared.Target.Send(run.ctx, prepared.Prompt, s.opts.CallOptions...)
 		defer stream.Cancel()
-		s.drain(run.ctx, key, prepared.Input, stream, boundary, nil)
+		s.drain(run.ctx, key, prepared.Input, stream, s.openLive(key, prepared.Input, stream), boundary, nil)
 	}()
 	// The POST is merely the first observer; its disconnect never owns execution.
 	check := func(ctx context.Context) error {

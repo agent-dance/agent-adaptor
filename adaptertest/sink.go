@@ -3,7 +3,7 @@ package adaptertest
 import (
 	"sync"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // RecordingSink is a concurrency-safe driver.EventSink that records every

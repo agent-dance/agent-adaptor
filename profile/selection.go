@@ -1,6 +1,6 @@
 package profile
 
-import "github.com/agent-dance/agent-adaptor/driver"
+import "github.com/agent-dance/agent-adaptor/v2/driver"
 
 // Selection is the normalized profile request consumed by built-in drivers.
 // It is an alias for [driver.ProfileSelection]; the constructors below offer

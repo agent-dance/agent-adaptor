@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/bridges/agui/aguisession"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui/aguisession"
 )
 
 func TestAuthenticatedScopedThreadSurvivesReconstruction(t *testing.T) {

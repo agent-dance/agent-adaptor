@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 // ActiveRun identifies the recorded run excluded from snapshot messages.
@@ -143,7 +143,7 @@ func (s *Session) snapshotRecords(
 			if !ok || n.Kind != BoundaryKind {
 				break
 			}
-			if str(n.Data, "projectionVersion") != ProjectionVersion {
+			if !supportedProjection(str(n.Data, "projectionVersion")) {
 				return Snapshot{}, &agui.InputError{Status: http.StatusInternalServerError,
 					Code: "agui.projection_version_unsupported", Message: "unsupported or missing recording projection version"}
 			}

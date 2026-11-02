@@ -1,5 +1,5 @@
 // Package aguiversion contains tests that guard AG-UI contract alignment between
-// the Go backend (module pin in go.mod) and the CopilotKit example frontend
+// the Go backend (module pin in go.mod) and the assistant-ui example frontend
 // (@ag-ui/core in package-lock.json). When either side is upgraded, update
 // the expected constants and re-run go test ./internal/aguiversion/...
 package aguiversion
@@ -14,9 +14,9 @@ import (
 )
 
 // expectedAGUICoreNPM is the @ag-ui/core version used by
-// examples/web-chat/copilotkit (see package-lock.json "node_modules/@ag-ui/core").
+// examples/web-chat/assistant-ui (see package-lock.json "node_modules/@ag-ui/core").
 // Bump this when you upgrade frontend AG-UI packages.
-const expectedAGUICoreNPM = "1.0.2"
+const expectedAGUICoreNPM = "1.0.3"
 
 // expectedGoAGUIModuleSubstr is a stable substring of the go.mod require line for
 // github.com/ag-ui-protocol/ag-ui/sdks/community/go — update when the pin changes.
@@ -46,7 +46,7 @@ func TestPackageLockAGUICoreVersion(t *testing.T) {
 		t.Fatal("runtime.Caller")
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "../.."))
-	lockPath := filepath.Join(repoRoot, "examples/web-chat/copilotkit/web/package-lock.json")
+	lockPath := filepath.Join(repoRoot, "examples/web-chat/assistant-ui/web/package-lock.json")
 	b, err := os.ReadFile(lockPath)
 	if err != nil {
 		t.Fatalf("read package-lock: %v", err)
@@ -68,8 +68,8 @@ func TestPackageLockAGUICoreVersion(t *testing.T) {
 	}
 }
 
-// CopilotKit owns its transitive 0.0.57 client. Direct examples share the
-// explicitly tested 1.0.3 contract in both manifests and lockfiles.
+// The assistant-ui example is the repository's front end. It pins the
+// explicitly tested 1.0.3 client contract in both manifest and lockfile.
 func TestDirectClientPins(t *testing.T) {
 	t.Parallel()
 	_, file, _, ok := runtime.Caller(0)
@@ -77,7 +77,7 @@ func TestDirectClientPins(t *testing.T) {
 		t.Fatal("runtime.Caller")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
-	for _, example := range []string{"aguiclient", "assistant-ui"} {
+	for _, example := range []string{"assistant-ui"} {
 		raw, err := os.ReadFile(filepath.Join(root, "examples/web-chat", example, "web/package.json"))
 		if err != nil {
 			t.Fatal(err)

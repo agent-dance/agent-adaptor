@@ -10,14 +10,14 @@
 //	skill.Key("code-review")           // resolved by the host SkillProvider
 //	skill.Require(s, "reason")         // mandatory: missing => run fails
 //
-// WithSkills is the one append-merged option: skills passed to Run extend the
+// WithSkills is the one append-merged option: skills passed to Send extend the
 // agent defaults rather than replacing them.
 //
 // It doubles as a callback-form approval demo: the skill wants to
 // write a file, so Permission is routed to Ask and adaptor.OnApproval installs
-// the host gate. Batch Run has no stream, so the callback is the only approval
-// form available here — and the request answers itself, which is why there is
-// no request-ID bookkeeping and no ResolveDecision round-trip anywhere below.
+// the host gate. This example reads Result without subscribing to Events, so
+// it installs a callback to answer approvals. The callback responds directly;
+// the host does not need separate request-ID bookkeeping or a response route.
 //
 // Usage:
 //
@@ -35,10 +35,10 @@ import (
 	"sync"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
-	"github.com/agent-dance/agent-adaptor/profile"
-	"github.com/agent-dance/agent-adaptor/skill"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
+	"github.com/agent-dance/agent-adaptor/v2/profile"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 const (
@@ -104,10 +104,10 @@ func main() {
 	// Per-call WithSkills appends to the agent defaults; skill.Require marks
 	// the skill mandatory, so a materialization failure aborts the run with
 	// ErrSkillMaterialization instead of silently producing a skill-less agent.
-	res, err := ai.Run(ctx, prompt,
+	res, err := ai.Send(ctx, prompt,
 		adaptor.WithSkills(skill.Require(skill.Dir(exampleSkillDir(proofSkillName)), "the proof depends on it")),
 		adaptor.WithWorkspace(workspaceDir),
-	)
+	).Result()
 	if err != nil {
 		var runErr *adaptor.RunError
 		if errors.As(err, &runErr) {

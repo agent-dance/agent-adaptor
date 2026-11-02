@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/internal/processx"
 )
 
 // Options bundles the driver-provided inputs for a single run of the codex
@@ -36,8 +36,10 @@ type Options struct {
 	ClientName    string
 	ClientVersion string
 
-	// Prompt is the user input for the single turn.
+	// Prompt is the user input for the initial turn.
 	Prompt string
+	// Messages supplies run-scoped in-run delivery and continuation messages.
+	Messages driver.MessagePort
 
 	// Thread controls whether this run starts, resumes, or forks a thread.
 	// ResumeThreadID and ForkThreadID are mutually exclusive. A fork returns a
@@ -54,7 +56,7 @@ type Options struct {
 	// ServiceTier is the official app-server service tier override (for
 	// example, "fast").
 	ServiceTier string
-	// OutputSchema is forwarded to turn/start and validated before the final
+	// OutputSchema is forwarded to every turn/start and validated before the final
 	// public lifecycle event when native structured output is selected.
 	OutputSchema *driver.OutputSchema
 
@@ -67,7 +69,7 @@ type Options struct {
 // Run spawns a codex app-server subprocess, completes the initialize /
 // thread / turn handshake, forwards every relevant notification into the
 // supplied sink as a StreamPayload, and returns the accumulated
-// [driver.Response] once the turn completes.
+// [driver.Response] once the last turn completes with no continuation pending.
 //
 // The returned [driver.Response] satisfies the Driver SPI output contract:
 // codex/driver.go (Output, Transcript, ExitCode, Usage, Checkpoint, and
@@ -149,10 +151,19 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	client := NewClient(context.Background(), stream)
 
 	state := newRunState(opts.RunID, sink)
+	state.ctx = ctx
+	state.messages = opts.Messages
+	if opts.ResumeThreadID == "" && opts.ForkThreadID == "" {
+		state.freshThread = true
+		state.usageBaseline = &driver.Usage{}
+		state.historicalUsage = &driver.Usage{}
+	}
 	// runState.onNotification forwards to the translator (so bridges see
 	// every payload) and then accumulates run-level state needed to shape
 	// the driver.Response.
 	client.SetNotificationHandler(state.onNotification)
+	stopRequests := client.handleRunRequests(ctx, opts.RunID, sink, state)
+	defer stopRequests()
 
 	exitDone := make(chan struct{})
 	waitDone := make(chan struct{})
@@ -184,20 +195,33 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	}
 
 	threadID := ""
-	turnID := ""
 	finish := func(primary error) (driver.Response, error) {
+		stopRequests()
+		if primary == nil {
+			primary = state.executionError()
+		}
+		// Sample before shutdown: cancelling after an observed provider failure
+		// must not reclassify that failure as teardown cancellation.
+		cancellation := ctx.Err()
+		if state.failedBeforeCancel() {
+			cancellation = nil
+			if errors.Is(primary, context.Canceled) || errors.Is(primary, context.DeadlineExceeded) {
+				primary = nil
+			}
+		}
+		if cancellation != nil {
+			primary = errors.Join(cancellation, primary)
+		}
 		waitErr := shutdown()
+		if cancellation != nil {
+			primary = errors.Join(primary, waitErr)
+		}
 		if readErr := stream.ReadError(); readErr != nil {
 			state.recordProtocolError(fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
 		}
-		// Cancellation may race the terminal/disconnect select. The caller's
-		// context, rather than the selected transport error, owns this outcome.
-		cancellation := ctx.Err()
 		exitCode, signal, timedOut, waitFatal := processOutcome(waitErr, cancellation)
 		var finalErr error
-		if cancellation != nil {
-			finalErr = cancellation
-		} else if primary != nil {
+		if primary != nil {
 			finalErr = primary
 		} else if protocolErr := state.protocolError(); protocolErr != nil {
 			finalErr = protocolErr
@@ -213,8 +237,8 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		if cancellation == nil && waitErr != nil && !state.hasTerminal() && !errors.Is(finalErr, waitErr) {
 			finalErr = fmt.Errorf("codex app-server exited before turn completion: %w", errors.Join(waitErr, finalErr))
 		}
-		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut, cancellation)
-		result = finalizeAppServerStructuredOutput(opts.OutputSchema, result)
+		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut)
+		result = finalizeAppServerResult(opts.OutputSchema, result, finalErr)
 		// The official terminal is staged until the process outcome and native
 		// structured-output validation are known. This makes the final public
 		// lifecycle agree with the returned Response on every exit path.
@@ -274,14 +298,17 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 		return finish(err)
 	}
 
-	// 3. turn/start.
+	return finish(runTurns(ctx, client, state, opts, threadID))
+}
+
+func turnStartParams(opts Options, threadID string, input []UserInput) TurnStartParams {
 	var outputSchema json.RawMessage
 	if opts.OutputSchema != nil {
 		outputSchema = append(json.RawMessage(nil), opts.OutputSchema.SchemaJSON...)
 	}
 	turnParams := TurnStartParams{
 		ThreadID:     threadID,
-		Input:        []UserInput{TextInput(opts.Prompt)},
+		Input:        input,
 		CWD:          opts.CWD,
 		Model:        opts.Model,
 		Effort:       opts.Effort,
@@ -294,34 +321,7 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	if opts.Sandbox != "" {
 		turnParams.SandboxPolicy = sandboxPolicyFor(opts.Sandbox)
 	}
-	turn, err := client.TurnStart(ctx, turnParams)
-	if err != nil {
-		return finish(fmt.Errorf("codex app-server turn/start: %w", err))
-	}
-	turnID = turn.Turn.ID
-	state.setTurn(turnID)
-	if err := state.protocolError(); err != nil {
-		return finish(err)
-	}
-
-	// 4. wait for the turn to complete or the context to expire.
-	select {
-	case <-state.done:
-	case <-ctx.Done():
-		// Best-effort interrupt uses a cancellation-detached, bounded context;
-		// the process may already be terminating through CommandContext.
-		interruptCtx, cancelInterrupt := context.WithTimeout(context.WithoutCancel(ctx), 500*time.Millisecond)
-		_ = client.TurnInterrupt(interruptCtx, TurnInterruptParams{ThreadID: threadID, TurnID: turnID})
-		cancelInterrupt()
-		return finish(ctx.Err())
-	case <-exitDone:
-		// Reaping is independent of EOF; finish joins the bounded raw drain.
-	case <-client.DisconnectNotify():
-		// The state check after the reader/process join distinguishes a clean
-		// terminal EOF from malformed JSON or a missing terminal notification.
-	}
-
-	return finish(nil)
+	return turnParams
 }
 
 // ---------------------------------------------------------------------------
@@ -329,26 +329,43 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 // ---------------------------------------------------------------------------
 
 type runState struct {
-	translator *Translator
-	sink       driver.EventSink
-	notifyMu   sync.Mutex
+	ctx                 context.Context
+	failureBeforeCancel bool
+	freshThread         bool
+	translator          *Translator
+	sink                driver.EventSink
+	notifyMu            sync.Mutex
 
-	mu             sync.Mutex
-	finalAgentText string
-	transcript     []driver.TranscriptItem
-	usage          *driver.Usage
-	turnFailure    *driver.RunFailure
-	terminal       *driver.TerminalPayload
-	terminalStatus TurnStatus
-	protocolErr    error
-	threadID       string
-	turnID         string
-	pending        []pendingNotification
-	publicClosed   bool
-	publicStarted  bool
-	itemsEmitted   int
-	done           chan struct{}
-	doneOnce       sync.Once
+	mu              sync.Mutex
+	finalAgentText  string
+	transcript      []driver.TranscriptItem
+	usage           *driver.Usage
+	totalUsage      *driver.Usage
+	usageBaseline   *driver.Usage
+	historicalUsage *driver.Usage
+	usageTurns      map[string]*turnUsage
+	usageOrder      []string
+	turnIndex       int
+	interrupted     bool
+	active          bool
+	pendingSteers   int
+	stagedTurn      *driver.TurnCompleted
+	messages        driver.MessagePort
+	wake            chan struct{}
+	turnFailure     *driver.RunFailure
+	terminal        *driver.TerminalPayload
+	terminalStatus  TurnStatus
+	protocolErr     error
+	requestErr      error
+	threadID        string
+	turnID          string
+	scopeChanged    chan struct{}
+	pending         []pendingNotification
+	publicClosed    bool
+	publicStarted   bool
+	itemsEmitted    int
+	done            chan struct{}
+	doneOnce        sync.Once
 }
 
 type pendingNotification struct {
@@ -379,6 +396,7 @@ func (s *runState) setThread(threadID string) {
 	s.mu.Unlock()
 	s.translator.SetThread(threadID)
 	s.flushPendingNotificationsLocked()
+	s.signalScopeChanged()
 }
 
 func (s *runState) setTurn(turnID string) {
@@ -395,16 +413,35 @@ func (s *runState) setTurn(turnID string) {
 		return
 	}
 	s.turnID = turnID
+	if s.usageTurns == nil {
+		s.usageTurns = make(map[string]*turnUsage)
+	}
+	if s.usageTurns[turnID] == nil {
+		s.usageTurns[turnID] = &turnUsage{}
+		s.usageOrder = append(s.usageOrder, turnID)
+	}
 	s.mu.Unlock()
 	s.translator.SetTurn(turnID)
 	s.flushPendingNotificationsLocked()
+	s.signalScopeChanged()
+}
+
+// signalScopeChanged wakes approvals only after queued notifications have been
+// revalidated, so an already completed turn cannot become live while binding.
+func (s *runState) signalScopeChanged() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	close(s.scopeChanged)
+	s.scopeChanged = make(chan struct{})
 }
 
 func newRunState(runID string, sink driver.EventSink) *runState {
 	return &runState{
-		translator: NewTranslator(sink, runID),
-		sink:       sink,
-		done:       make(chan struct{}),
+		translator:   NewTranslator(sink, runID),
+		sink:         sink,
+		done:         make(chan struct{}),
+		wake:         make(chan struct{}, 1),
+		scopeChanged: make(chan struct{}),
 	}
 }
 
@@ -418,6 +455,40 @@ func (s *runState) onNotification(method string, params json.RawMessage) {
 }
 
 func (s *runState) handleNotificationLocked(method string, params json.RawMessage) {
+	// Scope is routing, not protocol validity. Connections can replay resumed
+	// history or deliver late frames from a completed turn/another thread.
+	threadID, turnID, scoped, turnScoped, scopeErr := appServerNotificationScope(method, params)
+	s.mu.Lock()
+	foreignThread := scoped && threadID != "" && s.threadID != "" && threadID != s.threadID
+	foreignTurn := turnScoped && s.turnID != "" && turnID != s.turnID
+	knownTurn := s.usageTurns[turnID] != nil
+	closed := s.publicClosed
+	s.mu.Unlock()
+	if foreignThread {
+		return
+	}
+	if scopeErr != nil {
+		if !closed || method == NotifyTurnCompleted {
+			s.recordProtocolError(scopeErr)
+		}
+		return
+	}
+	if foreignTurn && !knownTurn {
+		if method == NotifyThreadTokenUsageUpdated && !s.freshThread {
+			s.absorbHistoricalUsage(params)
+		}
+		return
+	}
+	if method == NotifyThreadTokenUsageUpdated && knownTurn && (foreignTurn || closed) {
+		s.absorbUsage(params)
+		return
+	}
+	if foreignTurn {
+		return
+	}
+	if closed && method == NotifyThreadTokenUsageUpdated {
+		return
+	}
 	// Once the official terminal has closed normalized semantics, trailing
 	// frames remain audit-only Raw stdout. A duplicate official terminal is a
 	// protocol violation; every other trailing frame is ignored here.
@@ -476,6 +547,16 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 		// then release any init transcript accumulated during the handshake.
 		s.translator.Dispatch(method, params)
 		s.markPublicStarted()
+		s.mu.Lock()
+		s.active = true
+		if s.messages != nil {
+			s.messages.Window(true)
+		}
+		s.mu.Unlock()
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
 	} else if method == NotifyThreadStarted {
 		// thread/started only contributes the pending init transcript; the
 		// public lifecycle starts at the first turn-scoped notification.
@@ -496,22 +577,7 @@ func (s *runState) handleNotificationLocked(method string, params json.RawMessag
 	case NotifyItemCompleted:
 		s.absorbItem(params, false)
 	case NotifyThreadTokenUsageUpdated:
-		// Codex 0.120.0 reports the authoritative token tally via
-		// thread/tokenUsage/updated notifications that arrive right before
-		// turn/completed. We keep the latest snapshot so driver.Response
-		// reflects it even when turn/completed omits the usage field.
-		var body ThreadTokenUsageUpdatedNotification
-		if err := json.Unmarshal(params, &body); err != nil {
-			s.recordProtocolError(fmt.Errorf("decode thread/tokenUsage/updated: %w", err))
-			return
-		}
-		s.mu.Lock()
-		s.usage = &driver.Usage{
-			InputTokens:       body.TokenUsage.Total.InputTokens,
-			OutputTokens:      body.TokenUsage.Total.OutputTokens,
-			CachedInputTokens: body.TokenUsage.Total.CachedInputTokens,
-		}
-		s.mu.Unlock()
+		s.absorbUsage(params)
 	case NotifyError:
 		var body ErrorNotification
 		if err := json.Unmarshal(params, &body); err != nil {
@@ -560,10 +626,10 @@ func (s *runState) bindNotificationScopeLocked(method string, params json.RawMes
 		return true, nil
 	}
 	if threadID != s.threadID {
-		return false, fmt.Errorf("codex app-server notification %s belongs to thread %q, want %q", method, threadID, s.threadID)
+		return true, nil
 	}
 	if turnScoped && turnID != s.turnID {
-		return false, fmt.Errorf("codex app-server notification %s belongs to turn %q, want %q", method, turnID, s.turnID)
+		return true, nil
 	}
 	return false, nil
 }
@@ -594,9 +660,7 @@ func appServerNotificationScope(method string, params json.RawMessage) (threadID
 	default:
 		return "", "", false, false, nil
 	}
-	if err := json.Unmarshal(params, &envelope); err != nil {
-		return "", "", true, turnScoped, fmt.Errorf("decode %s scope: %w", method, err)
-	}
+	decodeErr := json.Unmarshal(params, &envelope)
 	threadID = envelope.ThreadID
 	if method == NotifyThreadStarted {
 		threadID = envelope.Thread.ID
@@ -605,11 +669,14 @@ func appServerNotificationScope(method string, params json.RawMessage) (threadID
 	if method == NotifyTurnStarted || method == NotifyTurnCompleted {
 		turnID = envelope.Turn.ID
 	}
+	if decodeErr != nil {
+		return threadID, turnID, true, turnScoped, fmt.Errorf("decode %s scope: %w", method, decodeErr)
+	}
 	if strings.TrimSpace(threadID) == "" {
 		return "", "", true, turnScoped, fmt.Errorf("codex app-server notification %s has no thread id", method)
 	}
 	if turnScoped && strings.TrimSpace(turnID) == "" {
-		return "", "", true, true, fmt.Errorf("codex app-server notification %s has no turn id", method)
+		return threadID, "", true, true, fmt.Errorf("codex app-server notification %s has no turn id", method)
 	}
 	return threadID, turnID, true, turnScoped, nil
 }
@@ -664,6 +731,7 @@ func validateAppServerNotification(method string, params json.RawMessage) error 
 }
 
 func (s *runState) handleTurnCompleted(params json.RawMessage) {
+	completedAt := time.Now().UTC()
 	s.startPublic()
 	var body TurnCompletedNotificationBody
 	if err := json.Unmarshal(params, &body); err != nil {
@@ -680,11 +748,18 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 		JSON:  append(json.RawMessage(nil), params...),
 	}
 	s.terminalStatus = body.Turn.Status
+	terminalUsageValid := true
 	if body.Turn.Usage != nil {
-		s.usage = &driver.Usage{
+		usage := &driver.Usage{
 			InputTokens:       body.Turn.Usage.InputTokens,
 			OutputTokens:      body.Turn.Usage.OutputTokens,
 			CachedInputTokens: body.Turn.Usage.CachedInputTokens,
+		}
+		if !nonnegativeUsage(usage) {
+			terminalUsageValid = false
+			s.recordProtocolErrorLocked(errors.New("invalid terminal token usage counters"))
+		} else {
+			s.usage = usage
 		}
 	}
 	switch body.Turn.Status {
@@ -694,8 +769,16 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 		}
 	case TurnStatusFailed, TurnStatusInterrupted:
 		s.turnFailure = failureFromCompletedTurn(body.Turn)
+		s.failureBeforeCancel = s.ctx == nil || s.ctx.Err() == nil
 	default:
 		s.recordProtocolErrorLocked(fmt.Errorf("turn/completed reported invalid status %q", body.Turn.Status))
+	}
+	if record := s.usageTurns[s.turnID]; record != nil {
+		record.completed = true
+		if body.Turn.Usage != nil && terminalUsageValid {
+			record.fixed = cloneUsage(s.usage)
+		}
+		s.recomputeUsageLocked()
 	}
 	usage := cloneUsage(s.usage)
 	terminalData := map[string]any{}
@@ -714,9 +797,39 @@ func (s *runState) handleTurnCompleted(params json.RawMessage) {
 	// before run.finished/run.error, because the lifecycle terminal is strict
 	// last across all provider-originated public events.
 	s.appendTranscriptLocked(item)
+	s.stagedTurn = &driver.TurnCompleted{Index: s.turnIndex, Text: s.finalAgentText,
+		Usage: cloneUsage(s.usage), Interrupted: s.interrupted && body.Turn.Status == TurnStatusInterrupted, CompletedAt: completedAt}
+	s.publishTurnCompletedLocked()
+	s.active = false
+	if s.messages != nil {
+		s.messages.Window(false)
+	}
 	s.mu.Unlock()
 
 	s.signalDone()
+}
+
+// publishTurnCompletedLocked never waits for RPC responses in the notification
+// reader. The steer caller releases the staged turn after recording acceptance.
+// Callers hold notifyMu and mu, preserving ordered public event publication.
+func (s *runState) publishTurnCompletedLocked() {
+	if s.stagedTurn == nil || s.pendingSteers != 0 {
+		return
+	}
+	if s.sink != nil {
+		_ = s.sink.Emit(driver.RunEvent{Type: driver.RunEventTurnCompleted,
+			Timestamp: s.stagedTurn.CompletedAt, Turn: s.stagedTurn})
+	}
+	s.stagedTurn = nil
+}
+
+func (s *runState) settleSteer() {
+	s.notifyMu.Lock()
+	defer s.notifyMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingSteers--
+	s.publishTurnCompletedLocked()
 }
 
 func (s *runState) finishPublicResult(result driver.Response, runErr error) {
@@ -733,7 +846,7 @@ func (s *runState) finishPublicResult(result driver.Response, runErr error) {
 		s.translator.FinishError(errors.New("codex app-server protocol ended without a usable terminal"))
 		return
 	}
-	s.translator.Dispatch(result.RawStreams.Terminal.Event, result.RawStreams.Terminal.JSON)
+	s.translator.finishSuccess(result.RawStreams.Terminal, result.Usage)
 }
 
 func (s *runState) signalDone() {
@@ -884,11 +997,12 @@ func transcriptForCompletedItem(item *ThreadItem) *driver.TranscriptItem {
 		}
 	case ThreadItemMcpToolCall:
 		if item.McpToolCall != nil {
+			toolError := decodeJSONValue(item.McpToolCall.Error)
 			return &driver.TranscriptItem{
 				Kind:      driver.TranscriptToolResult,
 				ToolUseID: item.ID,
-				IsError:   len(item.McpToolCall.Error) > 0 || item.McpToolCall.Status == "failed",
-				Data:      map[string]any{"result": decodeJSONValue(item.McpToolCall.Result), "error": decodeJSONValue(item.McpToolCall.Error)},
+				IsError:   toolError != nil || item.McpToolCall.Status == "failed",
+				Data:      map[string]any{"result": decodeJSONValue(item.McpToolCall.Result), "error": toolError},
 			}
 		}
 	case ThreadItemWebSearch, ThreadItemDynamicToolCall:
@@ -941,7 +1055,7 @@ func (s *runState) hasTerminal() bool {
 	return s.terminal != nil
 }
 
-func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitCode int, signal string, timedOut bool, cancellation error) driver.Response {
+func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitCode int, signal string, timedOut bool) driver.Response {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -952,12 +1066,8 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 			Code:    driver.FailureAgentError,
 		}
 	}
-	if cancellation != nil {
-		if failure == nil {
-			failure = &driver.RunFailure{Message: cancellation.Error()}
-		}
-		failure.Code = driver.FailureCancelled
-		failure.HumanDecision = nil
+	if s.ctx != nil && s.ctx.Err() != nil && !s.failureBeforeCancel {
+		failure = &driver.RunFailure{Code: driver.FailureCancelled, Message: s.ctx.Err().Error()}
 	}
 	var checkpoint *driver.Checkpoint
 	if threadID != "" && exitCode == 0 && signal == "" && !timedOut && s.protocolErr == nil && s.terminalStatus == TurnStatusCompleted && failure == nil {
@@ -966,6 +1076,10 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 			Valid: true,
 		}
 	}
+	usage := s.totalUsage
+	if s.terminal == nil {
+		usage = addUsage(usage, s.usage)
+	}
 	return driver.Response{
 		Output:     s.assembleOutputLocked(),
 		RawStreams: &driver.RawStreams{Stdout: stdout, Stderr: stderr, Terminal: cloneTerminal(s.terminal)},
@@ -973,7 +1087,7 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 		ExitCode:   exitCode,
 		Signal:     signal,
 		TimedOut:   timedOut,
-		Usage:      cloneUsage(s.usage),
+		Usage:      cloneUsage(usage),
 		Checkpoint: checkpoint,
 		Provider:   "openai",
 		Model:      opts.Model,
@@ -981,7 +1095,10 @@ func (s *runState) snapshot(opts Options, threadID, stdout, stderr string, exitC
 	}
 }
 
-func finalizeAppServerStructuredOutput(schema *driver.OutputSchema, result driver.Response) driver.Response {
+func finalizeAppServerResult(schema *driver.OutputSchema, result driver.Response, runErr error) driver.Response {
+	if runErr != nil {
+		result.Checkpoint = nil
+	}
 	if schema == nil {
 		return result
 	}
@@ -1143,4 +1260,31 @@ func (s *syncBuffer) Since(offset int) string {
 		offset = 0
 	}
 	return value[offset:]
+}
+
+func (s *runState) failedBeforeCancel() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failureBeforeCancel
+}
+
+func (s *runState) executionError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.protocolErr != nil {
+		return s.protocolErr
+	}
+	return s.requestErr
+}
+
+func (s *runState) abortRequest(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.requestErr == nil {
+		s.requestErr = err
+	}
+	s.mu.Unlock()
+	s.signalDone()
 }

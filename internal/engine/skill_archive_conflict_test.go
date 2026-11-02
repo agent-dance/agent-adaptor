@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	publicskill "github.com/agent-dance/agent-adaptor/skill"
+	publicskill "github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // archiveSkill builds the Skill value the tests below feed into the

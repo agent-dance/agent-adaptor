@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/v2/internal/processx"
 )
 
 // outputDrainTimeout bounds pipe draining after process exit. Normally both

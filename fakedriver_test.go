@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // fakeDriver is a programmable driver.Driver. Configure either a canned
@@ -37,7 +37,7 @@ type fakeDriver struct {
 	descriptor *driver.Descriptor
 
 	// streamCaps selects the provider-native transport independently of the
-	// consumer-facing Run/Stream method.
+	// consumer-facing Send method.
 	streamCaps driver.StreamCapability
 }
 

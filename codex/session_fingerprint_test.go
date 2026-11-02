@@ -3,7 +3,7 @@ package codex
 import (
 	"testing"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 func TestConfiguredDriverSessionFingerprintStableAndComplete(t *testing.T) {

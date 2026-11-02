@@ -15,15 +15,17 @@ import (
 	"errors"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // collect drains the stream and returns all events plus the final outcome.
 func collect(st adaptor.Stream) ([]adaptor.Event, *adaptor.Result, error) {
 	var events []adaptor.Event
 	for ev := range st.Events() {
-		events = append(events, ev)
+		if !executionEvent(ev) {
+			events = append(events, ev)
+		}
 	}
 	res, err := st.Result()
 	return events, res, err
@@ -33,9 +35,11 @@ func collect(st adaptor.Stream) ([]adaptor.Event, *adaptor.Result, error) {
 // StreamPayload kind through the sink and asserts the typed destination of
 // each — the StreamKind mapping table as an executable contract.
 func TestStreamTranslationCoversAllKinds(t *testing.T) {
+	begin := make(chan struct{})
 	fake := newFakeDriver()
 	fake.streamCaps = driver.StreamCapability{Native: true, TokenLevel: true}
 	fake.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		<-begin
 		if !req.Streaming {
 			t.Error("rich driver capability must select provider streaming")
 		}
@@ -74,7 +78,10 @@ func TestStreamTranslationCoversAllKinds(t *testing.T) {
 	}
 
 	agent := adaptor.New(fake)
-	events, res, err := collect(agent.Stream(context.Background(), "map everything"))
+	stream := agent.Send(context.Background(), "map everything")
+	stream.Events()
+	close(begin)
+	events, res, err := collect(stream)
 	if err != nil {
 		t.Fatalf("Result: %v", err)
 	}
@@ -92,6 +99,9 @@ func TestStreamTranslationCoversAllKinds(t *testing.T) {
 		return ev
 	}
 
+	if e, ok := next().(adaptor.RunStarted); !ok || e.RunID != res.RunID {
+		t.Fatalf("first event=%#v, want core RunStarted", events[i-1])
+	}
 	// --- RunEvent translations ---
 	if e, ok := next().(adaptor.ProcessInfo); !ok || e.Kind != adaptor.ProcessSpawn || e.Text != "codex --json" {
 		t.Errorf("spawn → ProcessInfo{spawn}, got %#v", events[i-1])
@@ -119,9 +129,7 @@ func TestStreamTranslationCoversAllKinds(t *testing.T) {
 	}
 
 	// --- StreamPayload translations ---
-	if e, ok := next().(adaptor.RunStarted); !ok || e.RunID != "prov-run" || e.ThreadID != "th-1" {
-		t.Errorf("run.started → RunStarted, got %#v", events[i-1])
-	}
+
 	if e, ok := next().(adaptor.Notice); !ok || e.Kind != adaptor.NoticeStep || e.Text != "plan" || e.Data["phase"] != "started" {
 		t.Errorf("step.started → Notice{step/started}, got %#v", events[i-1])
 	}
@@ -188,7 +196,7 @@ func TestStreamTranslationCoversAllKinds(t *testing.T) {
 		_ = sink.EmitStream(driver.StreamPayload{Kind: driver.StreamRunError, RunID: req.RunID, Error: failure})
 		return driver.Response{Failure: failure}, nil
 	}
-	errorEvents, _, runErr := collect(adaptor.New(errorFake).Stream(context.Background(), "map run error"))
+	errorEvents, _, runErr := collect(adaptor.New(errorFake).Send(context.Background(), "map run error"))
 	if runErr == nil {
 		t.Fatal("RunError mapping fixture must finish with a business error")
 	}
@@ -212,7 +220,7 @@ func TestStreamCloseTiming(t *testing.T) {
 	}
 	agent := adaptor.New(fake)
 
-	st := agent.Stream(context.Background(), "go")
+	st := agent.Send(context.Background(), "go")
 	if st.RunID() == "" {
 		t.Fatal("RunID must be available immediately")
 	}
@@ -262,7 +270,7 @@ func TestRunIsStreamPlusDrain(t *testing.T) {
 	}
 	agent := adaptor.New(fake)
 
-	res, err := agent.Run(context.Background(), "do it")
+	res, err := agent.Send(context.Background(), "do it").Result()
 	if res != nil {
 		t.Fatalf("failed run must return nil Result on the success slot, got %+v", res)
 	}
@@ -290,12 +298,12 @@ func TestStreamCancel(t *testing.T) {
 	}
 	agent := adaptor.New(fake)
 
-	st := agent.Stream(context.Background(), "hang")
+	st := agent.Send(context.Background(), "hang")
 	<-started
 	st.Cancel()
 	st.Cancel() // idempotent
 
-	events, res, err := collect(st)
+	events, res, err := collectActivity(st)
 	if len(events) != 0 {
 		t.Errorf("no events expected, got %#v", events)
 	}
@@ -319,11 +327,45 @@ func TestStreamInfraError(t *testing.T) {
 	fake.err = sentinel
 	agent := adaptor.New(fake)
 
-	events, res, err := collect(agent.Stream(context.Background(), "boom"))
+	events, res, err := collectActivity(agent.Send(context.Background(), "boom"))
 	if len(events) != 0 || res != nil {
 		t.Errorf("events=%v res=%v, want none", events, res)
 	}
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("want wrapped driver error, got %v", err)
 	}
+}
+
+// Existing translation tests inspect the provider and host activity projection.
+// The v2 execution envelope is checked independently in messages_contract_test.
+func executionEvent(ev adaptor.Event) bool {
+	switch ev.(type) {
+	case adaptor.Done, adaptor.TurnEnd, adaptor.MessageUpdate:
+		return true
+	}
+	return false
+}
+
+// nextActivityEvent skips the new execution envelope when an existing test
+// specifically checks Driver/host activity translation.
+func nextActivityEvent(ch <-chan adaptor.Event) adaptor.Event {
+	for ev := range ch {
+		if !executionEvent(ev) {
+			return ev
+		}
+	}
+	return nil
+}
+
+func collectActivity(st adaptor.Stream) ([]adaptor.Event, *adaptor.Result, error) {
+	events, res, err := collect(st)
+	var activity []adaptor.Event
+	for _, ev := range events {
+		switch ev.(type) {
+		case adaptor.RunStarted, adaptor.RunFinished:
+			continue
+		}
+		activity = append(activity, ev)
+	}
+	return activity, res, err
 }

@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
 )
 
 type noticePrivacyRunner struct{ conformanceRunner }
 
-func (*noticePrivacyRunner) Stream(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
+func (*noticePrivacyRunner) Send(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
 	source := []adaptor.Event{
 		adaptor.RunStarted{},
 		adaptor.Notice{Kind: adaptor.NoticeInvocation, Text: "private-command-path"},
@@ -25,7 +25,7 @@ func (*noticePrivacyRunner) Stream(context.Context, string, ...adaptor.CallOptio
 		adaptor.Notice{Kind: adaptor.NoticeStep, Text: "step", Data: map[string]any{"phase": "started"}},
 		adaptor.Notice{Kind: adaptor.NoticeStep, Text: "step", Data: map[string]any{"phase": "finished"}},
 		adaptor.Dropped{Count: 1},
-		adaptor.SubagentUpdate{Agent: "helper", Kind: adaptor.SubagentStarted, Data: map[string]any{"delegation_id": "child"}},
+		adaptor.SubagentUpdate{Member: "helper", Kind: adaptor.SubagentStarted, Data: map[string]any{"delegation_id": "child"}},
 		adaptor.Thinking{MessageID: "empty", Phase: adaptor.PhaseStart}, adaptor.Thinking{MessageID: "empty", Phase: adaptor.PhaseEnd},
 		adaptor.TextDelta{MessageID: "empty-text", Phase: adaptor.PhaseStart}, adaptor.TextDelta{MessageID: "empty-text", Phase: adaptor.PhaseEnd},
 		adaptor.TextDelta{MessageID: "a", Text: "visible"},

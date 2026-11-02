@@ -1,0 +1,107 @@
+{
+  "original_directory": "C:\\Users\\buthim\\.codex\\worktrees\\multica-pr30-shadow\\multica\\output\\playwright\\agent-adaptor-shadow\\multica-sdk-20261101T183255Z",
+  "note": "Original full aggregate remains complete=true/passed=false: three passed, cancellation/restart case failed while collecting its cancelled task workspace. Actual cancellation, SDK cleanup and new task succeeded before that strict artifact assertion. A later targeted re-execution must supply that case; original report and exit status are not rewritten.",
+  "original_files": [
+    {
+      "bytes": 724,
+      "sha256": "4e56d24563162d244561e432ba8fc21dc8977326961e5b166c5669b924197e02",
+      "path": "cancel-workspace-readonly-confirmed.json"
+    },
+    {
+      "bytes": 1572,
+      "sha256": "77aa7a05cfdf76e9f4651de69ae4f0d0cff1d5f45210b0d12c4264d34ca0eac3",
+      "path": "cancel-workspace-source-freeze.json"
+    },
+    {
+      "bytes": 659,
+      "sha256": "b7780a5acf84254be2a01caba66b47b459faa1762228687e93193bdd96892984",
+      "path": "execution-snapshot.json"
+    },
+    {
+      "bytes": 2937,
+      "sha256": "64360ec63618aa79c75cfb9f161d9a2298be766e9f73083521af5462fc8c131a",
+      "path": "playwright.log"
+    },
+    {
+      "bytes": 58,
+      "sha256": "ef82907d729e9dfbfc6b71a9b723e17fc1dbfc41e017570da8e4f14b81940b94",
+      "path": "process-result.json"
+    },
+    {
+      "bytes": 842877,
+      "sha256": "c23f17dfe3d7f9610f877561c7f72d359637f1954164469746b34e54f50782c1",
+      "path": "report.json"
+    },
+    {
+      "bytes": 1486,
+      "sha256": "0f69119ad9463db523beead761f1f558da504c86e065692b0137259759f176aa",
+      "path": "source-freeze.json"
+    },
+    {
+      "bytes": 96,
+      "sha256": "aac65077b189d0f5ac2aada517bc5191891403de5dc2c43eed3a0c6b9d5a29c8",
+      "path": "test-results/.last-run.json"
+    },
+    {
+      "bytes": 215319,
+      "sha256": "8971c3ab2f8d9da7ab7e36f325cb367950417ee380a713c6f53d5240301454e0",
+      "path": "test-results/agent-adaptor-shadow-actua-47129-ary-reply-queued-after-Done-chromium/actual-shadow-evidence.json"
+    },
+    {
+      "bytes": 170985,
+      "sha256": "e9ee1001e3bc0d21481268b2dfe7922c84b0dc2087b2eca54d24320a12b27491",
+      "path": "test-results/agent-adaptor-shadow-actua-47129-ary-reply-queued-after-Done-chromium/ordinary-reply-queued.png"
+    },
+    {
+      "bytes": 176158,
+      "sha256": "78cb1d6b0ec1ab4614bf02198b4711d4e9c074224af97ead8d11d2ed092a08a4",
+      "path": "test-results/agent-adaptor-shadow-actua-47129-ary-reply-queued-after-Done-chromium/queued-run-completed.png"
+    },
+    {
+      "bytes": 141254,
+      "sha256": "a654954ceb1b2e02fb99af2fb47d72d18633c771f197a6db073029bba91948c5",
+      "path": "test-results/agent-adaptor-shadow-actua-47129-ary-reply-queued-after-Done-chromium/real-receipt-visible.png"
+    },
+    {
+      "bytes": 87060,
+      "sha256": "820e1bcc8c513bdd89eae3afcb7f6b1a85912e951843b004f40518acb31df108",
+      "path": "test-results/agent-adaptor-shadow-actua-c8290-dependent-session-isolation-chromium/actual-shadow-evidence.json"
+    },
+    {
+      "bytes": 81675,
+      "sha256": "bac9a5c71c4e4bc765ba40b945cc154aeddb152e65045ef93010b43a1194cd25",
+      "path": "test-results/agent-adaptor-shadow-actua-c8290-dependent-session-isolation-chromium/chat-completed-ui.png"
+    },
+    {
+      "bytes": 70450,
+      "sha256": "0226427aef72de3d36a28b9cfacc5387e8a5393f6e4096f44b17003f0aa89644",
+      "path": "test-results/agent-adaptor-shadow-actua-c8290-dependent-session-isolation-chromium/chat-steer-ui.png"
+    },
+    {
+      "bytes": 224998,
+      "sha256": "5fb198c3242754cdeddaa2facebedd4db05772b517e8dcffedc71c5b5fd24cee",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/actual-shadow-evidence.json"
+    },
+    {
+      "bytes": 147643,
+      "sha256": "6bf1a3865c52ece189aca9da56162105b781c8e20db1b8d4fc95960c71b0c752",
+      "path": "test-results/agent-adaptor-shadow-actua-cc132-to-daemon-to-provider-to-UI-chromium/development-result-visible.png"
+    },
+    {
+      "bytes": 265504,
+      "sha256": "536f4bb65544157ccc6fbe67ffa9cc8a5b53404f2a0149cf1216e90a38a3f0fb",
+      "path": "test-results/agent-adaptor-shadow-actua-f49bf-elled-task-and-a-fresh-task-chromium/actual-shadow-evidence.json"
+    },
+    {
+      "bytes": 21178,
+      "sha256": "a473cae141d82a27bdbdeb752f0a8f024c93b1102e22c80a30125a8045ccfceb",
+      "path": "test-results/agent-adaptor-shadow-actua-f49bf-elled-task-and-a-fresh-task-chromium/error-context.md"
+    },
+    {
+      "bytes": 154837,
+      "sha256": "57dcc7dc645b591650482cb988d665321de8507c3f8c1c3431d2e66690130139",
+      "path": "test-results/agent-adaptor-shadow-actua-f49bf-elled-task-and-a-fresh-task-chromium/failure.png"
+    }
+  ],
+  "accepted_as_full_run": false
+}

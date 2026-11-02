@@ -1,0 +1,11 @@
+{
+  "phase": "run02",
+  "built_at_utc": "2026-11-01T18:00:49.064421+00:00",
+  "multica_head": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+  "multica_backend_commit": "4f4a0b285fe93782a594e92d4dd612bb7ae1807a",
+  "sdk_head": "395047325c882fc90bcc08ae08c3a91f5390965a",
+  "binary": "/home/buthim/.local/share/multica-pr30-shadow-tools/bin/multica-shadow-run02",
+  "binary_sha256": "65f27dc7094ac36491453a6fac2c7ce02eca203eeabf63871c01953b6b184c34",
+  "multica_server_clean_at_build": true,
+  "sdk_go_code_clean_at_build": true
+}

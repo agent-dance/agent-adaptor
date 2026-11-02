@@ -1,0 +1,10 @@
+{
+  "native_stop_confirmed_at_utc": "2026-11-01T17:41:05.669108+00:00",
+  "native_pid": 33179,
+  "native_proc_absent": true,
+  "native_health_closed": true,
+  "shadow_starting_daemon_at_utc": "2026-11-01T17:41:05.752000+00:00",
+  "shadow_pid": 38092,
+  "shadow_started_after_native_exit": true,
+  "source": "native-stop-evidence.json and shadow daemon first startup log record"
+}

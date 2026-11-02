@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/skill"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 // cleanupSkillDriver makes the pre-launch InjectSkills seam observable while
@@ -114,14 +114,14 @@ func TestSkillPreLaunchFailureCleansAcquiredRunResources(t *testing.T) {
 		{
 			name: "Run",
 			invoke: func(ctx context.Context, agent *adaptor.Agent, ref skill.Ref) error {
-				_, err := agent.Run(ctx, "go", adaptor.WithSkills(ref))
+				_, err := agent.Send(ctx, "go", adaptor.WithSkills(ref)).Result()
 				return err
 			},
 		},
 		{
 			name: "Stream",
 			invoke: func(ctx context.Context, agent *adaptor.Agent, ref skill.Ref) error {
-				stream := agent.Stream(ctx, "go", adaptor.WithSkills(ref))
+				stream := agent.Send(ctx, "go", adaptor.WithSkills(ref))
 				for range stream.Events() {
 				}
 				_, err := stream.Result()

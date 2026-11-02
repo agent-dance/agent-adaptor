@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/examples/internal/exampleutil"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
 )
 
 // These tests use configuration and fake Runners; they must never execute
@@ -112,7 +112,7 @@ func TestProviderDisplayNameAndPlanArtifactContract(t *testing.T) {
 func TestRoleCallOptionsAreAppliedLast(t *testing.T) {
 	var order []string
 	wrapped := withCallOptions(optionApplyingRunner{}, trackingCallOption{label: "role", order: &order})
-	if _, err := wrapped.Run(context.Background(), "prompt", trackingCallOption{label: "caller", order: &order}); err != nil {
+	if _, err := wrapped.Send(context.Background(), "prompt", trackingCallOption{label: "caller", order: &order}).Result(); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(order, ","); got != "caller,role" {
@@ -122,11 +122,7 @@ func TestRoleCallOptionsAreAppliedLast(t *testing.T) {
 
 type inertRunner struct{}
 
-func (inertRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
-	panic("unexpected Run")
-}
-
-func (inertRunner) Stream(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
+func (inertRunner) Send(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
 	panic("unexpected Stream")
 }
 
@@ -141,17 +137,27 @@ func (o trackingCallOption) ApplyRun(*adaptor.RunSettings) {
 
 type optionApplyingRunner struct{}
 
-func (optionApplyingRunner) Run(_ context.Context, _ string, opts ...adaptor.CallOption) (*adaptor.Result, error) {
-	settings := &adaptor.RunSettings{}
-	for _, option := range opts {
-		option.ApplyRun(settings)
+func (optionApplyingRunner) Send(_ context.Context, _ string, opts ...adaptor.CallOption) adaptor.Stream {
+	var settings adaptor.RunSettings
+	for _, o := range opts {
+		o.ApplyRun(&settings)
 	}
-	return &adaptor.Result{}, nil
+	return optionStream{}
 }
 
-func (optionApplyingRunner) Stream(context.Context, string, ...adaptor.CallOption) adaptor.Stream {
-	panic("unexpected Stream")
+type optionStream struct{}
+
+func (optionStream) Events() <-chan adaptor.Event {
+	ch := make(chan adaptor.Event)
+	close(ch)
+	return ch
 }
+func (optionStream) Result() (*adaptor.Result, error) { return &adaptor.Result{}, nil }
+func (optionStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrRunFinished
+}
+func (optionStream) Cancel()       {}
+func (optionStream) RunID() string { return "test" }
 
 func TestWebHandlerRehydratesSecondTurnWithoutCheckpoint(t *testing.T) {
 	runner := &historyRunner{}
@@ -174,11 +180,7 @@ func TestWebHandlerRehydratesSecondTurnWithoutCheckpoint(t *testing.T) {
 
 type historyRunner struct{ prompts []string }
 
-func (r *historyRunner) Run(context.Context, string, ...adaptor.CallOption) (*adaptor.Result, error) {
-	panic("handler must use Stream")
-}
-
-func (r *historyRunner) Stream(_ context.Context, prompt string, _ ...adaptor.CallOption) adaptor.Stream {
+func (r *historyRunner) Send(_ context.Context, prompt string, _ ...adaptor.CallOption) adaptor.Stream {
 	r.prompts = append(r.prompts, prompt)
 	events := make(chan adaptor.Event)
 	close(events)
@@ -194,3 +196,7 @@ func (historyStream) Result() (*adaptor.Result, error) { return &adaptor.Result{
 func (historyStream) RunID() string { return "example-run" }
 
 func (historyStream) Cancel() {}
+
+func (historyStream) Send(context.Context, string, ...adaptor.MessageOption) error {
+	return adaptor.ErrRunFinished
+}

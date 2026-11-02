@@ -15,11 +15,11 @@ import (
 	"sync"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/internal/engine"
-	"github.com/agent-dance/agent-adaptor/memory"
-	"github.com/agent-dance/agent-adaptor/threadstore"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/internal/engine"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
+	"github.com/agent-dance/agent-adaptor/v2/threadstore"
 )
 
 // sessionFake extends the programmable fakeDriver with deterministic resume /
@@ -137,22 +137,17 @@ func overwriteActiveRecord(t *testing.T, store threadstore.Store, record threads
 	}
 }
 
-func TestThreadRequiresStore(t *testing.T) {
+func TestThreadDefaultsToMemoryStore(t *testing.T) {
 	agent := adaptor.New(newSessionFake("s").fakeDriver)
 	th := agent.Thread("tenant-1/issue-1")
-
-	if _, err := th.Run(context.Background(), "hi"); !errors.Is(err, adaptor.ErrThreadStoreRequired) {
-		t.Fatalf("Run without store: err = %v, want ErrThreadStoreRequired", err)
+	if _, err := th.Send(context.Background(), "hi").Result(); err != nil {
+		t.Fatal(err)
 	}
-	// The Stream form travels the same contract (closed events + Result err).
-	stream := th.Stream(context.Background(), "hi")
-	for range stream.Events() {
+	if _, err := th.Send(context.Background(), "again").Result(); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := stream.Result(); !errors.Is(err, adaptor.ErrThreadStoreRequired) {
-		t.Fatalf("Stream without store: err = %v, want ErrThreadStoreRequired", err)
-	}
-	if _, err := th.Checkpoint(context.Background()); !errors.Is(err, adaptor.ErrThreadStoreRequired) {
-		t.Fatalf("Checkpoint without store: err = %v, want ErrThreadStoreRequired", err)
+	if checkpoint, err := th.Checkpoint(context.Background()); err != nil || checkpoint.State.ResumeID != "s-resume-1" {
+		t.Fatalf("checkpoint=%+v err=%v", checkpoint, err)
 	}
 }
 
@@ -165,7 +160,7 @@ func TestThreadModeMethodMatrix(t *testing.T) {
 	t.Run("Thread is continue_or_start", func(t *testing.T) {
 		fake := newSessionFake("cos")
 		agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(memory.NewStore()))
-		if _, err := agent.Thread("k").Run(ctx, "p"); err != nil {
+		if _, err := agent.Thread("k").Send(ctx, "p").Result(); err != nil {
 			t.Fatalf("run: %v", err)
 		}
 		sess := fake.request(t, 0).Session
@@ -184,10 +179,10 @@ func TestThreadModeMethodMatrix(t *testing.T) {
 		fake := newSessionFake("co")
 		store := memory.NewStore()
 		agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
-		if _, err := agent.Thread("k").Run(ctx, "seed"); err != nil {
+		if _, err := agent.Thread("k").Send(ctx, "seed").Result(); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		res, err := agent.Thread("k", adaptor.ResumeOnly()).Run(ctx, "reply")
+		res, err := agent.Thread("k", adaptor.ResumeOnly()).Send(ctx, "reply").Result()
 		if err != nil {
 			t.Fatalf("resume-only run: %v", err)
 		}
@@ -208,13 +203,13 @@ func TestThreadModeMethodMatrix(t *testing.T) {
 		store := memory.NewStore()
 		agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
 		parent := agent.Thread("k")
-		if _, err := parent.Run(ctx, "seed"); err != nil {
+		if _, err := parent.Send(ctx, "seed").Result(); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		parentRec := activeRecord(t, store, "k")
 
 		branch := parent.Fork("k/alt")
-		if _, err := branch.Run(ctx, "branch off"); err != nil {
+		if _, err := branch.Send(ctx, "branch off").Result(); err != nil {
 			t.Fatalf("fork run: %v", err)
 		}
 		sess := fake.request(t, 1).Session
@@ -242,7 +237,7 @@ func TestThreadModeMethodMatrix(t *testing.T) {
 		}
 
 		// Established fork continues independently.
-		if _, err := branch.Run(ctx, "continue branch"); err != nil {
+		if _, err := branch.Send(ctx, "continue branch").Result(); err != nil {
 			t.Fatalf("fork follow-up: %v", err)
 		}
 		sess = fake.request(t, 2).Session
@@ -259,7 +254,7 @@ func TestThreadContinueOrStartReuse(t *testing.T) {
 	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
 
 	th := agent.Thread("tenant-1/issue-9")
-	res1, err := th.Run(ctx, "first")
+	res1, err := th.Send(ctx, "first").Result()
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
@@ -272,7 +267,7 @@ func TestThreadContinueOrStartReuse(t *testing.T) {
 	}
 
 	// Same handle: continues.
-	res2, err := th.Run(ctx, "second")
+	res2, err := th.Send(ctx, "second").Result()
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -282,7 +277,7 @@ func TestThreadContinueOrStartReuse(t *testing.T) {
 
 	// A brand-new handle for the same key: state lives in the store, not
 	// in the handle, so it continues too (cross-request/process shape).
-	res3, err := agent.Thread("tenant-1/issue-9").Run(ctx, "third")
+	res3, err := agent.Thread("tenant-1/issue-9").Send(ctx, "third").Result()
 	if err != nil {
 		t.Fatalf("third run: %v", err)
 	}
@@ -305,11 +300,11 @@ func TestThreadResumeOnlyNotFound(t *testing.T) {
 	fake := newSessionFake("nf")
 	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(memory.NewStore()))
 
-	if _, err := agent.Thread("missing", adaptor.ResumeOnly()).Run(ctx, "p"); !errors.Is(err, adaptor.ErrThreadNotFound) {
+	if _, err := agent.Thread("missing", adaptor.ResumeOnly()).Send(ctx, "p").Result(); !errors.Is(err, adaptor.ErrThreadNotFound) {
 		t.Fatalf("resume-only on missing thread: err = %v, want ErrThreadNotFound", err)
 	}
 	// Fork parent missing behaves the same way.
-	if _, err := agent.Thread("missing").Fork("missing/alt").Run(ctx, "p"); !errors.Is(err, adaptor.ErrThreadNotFound) {
+	if _, err := agent.Thread("missing").Fork("missing/alt").Send(ctx, "p").Result(); !errors.Is(err, adaptor.ErrThreadNotFound) {
 		t.Fatalf("fork from missing parent: err = %v, want ErrThreadNotFound", err)
 	}
 	if got := fake.runCount(); got != 0 {
@@ -334,14 +329,14 @@ func TestThreadResumeOnlyRejectsUnusableStoredCheckpointBeforeDriverRun(t *testi
 			fake := newSessionFake("resume-only-invalid")
 			store := memory.NewStore()
 			agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
-			if _, err := agent.Thread("k").Run(context.Background(), "seed"); err != nil {
+			if _, err := agent.Thread("k").Send(context.Background(), "seed").Result(); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
 			record := *activeRecord(t, store, "k")
 			tc.mutate(&record)
 			overwriteActiveRecord(t, store, record)
 
-			_, err := agent.Thread("k", adaptor.ResumeOnly()).Run(context.Background(), "must not launch")
+			_, err := agent.Thread("k", adaptor.ResumeOnly()).Send(context.Background(), "must not launch").Result()
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("error = %v, want %v", err, tc.want)
 			}
@@ -373,14 +368,14 @@ func TestThreadContinueOrStartRejectsStructurallyInvalidCheckpoint(t *testing.T)
 			fake := newSessionFake("continue-invalid")
 			store := memory.NewStore()
 			agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
-			if _, err := agent.Thread("k").Run(context.Background(), "seed"); err != nil {
+			if _, err := agent.Thread("k").Send(context.Background(), "seed").Result(); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
 			old := *activeRecord(t, store, "k")
 			tc.mutate(&old)
 			overwriteActiveRecord(t, store, old)
 
-			_, err := agent.Thread("k").Run(context.Background(), "must not launch")
+			_, err := agent.Thread("k").Send(context.Background(), "must not launch").Result()
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("error = %v, want %v", err, tc.want)
 			}
@@ -401,16 +396,16 @@ func TestThreadForkRejectsExistingTargetWithoutMutation(t *testing.T) {
 	store := memory.NewStore()
 	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
 
-	if _, err := agent.Thread("parent").Run(ctx, "seed parent"); err != nil {
+	if _, err := agent.Thread("parent").Send(ctx, "seed parent").Result(); err != nil {
 		t.Fatalf("seed parent: %v", err)
 	}
-	if _, err := agent.Thread("target").Run(ctx, "seed target"); err != nil {
+	if _, err := agent.Thread("target").Send(ctx, "seed target").Result(); err != nil {
 		t.Fatalf("seed target: %v", err)
 	}
 	parentBefore := activeRecord(t, store, "parent")
 	targetBefore := activeRecord(t, store, "target")
 
-	if _, err := agent.Thread("parent").Fork("target").Run(ctx, "must conflict"); !errors.Is(err, adaptor.ErrThreadAlreadyExists) {
+	if _, err := agent.Thread("parent").Fork("target").Send(ctx, "must conflict").Result(); !errors.Is(err, adaptor.ErrThreadAlreadyExists) {
 		t.Fatalf("fork existing target: err=%v, want ErrThreadAlreadyExists", err)
 	}
 	if got := fake.runCount(); got != 2 {
@@ -436,13 +431,13 @@ func TestThreadFingerprintGuard(t *testing.T) {
 	store := memory.NewStore()
 	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
 
-	if _, err := agent.Thread("k").Run(ctx, "seed", adaptor.WithModel("m1")); err != nil {
+	if _, err := agent.Thread("k").Send(ctx, "seed", adaptor.WithModel("m1")).Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	rec1 := activeRecord(t, store, "k")
 
 	// Match: same configuration resumes.
-	res, err := agent.Thread("k", adaptor.ResumeOnly()).Run(ctx, "same model", adaptor.WithModel("m1"))
+	res, err := agent.Thread("k", adaptor.ResumeOnly()).Send(ctx, "same model", adaptor.WithModel("m1")).Result()
 	if err != nil {
 		t.Fatalf("matching resume: %v", err)
 	}
@@ -451,7 +446,7 @@ func TestThreadFingerprintGuard(t *testing.T) {
 	}
 
 	// Mismatch + resume-only: refused, nothing changes.
-	if _, err := agent.Thread("k", adaptor.ResumeOnly()).Run(ctx, "new model", adaptor.WithModel("m2")); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+	if _, err := agent.Thread("k", adaptor.ResumeOnly()).Send(ctx, "new model", adaptor.WithModel("m2")).Result(); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("incompatible resume-only: err = %v, want ErrThreadIncompatible", err)
 	}
 	if rec := activeRecord(t, store, "k"); rec.ID != rec1.ID {
@@ -459,7 +454,7 @@ func TestThreadFingerprintGuard(t *testing.T) {
 	}
 
 	// Mismatch + continue-or-start: fresh conversation, old one archived.
-	res, err = agent.Thread("k").Run(ctx, "new model", adaptor.WithModel("m2"))
+	res, err = agent.Thread("k").Send(ctx, "new model", adaptor.WithModel("m2")).Result()
 	if err != nil {
 		t.Fatalf("incompatible continue-or-start: %v", err)
 	}
@@ -487,13 +482,13 @@ func TestThreadFingerprintIncludesDriverConstructionConfig(t *testing.T) {
 	store := memory.NewStore()
 	first := &configuredSessionFake{sessionFake: newSessionFake("cfg-a"), configFingerprint: "configured/v1:a"}
 	firstAgent := adaptor.New(first, adaptor.WithThreadStore(store))
-	if _, err := firstAgent.Thread("configured").Run(context.Background(), "seed"); err != nil {
+	if _, err := firstAgent.Thread("configured").Send(context.Background(), "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	second := &configuredSessionFake{sessionFake: newSessionFake("cfg-b"), configFingerprint: "configured/v1:b"}
 	secondAgent := adaptor.New(second, adaptor.WithThreadStore(store))
-	if _, err := secondAgent.Thread("configured", adaptor.ResumeOnly()).Run(context.Background(), "resume"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+	if _, err := secondAgent.Thread("configured", adaptor.ResumeOnly()).Send(context.Background(), "resume").Result(); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("changed construction config: err=%v, want ErrThreadIncompatible", err)
 	}
 	if second.runCount() != 0 {
@@ -506,7 +501,7 @@ func TestThreadRejectsDriverWithoutStableConfigFingerprint(t *testing.T) {
 	driverWithoutFingerprint := &noFingerprintDriver{inner: inner}
 	missingStore := newObservingStore()
 	agent := adaptor.New(driverWithoutFingerprint, adaptor.WithThreadStore(missingStore))
-	if _, err := agent.Thread("no-config-fingerprint").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+	if _, err := agent.Thread("no-config-fingerprint").Send(context.Background(), "go").Result(); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("missing config fingerprint: err=%v, want ErrThreadIncompatible", err)
 	}
 	if inner.runCount() != 0 {
@@ -519,7 +514,7 @@ func TestThreadRejectsDriverWithoutStableConfigFingerprint(t *testing.T) {
 	empty := &configuredSessionFake{sessionFake: newSessionFake("empty-config"), configFingerprint: "  "}
 	emptyStore := newObservingStore()
 	agent = adaptor.New(empty, adaptor.WithThreadStore(emptyStore))
-	if _, err := agent.Thread("empty-config-fingerprint").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+	if _, err := agent.Thread("empty-config-fingerprint").Send(context.Background(), "go").Result(); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("empty config fingerprint: err=%v, want ErrThreadIncompatible", err)
 	}
 	if empty.runCount() != 0 {
@@ -543,13 +538,13 @@ func TestThreadFingerprintUsesResolvedWorkspace(t *testing.T) {
 	first := adaptor.New(fake.fakeDriver,
 		adaptor.WithThreadStore(store), adaptor.WithWorkspaceManager(manager), adaptor.WithWorkspace("C:/raw/input-a"),
 	)
-	if _, err := first.Thread("workspace").Run(context.Background(), "seed"); err != nil {
+	if _, err := first.Thread("workspace").Send(context.Background(), "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	second := adaptor.New(fake.fakeDriver,
 		adaptor.WithThreadStore(store), adaptor.WithWorkspaceManager(manager), adaptor.WithWorkspace("C:/raw/input-b"),
 	)
-	if _, err := second.Thread("workspace", adaptor.ResumeOnly()).Run(context.Background(), "same resolved workspace"); err != nil {
+	if _, err := second.Thread("workspace", adaptor.ResumeOnly()).Send(context.Background(), "same resolved workspace").Result(); err != nil {
 		t.Fatalf("raw input changed but resolved lease stayed identical: %v", err)
 	}
 
@@ -557,7 +552,7 @@ func TestThreadFingerprintUsesResolvedWorkspace(t *testing.T) {
 		ID: "workspace-2", CWD: "C:/resolved/other", Fingerprint: "resolved-workspace/v2",
 		Mode: driver.WorkspaceModeShared, StrategyType: driver.WorkspaceStrategyProjectPrimary,
 	}
-	if _, err := second.Thread("workspace", adaptor.ResumeOnly()).Run(context.Background(), "different resolved workspace"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+	if _, err := second.Thread("workspace", adaptor.ResumeOnly()).Send(context.Background(), "different resolved workspace").Result(); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("changed resolved workspace: err=%v, want ErrThreadIncompatible", err)
 	}
 }
@@ -576,11 +571,11 @@ func TestThreadFingerprintIncludesResolvedRuntimeAttachments(t *testing.T) {
 	agent := adaptor.New(fake.fakeDriver,
 		adaptor.WithThreadStore(store), adaptor.WithServiceManager(manager), adaptor.WithServices(adaptor.ServiceSpec{ID: "sidecar"}),
 	)
-	if _, err := agent.Thread("runtime").Run(context.Background(), "seed"); err != nil {
+	if _, err := agent.Thread("runtime").Send(context.Background(), "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	endpoint = "http://127.0.0.1:4202"
-	if _, err := agent.Thread("runtime", adaptor.ResumeOnly()).Run(context.Background(), "resume"); !errors.Is(err, adaptor.ErrThreadIncompatible) {
+	if _, err := agent.Thread("runtime", adaptor.ResumeOnly()).Send(context.Background(), "resume").Result(); !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("changed resolved runtime attachment: err=%v, want ErrThreadIncompatible", err)
 	}
 }
@@ -610,7 +605,7 @@ func TestThreadRuntimeSecretRotationDoesNotBreakResume(t *testing.T) {
 		adaptor.WithServices(adaptor.ServiceSpec{ID: "sidecar"}),
 	)
 
-	if _, err := agent.Thread("runtime-secret").Run(context.Background(), "seed"); err != nil {
+	if _, err := agent.Thread("runtime-secret").Send(context.Background(), "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	seedRecord := activeRecord(t, store, "runtime-secret")
@@ -619,7 +614,7 @@ func TestThreadRuntimeSecretRotationDoesNotBreakResume(t *testing.T) {
 	}
 
 	secret = "sk-rotated-runtime-secret"
-	result, err := agent.Thread("runtime-secret", adaptor.ResumeOnly()).Run(context.Background(), "resume")
+	result, err := agent.Thread("runtime-secret", adaptor.ResumeOnly()).Send(context.Background(), "resume").Result()
 	if err != nil {
 		t.Fatalf("resume after secret rotation: %v", err)
 	}
@@ -647,7 +642,7 @@ func TestThreadRuntimeSecretRotationDoesNotBreakResume(t *testing.T) {
 	// serialize the credential that accompanied the incompatible attachment.
 	endpoint = "http://127.0.0.1:4404"
 	secret = "sk-incompatible-runtime-secret"
-	_, err = agent.Thread("runtime-secret", adaptor.ResumeOnly()).Run(context.Background(), "changed endpoint")
+	_, err = agent.Thread("runtime-secret", adaptor.ResumeOnly()).Send(context.Background(), "changed endpoint").Result()
 	if !errors.Is(err, adaptor.ErrThreadIncompatible) {
 		t.Fatalf("changed endpoint: err=%v, want ErrThreadIncompatible", err)
 	}
@@ -680,10 +675,10 @@ func TestThreadBusyOnConcurrentRuns(t *testing.T) {
 	}
 	agent := adaptor.New(fake, adaptor.WithThreadStore(memory.NewStore()))
 
-	stream := agent.Thread("k").Stream(ctx, "long turn")
+	stream := agent.Thread("k").Send(ctx, "long turn")
 	<-started
 
-	if _, err := agent.Thread("k").Run(ctx, "concurrent turn"); !errors.Is(err, adaptor.ErrThreadBusy) {
+	if _, err := agent.Thread("k").Send(ctx, "concurrent turn").Result(); !errors.Is(err, adaptor.ErrThreadBusy) {
 		t.Fatalf("concurrent run: err = %v, want ErrThreadBusy", err)
 	}
 	if got := fake.runCount(); got != 1 {
@@ -698,7 +693,7 @@ func TestThreadBusyOnConcurrentRuns(t *testing.T) {
 	}
 
 	// The lease is released with the run: the same key works again.
-	if _, err := agent.Thread("k").Run(ctx, "after"); err != nil {
+	if _, err := agent.Thread("k").Send(ctx, "after").Result(); err != nil {
 		t.Fatalf("run after release: %v", err)
 	}
 }
@@ -709,13 +704,13 @@ func TestThreadFallsBackAfterResumeRejected(t *testing.T) {
 	store := memory.NewStore()
 	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
 
-	if _, err := agent.Thread("k").Run(ctx, "seed"); err != nil {
+	if _, err := agent.Thread("k").Send(ctx, "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	rec1 := activeRecord(t, store, "k")
 
 	fake.set(&fake.rejectResume, true)
-	res, err := agent.Thread("k").Run(ctx, "resume attempt")
+	res, err := agent.Thread("k").Send(ctx, "resume attempt").Result()
 	if err != nil {
 		t.Fatalf("continue-or-start after rejection: %v", err)
 	}
@@ -758,13 +753,13 @@ func TestThreadResumeOnlyKeepsResumeRejected(t *testing.T) {
 	store := memory.NewStore()
 	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
 
-	if _, err := agent.Thread("k").Run(ctx, "seed"); err != nil {
+	if _, err := agent.Thread("k").Send(ctx, "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	rec1 := activeRecord(t, store, "k")
 
 	fake.set(&fake.rejectResume, true)
-	_, err := agent.Thread("k", adaptor.ResumeOnly()).Run(ctx, "resume attempt")
+	_, err := agent.Thread("k", adaptor.ResumeOnly()).Send(ctx, "resume attempt").Result()
 	if !errors.Is(err, adaptor.ErrResumeRejected) {
 		t.Fatalf("resume-only rejection: err = %v, want ErrResumeRejected", err)
 	}
@@ -784,7 +779,7 @@ func TestThreadRunRequiresValidCheckpoint(t *testing.T) {
 	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
 
 	fake.set(&fake.omitCheckpoint, true)
-	if _, err := agent.Thread("k").Run(ctx, "p"); !errors.Is(err, adaptor.ErrThreadCheckpointMissing) {
+	if _, err := agent.Thread("k").Send(ctx, "p").Result(); !errors.Is(err, adaptor.ErrThreadCheckpointMissing) {
 		t.Fatalf("run without checkpoint: err = %v, want ErrThreadCheckpointMissing", err)
 	}
 	rec, err := store.Resolve(ctx, threadstore.Query{Key: "k", IncludeArchived: true})
@@ -809,7 +804,7 @@ func TestThreadRejectsCheckpointWithoutResumeID(t *testing.T) {
 	}
 	store := memory.NewStore()
 	agent := adaptor.New(fake, adaptor.WithThreadStore(store))
-	if _, err := agent.Thread("empty-resume").Run(context.Background(), "go"); !errors.Is(err, adaptor.ErrThreadCheckpointMissing) {
+	if _, err := agent.Thread("empty-resume").Send(context.Background(), "go").Result(); !errors.Is(err, adaptor.ErrThreadCheckpointMissing) {
 		t.Fatalf("empty resume ID: err=%v, want ErrThreadCheckpointMissing", err)
 	}
 	if rec, err := store.Resolve(context.Background(), threadstore.Query{Key: "empty-resume", IncludeArchived: true}); err != nil || rec != nil {
@@ -827,7 +822,7 @@ func TestThreadHumanRejectWithoutCheckpointDoesNotPoisonThread(t *testing.T) {
 	store := memory.NewStore()
 	agent := adaptor.New(fake.fakeDriver, adaptor.WithThreadStore(store))
 
-	if _, err := agent.Thread("k").Run(ctx, "seed"); err != nil {
+	if _, err := agent.Thread("k").Send(ctx, "seed").Result(); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	rec1 := activeRecord(t, store, "k")
@@ -851,11 +846,11 @@ func TestThreadHumanRejectWithoutCheckpointDoesNotPoisonThread(t *testing.T) {
 
 	// Run form.
 	fake.set(&fake.humanRejectNoCP, true)
-	_, err := agent.Thread("k").Run(ctx, "please deploy")
+	_, err := agent.Thread("k").Send(ctx, "please deploy").Result()
 	assertRejected(t, err)
 
 	// Stream form of the same scenario.
-	stream := agent.Thread("k").Stream(ctx, "please deploy")
+	stream := agent.Thread("k").Send(ctx, "please deploy")
 	for range stream.Events() {
 	}
 	_, err = stream.Result()
@@ -868,7 +863,7 @@ func TestThreadHumanRejectWithoutCheckpointDoesNotPoisonThread(t *testing.T) {
 
 	// And a healthy run resumes the original conversation.
 	fake.set(&fake.humanRejectNoCP, false)
-	res, err := agent.Thread("k").Run(ctx, "try again")
+	res, err := agent.Thread("k").Send(ctx, "try again").Result()
 	if err != nil {
 		t.Fatalf("healthy run: %v", err)
 	}

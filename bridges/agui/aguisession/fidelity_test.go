@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	events "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
-	adaptor "github.com/agent-dance/agent-adaptor"
-	"github.com/agent-dance/agent-adaptor/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/hosttools/sessionrecorder"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
+	"github.com/agent-dance/agent-adaptor/v2/hosttools/sessionrecorder"
 )
 
 func TestSubmittedMessageCollisionBeforeRecordingOrStream(t *testing.T) {
@@ -26,7 +26,7 @@ func TestSubmittedMessageCollisionBeforeRecordingOrStream(t *testing.T) {
 			adaptor.ToolCall{ID: "tc", Name: "shell", Phase: adaptor.PhaseStart},
 			adaptor.ToolResult{ID: "tc", Result: map[string]any{"output": "ok"}},
 			adaptor.Thinking{MessageID: "reason", Text: "reason"},
-			adaptor.SubagentUpdate{Agent: "helper", Kind: adaptor.SubagentStarted})
+			adaptor.SubagentUpdate{Member: "helper", Kind: adaptor.SubagentStarted})
 	}}, Options{Recorder: rec, Input: agui.InputOptions{HistoryFallback: true}, ResolveDivergence: func(context.Context, *agui.RunAgentInput, string) (string, error) {
 		divergences++
 		return ThreadKey("fresh-branch"), nil
@@ -107,7 +107,7 @@ func TestOpaqueNumbersThroughRecordingWireAndReopenedHistory(t *testing.T) {
 					adaptor.TextDelta{MessageID: "a", Text: "answer"},
 					adaptor.ToolCall{ID: "tc", Name: "shell", Phase: adaptor.PhaseStart},
 					adaptor.ToolResult{ID: "tc", Result: map[string]any{"output": "fractional", "exitCode": json.Number("1.00000000000000000001")}},
-					adaptor.SubagentUpdate{Agent: "helper", Kind: adaptor.SubagentStarted, Data: map[string]any{"value": number}})
+					adaptor.SubagentUpdate{Member: "helper", Kind: adaptor.SubagentStarted, Data: map[string]any{"value": number}})
 			}}, opts)
 			submitted := user("u", "go")
 			submitted["metadata"] = map[string]any{mode: number}

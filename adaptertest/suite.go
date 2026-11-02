@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/driver"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
 )
 
 // DefaultLivePrompt is used by WithLiveRun("").
@@ -36,11 +36,12 @@ type suiteConfig struct {
 	liveTimeout          time.Duration
 	liveSkipReason       string
 	liveStructured       bool
+	messageFixtures      []namedMessageFixture
 }
 
 // WithConfig supplies the driver-specific config value passed to every
 // probe (ValidateConfig, CheckEnvironment, ListModels, ...) and to live
-// runs via Request.Config. v1 drivers built with <pkg>.Driver(cfg) may
+// runs via Request.Config. Drivers built with <pkg>.Driver(cfg) may
 // receive nil here; they inject their captured config themselves.
 func WithConfig(cfg any) Option { return func(c *suiteConfig) { c.config = cfg } }
 
@@ -125,7 +126,7 @@ func WithLiveStructuredOutput() Option { return func(c *suiteConfig) { c.liveStr
 // foreignConfig is a type no driver under test can know about (CFG-03).
 type foreignConfig struct{ marker string }
 
-// TestDriver runs the v1 driver conformance suite against drivers produced
+// TestDriver runs the v2 driver conformance suite against drivers produced
 // by newDriver, in the style of fstest.TestFS / nettest.TestConn. Probes
 // for optional capability interfaces skip when the driver does not
 // implement them; capability declarations in the Descriptor are
@@ -167,6 +168,7 @@ func TestDriver(t *testing.T, newDriver func() driver.Driver, opts ...Option) {
 	t.Run("skills", func(t *testing.T) { checkSkillSupport(t, d, desc, c) })
 	t.Run("stream_capability", func(t *testing.T) { checkStreamSupport(t, d) })
 	t.Run("session_codec", func(t *testing.T) { checkSessionCodec(t, d, desc, c) })
+	t.Run("messages", func(t *testing.T) { checkMessages(t, d, c) })
 	t.Run("live_run", func(t *testing.T) { checkLiveRun(t, d, c) })
 	t.Run("live_structured_output", func(t *testing.T) { checkLiveStructuredOutput(t, d, desc, c) })
 }
@@ -224,7 +226,7 @@ func checkConfig(t *testing.T, d driver.Driver, c *suiteConfig) {
 	t.Helper()
 	mustNotPanic(t, "CFG-01", "ValidateConfig(nil)", func() {
 		if err := d.ValidateConfig(nil); err != nil {
-			t.Logf("note: ValidateConfig(nil) = %v (v1 drivers validate their captured config on nil)", err)
+			t.Logf("note: ValidateConfig(nil) = %v (configured drivers validate their captured config on nil)", err)
 		}
 	})
 	if c.config != nil {
@@ -623,7 +625,7 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 		Prompt:    c.livePrompt,
 		Config:    c.config,
 		Streaming: true,
-		Metadata:  map[string]string{"adaptertest": "v1"},
+		Metadata:  map[string]string{"adaptertest": "v2"},
 		ProfilePayload: driver.ProfilePayload{
 			Fingerprint:                     "adaptertest-profile-concrete",
 			SessionCompatibilityFingerprint: "adaptertest-profile-session",
@@ -634,8 +636,9 @@ func checkLiveRun(t *testing.T, d driver.Driver, c *suiteConfig) {
 	}
 	resp, err := d.Run(ctx, req, sink)
 	reportViolations(t, VerifyOutcome(&resp, err))
-	if err != nil {
-		t.Fatalf("live run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
+	if err != nil || resp.Failure != nil || resp.ExitCode != 0 || resp.Signal != "" || resp.TimedOut {
+		t.Fatalf("live run failed: err=%v failure=%+v exit=%d signal=%q timed_out=%v\nstderr tail: %s",
+			err, resp.Failure, resp.ExitCode, resp.Signal, resp.TimedOut, rawStderrTail(&resp))
 	}
 
 	reportViolations(t, VerifyRunEvents(sink.Events()))
@@ -692,8 +695,9 @@ func checkLiveStructuredOutput(t *testing.T, d driver.Driver, desc driver.Descri
 	}
 	resp, err := d.Run(ctx, req, sink)
 	reportViolations(t, VerifyOutcome(&resp, err))
-	if err != nil {
-		t.Fatalf("SO-02: native structured run failed: %v\nstderr tail: %s", err, rawStderrTail(&resp))
+	if err != nil || resp.Failure != nil || resp.ExitCode != 0 || resp.Signal != "" || resp.TimedOut {
+		t.Fatalf("SO-02: native structured run failed: err=%v failure=%+v exit=%d signal=%q timed_out=%v\nstderr tail: %s",
+			err, resp.Failure, resp.ExitCode, resp.Signal, resp.TimedOut, rawStderrTail(&resp))
 	}
 	result := resp.StructuredOutput
 	if result == nil {

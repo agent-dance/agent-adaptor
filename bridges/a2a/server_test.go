@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	adaptor "github.com/agent-dance/agent-adaptor"
-	a2a "github.com/agent-dance/agent-adaptor/bridges/a2a"
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/memory"
+	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	a2a "github.com/agent-dance/agent-adaptor/v2/bridges/a2a"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/memory"
 )
 
 // Redaction anchor: the server keeps the conservative default ExposurePolicy —
@@ -19,10 +19,11 @@ func TestNewServerDefaultExposureOmitsDiagnostics(t *testing.T) {
 
 	fake := &scriptedDriver{run: func(int, driver.Request, driver.EventSink) (driver.Response, error) {
 		return driver.Response{
-			Output:   "hello",
-			Summary:  "safe summary",
-			Metadata: map[string]string{"authorization": "Bearer super-secret"},
-			Usage:    &driver.Usage{InputTokens: 12, OutputTokens: 34},
+			Output:     "hello",
+			Checkpoint: &driver.Checkpoint{Valid: true, State: &driver.SessionState{ResumeID: "healthy"}},
+			Summary:    "safe summary",
+			Metadata:   map[string]string{"authorization": "Bearer super-secret"},
+			Usage:      &driver.Usage{InputTokens: 12, OutputTokens: 34},
 			RawStreams: &driver.RawStreams{
 				Stdout:   "Authorization: Bearer hidden",
 				Terminal: &driver.TerminalPayload{Event: "done", JSON: json.RawMessage(`{"token":"secret-token"}`)},

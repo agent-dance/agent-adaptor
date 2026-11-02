@@ -12,6 +12,46 @@ type ThreadSessionPlan struct {
 	store SessionStore
 }
 
+// AcquireThreadOwnership holds the same key lease used by execution planning,
+// without selecting a checkpoint. A standby or an unflushed checkpoint can
+// therefore retain exclusivity between executions. The caller must renew and
+// release the returned plan, and may lend its key lease to execution plans.
+func AcquireThreadOwnership(ctx context.Context, store SessionStore, namespace, key, driverType string) (*ThreadSessionPlan, error) {
+	if store == nil {
+		return nil, ErrSessionStoreRequired
+	}
+	req := SessionRequest{Namespace: namespace, Key: key, Mode: SessionContinueOrStart}
+	if err := validateSessionRequest(req); err != nil {
+		return nil, err
+	}
+	owner, err := newLeaseOwner(AgentIdentity{}, driverType, req)
+	if err != nil {
+		return nil, err
+	}
+	plan := &resolvedSessionPlan{request: req, owner: owner, store: store}
+	if err := plan.acquireLease(ctx, store, sessionKeyLeaseID(namespace, key)); err != nil {
+		return nil, plan.releaseAfter(err)
+	}
+	return &ThreadSessionPlan{plan: plan, store: store}, nil
+}
+
+// OwnershipLease returns the ownership plan's key lease. Execution adapters
+// lend this exact owner and token; they must not release or independently renew it.
+func (p *ThreadSessionPlan) OwnershipLease() SessionLease {
+	leases := p.plan.snapshotLeases()
+	if len(leases) == 0 {
+		return SessionLease{}
+	}
+	return leases[0]
+}
+
+// BoundedSessionStoreCall bounds an extension hook by ctx plus the coordinator's
+// fixed cancellation acknowledgement grace. Completed is false when the hook
+// abandoned its caller; renewal and release coordinators must then fail closed.
+func BoundedSessionStoreCall(ctx context.Context, call func(context.Context) error) (err error, completed bool) {
+	return boundedSessionStoreCall(ctx, call)
+}
+
 // PrepareThreadSession resolves a session plan against store for the given
 // request:
 //

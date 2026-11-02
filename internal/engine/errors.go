@@ -6,9 +6,9 @@ package engine
 import (
 	"errors"
 
-	"github.com/agent-dance/agent-adaptor/driver"
-	"github.com/agent-dance/agent-adaptor/mcp"
-	"github.com/agent-dance/agent-adaptor/skill"
+	"github.com/agent-dance/agent-adaptor/v2/driver"
+	"github.com/agent-dance/agent-adaptor/v2/mcp"
+	"github.com/agent-dance/agent-adaptor/v2/skill"
 )
 
 var ErrInvalidDriverConfig = driver.ErrInvalidDriverConfig

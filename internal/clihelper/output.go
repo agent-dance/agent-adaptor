@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/agent-dance/agent-adaptor/internal/processx"
+	"github.com/agent-dance/agent-adaptor/v2/internal/processx"
 )
 
 const outputDrainTimeout = 5 * time.Second
