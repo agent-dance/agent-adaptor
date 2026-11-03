@@ -152,7 +152,7 @@ A task-mode Thread is exclusive. Another Thread.Send fails with ErrThreadBusy ra
 
 ## 7. Approval requests
 
-Call Events early, or install OnApproval for synchronous use. An Ask request arriving before Events was ever called and without a handler immediately uses the timeout fallback and emits a lifecycle notice.
+Call Events early, or install OnApproval for synchronous use. Without a handler, an Ask request arriving before Events waits for the caller to call Events or Result (bounded by its deadline and Cancel); once Result is called first it uses the timeout fallback immediately and emits a lifecycle notice.
 
 ```go
 func decide(ctx context.Context, req *adaptor.ApprovalRequest) error {

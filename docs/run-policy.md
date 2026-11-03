@@ -54,7 +54,7 @@ Questions have no auto-approve mode: a question needs an actual answer. Approval
 
 FallbackAbort terminates the execution with a business error. FallbackContinue forwards the rejection/timeout so the Driver can continue. FallbackRetry creates a fresh request ID and asks again within MaxRetries. If the Driver does not support retry, a NoticeLifecycle with `Data["warning"] == "human_decision_retry_unsupported"` reports degradation to abort.
 
-If an Ask request arrives when Events has never been called and there is no OnApproval handler, core immediately applies the timeout fallback and emits a lifecycle notice. A Result-only caller does not wait for an approval timeout. Call Events early for a UI, install a callback, or select a supported automatic mode.
+Without an OnApproval handler, an Ask request that arrives before the caller has called Events or Result waits for that choice, bounded by the approval deadline and Cancel: Send starts the run before its caller can subscribe, so a request in that window still reaches a later Events reader. Once Result is called without Events, core immediately applies the timeout fallback and emits a lifecycle notice, so a Result-only caller does not wait for an approval timeout. A Standby has no Result; its requests take the fallback at once while Standby.Events has not been called. Call Events early for a UI, install a callback, or select a supported automatic mode.
 
 Standby internally drains its execution streams, but that internal drain does not count as a host approval subscription. Without an external Events subscriber or OnApproval handler, a new Ask request takes the immediate timeout fallback. Configure a handler or a supported automatic policy for unattended operation.
 

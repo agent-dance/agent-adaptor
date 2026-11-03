@@ -627,6 +627,103 @@ func TestApprovalEventFormQuestion(t *testing.T) {
 	}
 }
 
+// askAfter signals asking, then requests one permission decision, so the
+// request reaches the sink before the test goroutine calls Events or Result.
+func askAfter(asking chan<- struct{}) func(context.Context, driver.Request, driver.EventSink) (driver.Response, error) {
+	ask := askOnce(driver.HumanDecisionPermission, nil)
+	return func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+		close(asking)
+		return ask(ctx, req, sink)
+	}
+}
+
+// TestApprovalEventFormLateEventsReceivesRequest: Send starts the run before
+// its caller can call Events. A request issued in that window waits for the
+// consumer instead of taking the "Events never called" timeout fallback.
+func TestApprovalEventFormLateEventsReceivesRequest(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		fake := newFakeDriver()
+		asking := make(chan struct{})
+		fake.runFunc = askAfter(asking)
+		agent := adaptor.New(fake, adaptor.WithPolicy(adaptor.Policy{
+			Approvals: adaptor.ApprovalPolicy{Timeout: time.Hour},
+		}))
+		st := agent.Send(context.Background(), "deploy")
+		<-asking
+		var asked bool
+		for ev := range st.Events() {
+			if n, ok := ev.(adaptor.Notice); ok && strings.Contains(n.Text, "never called") {
+				t.Fatalf("late Events subscriber got the unobserved fallback: %s", n.Text)
+			}
+			if req, ok := ev.(*adaptor.ApprovalRequest); ok {
+				asked = true
+				if err := req.Approve(context.Background()); err != nil {
+					t.Fatalf("Approve: %v", err)
+				}
+			}
+		}
+		res, err := st.Result()
+		if !asked || err != nil || res.Text != "approved-path" {
+			t.Fatalf("asked=%v res=%v err=%v", asked, res, err)
+		}
+	}
+}
+
+// TestApprovalUnobservedRequestFallsBackOnResult: Result before Events
+// settles the consumption form, releasing a waiting request immediately.
+func TestApprovalUnobservedRequestFallsBackOnResult(t *testing.T) {
+	fake := newFakeDriver()
+	asking := make(chan struct{})
+	fake.runFunc = askAfter(asking)
+	agent := adaptor.New(fake, adaptor.WithPolicy(adaptor.Policy{
+		Approvals: adaptor.ApprovalPolicy{Timeout: time.Hour, OnTimeout: adaptor.FallbackContinue},
+	}))
+	st := agent.Send(context.Background(), "deploy")
+	<-asking
+	res, err := st.Result()
+	if err != nil || res.Text != "timeout-continue" {
+		t.Fatalf("res=%v err=%v", res, err)
+	}
+}
+
+// TestApprovalAwaitingConsumerHonorsCancelAndDeadline: a request waiting for
+// the consumption form still ends on Cancel and on its own deadline.
+func TestApprovalAwaitingConsumerHonorsCancelAndDeadline(t *testing.T) {
+	t.Run("cancel", func(t *testing.T) {
+		fake := newFakeDriver()
+		asking := make(chan struct{})
+		fake.runFunc = askAfter(asking)
+		st := adaptor.New(fake, adaptor.WithPolicy(adaptor.Policy{
+			Approvals: adaptor.ApprovalPolicy{Timeout: time.Hour},
+		})).Send(context.Background(), "deploy")
+		<-asking
+		st.Cancel()
+		if _, err := st.Result(); err == nil {
+			t.Fatal("cancelled run succeeded")
+		}
+	})
+	t.Run("deadline", func(t *testing.T) {
+		fake := newFakeDriver()
+		asking := make(chan struct{})
+		answered := make(chan struct{})
+		ask := askAfter(asking)
+		fake.runFunc = func(ctx context.Context, req driver.Request, sink driver.EventSink) (driver.Response, error) {
+			defer close(answered)
+			return ask(ctx, req, sink)
+		}
+		st := adaptor.New(fake, adaptor.WithPolicy(adaptor.Policy{
+			Approvals: adaptor.ApprovalPolicy{Timeout: 20 * time.Millisecond, OnTimeout: adaptor.FallbackContinue},
+		})).Send(context.Background(), "deploy")
+		<-asking
+		// Neither Events nor Result: only the approval deadline can settle it.
+		<-answered
+		res, err := st.Result()
+		if err != nil || res.Text != "timeout-continue" {
+			t.Fatalf("res=%v err=%v", res, err)
+		}
+	})
+}
+
 // TestApprovalEventFormConcurrentDuplicate races two responders on one
 // request: exactly one wins, the loser gets ErrApprovalResolved, and the
 // run outcome matches the winner. Channel-gated, no sleeps.

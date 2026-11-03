@@ -311,6 +311,10 @@ Pi and OpenCode remain outside the supported v2 Driver set.
 - Recorded sessions subscribe to `Stream.Events` before any recorder I/O. A
   Driver that asked for approval while the run boundary was being recorded was
   otherwise resolved by v2's "Events never called" timeout fallback.
+- An approval requested before the caller of `Send` reached `Events` or
+  `Result` waits for that choice instead of taking the "Events never called"
+  timeout fallback at once. Fast Drivers no longer race their own consumer;
+  Result-only callers still fall back immediately.
 - One execution that resumes several provider turns no longer folds a later
   turn into an earlier assistant message with the same provider ID.
 - Codex persistent turns that end without a healthy checkpoint stop the process

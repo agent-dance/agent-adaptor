@@ -269,9 +269,8 @@ bridge-level cancellation and recording failures keep their codes. One execution
 can resume several provider turns whose provider IDs repeat (Claude's
 `thinking-0`, for example); message and tool IDs are therefore scoped by run and
 turn, advanced by each `TurnEnd`. Turn 1 keeps the run-only form of earlier
-recordings. The drain subscribes to `Stream.Events` before any recorder I/O:
-v2 resolves an approval through its timeout fallback when nobody has called
-Events yet.
+recordings. The drain subscribes to `Stream.Events` before any recorder I/O, so an
+early approval is delivered to the host rather than held until Events.
 Source events cannot use any reserved Notice kind: the session cancels/drains
 and records `agui.reserved_notice` instead of accepting a forged boundary/terminal. Between them are the input user turn, source events including
 approvals, and any Result.Text fallback. Stream.Result is the terminal authority.
