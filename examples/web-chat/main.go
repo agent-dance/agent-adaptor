@@ -29,6 +29,7 @@ import (
 	"os"
 
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
 	"github.com/agent-dance/agent-adaptor/v2/bridges/sse"
 	"github.com/agent-dance/agent-adaptor/v2/examples/internal/exampleutil"
 	"github.com/agent-dance/agent-adaptor/v2/memory"
@@ -136,14 +137,9 @@ func main() {
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle("/v1/chat", sse.Handler(ai, sse.Options{
-		Protocol:          sse.AGUI,
-		CORSAllowedOrigin: corsOrigin,
-		// Options are call scope: appended to every Stream the handler starts.
-		Options: []adaptor.CallOption{
-			exampleutil.NonInteractive(agentCfg.Agent, adaptor.ReadOnly),
-		},
-	}))
+	mux.Handle("/v1/chat", newChatHandler(ai, corsOrigin,
+		exampleutil.NonInteractive(agentCfg.Agent, adaptor.ReadOnly),
+	))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -165,4 +161,15 @@ func envOverride(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// newChatHandler keeps supplied history usable after an in-memory checkpoint is
+// lost (for example, when this demo server restarts).
+func newChatHandler(runner adaptor.Runner, corsOrigin string, options ...adaptor.CallOption) http.Handler {
+	return sse.Handler(runner, sse.Options{
+		Protocol:          sse.AGUI,
+		CORSAllowedOrigin: corsOrigin,
+		AGUIInput:         agui.InputOptions{HistoryFallback: true},
+		Options:           options,
+	})
 }

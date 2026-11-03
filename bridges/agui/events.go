@@ -13,7 +13,8 @@ package agui
 // Protocol invariants:
 //   - the output always starts with RUN_STARTED (pre-start events buffer);
 //   - lifecycle START/CONTENT/END markers are idempotent and synthesized
-//     when the producer skipped the opening marker;
+//     when the producer skipped the opening marker; text/reasoning open only
+//     with their first non-empty content, so empty source lifecycles vanish;
 //   - all open lifecycles close before the terminal event;
 //   - when a Driver publishes no assistant text events, a non-empty final
 //     Result.Text is projected once as a complete assistant message before
@@ -31,7 +32,6 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,13 +39,15 @@ import (
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
+	"github.com/agent-dance/agent-adaptor/v2/internal/jsonnumber"
 )
 
 // EventTranslator is the stateful mapper from adaptor.Event to AG-UI
 // events. Create one per run via NewEventTranslator (or let Events do it) so
 // state never leaks between runs.
 type EventTranslator struct {
-	mu sync.Mutex
+	eventClock func() time.Time
+	mu         sync.Mutex
 
 	threadID  string
 	runID     string
@@ -57,12 +59,25 @@ type EventTranslator struct {
 
 	// Active lifecycles for idempotent START / CONTENT / END handling.
 	activeText      map[string]bool
+	textRoles       map[string]adaptor.Role // deferred START role; no wire opener until content
 	activeReason    map[string]bool
 	activeToolStart map[string]bool
-	assistantText   bool // non-empty assistant TEXT_MESSAGE_CONTENT was emitted
+	activeSteps     map[string]bool
+	toolOwners      map[string]string // attribution is fixed by each tool opener
+	assistantText   bool              // non-empty assistant TEXT_MESSAGE_CONTENT was emitted
 	subagents       *subagentTracker
 
-	decisionMode DecisionMode
+	decisionMode      DecisionMode
+	publicIdentity    bool
+	parentRunID       string
+	sdkRunID          string
+	providerThreadID  string
+	threadKey         string
+	diagnostics       []Diagnostic
+	toolContentLimit  int
+	lastAssistant     string
+	projectionHook    ProjectionHook
+	noticePassthrough map[string]bool
 }
 
 // EventTranslatorOption configures an EventTranslator / Events call.
@@ -76,14 +91,19 @@ func WithEventDecisionMode(mode DecisionMode) EventTranslatorOption {
 }
 
 // NewEventTranslator returns a fresh translator with the default
-// DecisionAsToolCall approval mapping.
+// DecisionAsToolCall approval mapping and protocol-only Notice allowlist.
 func NewEventTranslator(opts ...EventTranslatorOption) *EventTranslator {
 	t := &EventTranslator{
-		activeText:      map[string]bool{},
-		activeReason:    map[string]bool{},
-		activeToolStart: map[string]bool{},
-		subagents:       newSubagentTracker(),
-		decisionMode:    DecisionAsToolCall,
+		activeText:        map[string]bool{},
+		textRoles:         map[string]adaptor.Role{},
+		noticePassthrough: map[string]bool{},
+		activeReason:      map[string]bool{},
+		activeToolStart:   map[string]bool{},
+		activeSteps:       map[string]bool{},
+		toolOwners:        map[string]string{},
+		subagents:         newSubagentTracker(),
+		decisionMode:      DecisionAsToolCall,
+		toolContentLimit:  64 << 10,
 	}
 	for _, o := range opts {
 		o(t)
@@ -158,11 +178,14 @@ func EventsContext(ctx context.Context, stream adaptor.Stream, opts ...EventTran
 // Translate maps one adaptor.Event to zero or more AG-UI events. Stateful:
 // it synthesizes missing opening lifecycle markers, buffers pre-RUN_STARTED
 // output and dedupes lifecycle markers. RunFinished only supplies identity;
-// Done projects the authoritative terminal.
-// CloseResult supplies the same terminal for streams without a Done event.
-func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
+// Done projects the authoritative terminal; CloseResult supplies the same
+// terminal for streams without a Done event.
+func (t *EventTranslator) Translate(ev adaptor.Event) (out []aguievents.Event) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// Apply the final projection to every return path while still holding mu.
+	// Named returns keep synthesized and buffered events on the same hook path.
+	defer func() { out = t.project(out) }()
 
 	// Post-terminal suppression (CopilotKit verifyEvents rejects traffic
 	// after RUN_FINISHED / RUN_ERROR).
@@ -175,18 +198,30 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 
 	meta := ev.Meta()
 	if meta.RunID != "" {
-		t.runID = meta.RunID
+		t.sdkRunID = meta.RunID
+		if !t.publicIdentity && !t.runStart {
+			t.runID = meta.RunID
+		}
 	}
-	if t.threadID == "" && meta.ThreadKey != "" {
+	if meta.ThreadKey != "" {
+		t.threadKey = meta.ThreadKey
+	}
+	if meta.Source != nil && meta.Source.ThreadID != "" {
+		t.providerThreadID = meta.Source.ThreadID
+	}
+	if !t.publicIdentity && !t.runStart && t.threadID == "" && meta.ThreadKey != "" {
 		t.threadID = meta.ThreadKey
 	}
 
 	switch e := ev.(type) {
 	case adaptor.RunStarted:
 		if e.ThreadID != "" {
-			t.threadID = e.ThreadID
+			t.providerThreadID = e.ThreadID
+			if !t.publicIdentity && !t.runStart {
+				t.threadID = e.ThreadID
+			}
 		}
-		if meta.RunID == "" && e.RunID != "" {
+		if !t.publicIdentity && !t.runStart && meta.RunID == "" && e.RunID != "" {
 			t.runID = e.RunID
 		}
 		if t.runStart {
@@ -194,8 +229,9 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 		}
 		t.runStart = true
 		out := []aguievents.Event{
-			aguievents.NewRunStartedEvent(t.threadOrDefault(), t.runOrDefault()),
+			t.startedEvent(),
 		}
+		out = append(out, t.warningEvents()...)
 		if len(t.pending) > 0 {
 			out = append(out, t.pending...)
 			t.pending = nil
@@ -206,9 +242,12 @@ func (t *EventTranslator) Translate(ev adaptor.Event) []aguievents.Event {
 		return t.closeResultLocked(e.Result, e.Err)
 	case adaptor.RunFinished:
 		if e.ThreadID != "" {
-			t.threadID = e.ThreadID
+			t.providerThreadID = e.ThreadID
+			if !t.publicIdentity && !t.runStart {
+				t.threadID = e.ThreadID
+			}
 		}
-		if meta.RunID == "" && e.RunID != "" {
+		if !t.publicIdentity && !t.runStart && meta.RunID == "" && e.RunID != "" {
 			t.runID = e.RunID
 		}
 		// Informational only. Done carries the authoritative final result;
@@ -247,9 +286,12 @@ func (t *EventTranslator) CloseRun(err error) []aguievents.Event {
 //
 // Idempotent: once the translator emitted a terminal event, all
 // further CloseRun / CloseResult / Translate calls return nil.
-func (t *EventTranslator) CloseResult(result *adaptor.Result, err error) []aguievents.Event {
+func (t *EventTranslator) CloseResult(result *adaptor.Result, err error) (output []aguievents.Event) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// The named return includes synthesized text and terminal boundaries in
+	// the same final projection as events produced by Translate.
+	defer func() { output = t.project(output) }()
 	return t.closeResultLocked(result, err)
 }
 
@@ -275,7 +317,9 @@ func (t *EventTranslator) closeResultLocked(result *adaptor.Result, err error) [
 	}
 
 	if err == nil {
-		return append(out, aguievents.NewRunFinishedEvent(t.threadOrDefault(), t.runOrDefault()))
+		terminal := aguievents.NewRunFinishedEvent(t.threadOrDefault(), t.runOrDefault())
+		t.boundaryMetadata(terminal)
+		return append(out, terminal)
 	}
 
 	code := "run.error"
@@ -289,10 +333,9 @@ func (t *EventTranslator) closeResultLocked(result *adaptor.Result, err error) [
 		msg = defaultString(runErr.Message, msg)
 	}
 	opts := []aguievents.RunErrorOption{aguievents.WithErrorCode(code)}
-	if t.runID != "" {
-		opts = append(opts, aguievents.WithRunID(t.runID))
-	}
-	return append(out, aguievents.NewRunErrorEvent(msg, opts...))
+	terminal := aguievents.NewRunErrorEvent(msg, opts...)
+	t.boundaryMetadata(terminal)
+	return append(out, terminal)
 }
 
 // fillRunID backfills the run identifier from the authoritative stream when
@@ -300,7 +343,8 @@ func (t *EventTranslator) closeResultLocked(result *adaptor.Result, err error) [
 func (t *EventTranslator) fillRunID(runID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.runID == "" {
+	t.sdkRunID = runID
+	if !t.publicIdentity && t.runID == "" {
 		t.runID = runID
 	}
 }
@@ -319,8 +363,7 @@ func (t *EventTranslator) translateNonTerminalLocked(ev adaptor.Event) []aguieve
 		if e.ID == "" {
 			return nil
 		}
-		content := toolResultContent(e.Result)
-		return []aguievents.Event{aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, content)}
+		return []aguievents.Event{t.toolResultEvent(e.ID, e.Result)}
 	case adaptor.Notice:
 		return t.noticeLocked(e)
 	case adaptor.MessageUpdate:
@@ -348,14 +391,23 @@ func (t *EventTranslator) textDeltaLocked(e adaptor.TextDelta) []aguievents.Even
 	if e.MessageID == "" {
 		return nil
 	}
+	role, declared := t.textRoles[e.MessageID]
+	if !declared {
+		role = e.Role
+	}
+	// TOOL_CALL_START can materialize this declared tool-only assistant by
+	// parentMessageId even when no text lifecycle is ever opened.
+	if role != adaptor.RoleUser && e.Phase != adaptor.PhaseEnd {
+		t.lastAssistant = e.MessageID
+	}
 	switch e.Phase {
 	case adaptor.PhaseStart:
-		if t.activeText[e.MessageID] {
-			return nil
+		if _, seen := t.textRoles[e.MessageID]; !seen && !t.activeText[e.MessageID] {
+			t.textRoles[e.MessageID] = e.Role
 		}
-		t.activeText[e.MessageID] = true
-		return []aguievents.Event{aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOpt(e.Role))}
+		return nil
 	case adaptor.PhaseEnd:
+		delete(t.textRoles, e.MessageID)
 		if !t.activeText[e.MessageID] {
 			return nil
 		}
@@ -365,13 +417,13 @@ func (t *EventTranslator) textDeltaLocked(e adaptor.TextDelta) []aguievents.Even
 		if e.Text == "" {
 			return nil
 		}
-		if e.Role != adaptor.RoleUser && strings.TrimSpace(e.Text) != "" {
+		if role != adaptor.RoleUser && strings.TrimSpace(e.Text) != "" {
 			t.assistantText = true
 		}
 		out := []aguievents.Event{}
 		if !t.activeText[e.MessageID] {
 			t.activeText[e.MessageID] = true
-			out = append(out, aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOpt(e.Role)))
+			out = append(out, aguievents.NewTextMessageStartEvent(e.MessageID, textRoleOpt(role)))
 		}
 		return append(out, aguievents.NewTextMessageContentEvent(e.MessageID, e.Text))
 	}
@@ -397,11 +449,9 @@ func (t *EventTranslator) thinkingLocked(e adaptor.Thinking) []aguievents.Event 
 	}
 	switch e.Phase {
 	case adaptor.PhaseStart:
-		if t.activeReason[e.MessageID] {
-			return nil
-		}
-		t.activeReason[e.MessageID] = true
-		return []aguievents.Event{aguievents.NewReasoningMessageStartEvent(e.MessageID, ReasoningRole)}
+		// START may never receive content (for example Codex hidden reasoning).
+		// Emit the wire opener together with the first non-empty delta.
+		return nil
 	case adaptor.PhaseEnd:
 		if !t.activeReason[e.MessageID] {
 			return nil
@@ -431,7 +481,7 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 			return nil
 		}
 		t.activeToolStart[e.ID] = true
-		out := []aguievents.Event{aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool"))}
+		out := []aguievents.Event{t.toolStartEvent(e.ID, defaultString(e.Name, "tool"))}
 		if e.Args != nil {
 			if encoded, err := json.Marshal(e.Args); err == nil {
 				out = append(out, aguievents.NewToolCallArgsEvent(e.ID, string(encoded)))
@@ -446,12 +496,12 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 			if e.Result == nil {
 				return nil
 			}
-			out = append(out, aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool")))
+			out = append(out, t.toolStartEvent(e.ID, defaultString(e.Name, "tool")))
 		}
 		delete(t.activeToolStart, e.ID)
 		out = append(out, aguievents.NewToolCallEndEvent(e.ID))
 		if e.Result != nil {
-			out = append(out, aguievents.NewToolCallResultEvent(e.ID+":result", e.ID, toolResultContent(e.Result)))
+			out = append(out, t.toolResultEvent(e.ID, e.Result))
 		}
 		return out
 	default: // args delta
@@ -461,7 +511,7 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 		out := []aguievents.Event{}
 		if !t.activeToolStart[e.ID] {
 			t.activeToolStart[e.ID] = true
-			out = append(out, aguievents.NewToolCallStartEvent(e.ID, defaultString(e.Name, "tool")))
+			out = append(out, t.toolStartEvent(e.ID, defaultString(e.Name, "tool")))
 		}
 		return append(out, aguievents.NewToolCallArgsEvent(e.ID, e.ArgsDelta))
 	}
@@ -470,20 +520,39 @@ func (t *EventTranslator) toolCallLocked(e adaptor.ToolCall) []aguievents.Event 
 // noticeLocked projects the Notice space:
 //   - step notices → STEP_STARTED / STEP_FINISHED;
 //   - approval notices → decision tool-call lifecycles (or CUSTOM);
-//   - everything else (lifecycle warnings, runtime, invocation, transcript
-//     items, driver pass-through kinds) → CUSTOM named by the notice kind,
-//     so hosts keep degradation warnings and provider extras visible.
+//   - known protocol warnings → CUSTOM;
+//   - operational/provider notices → nothing, unless explicitly opted in.
+//
+// Raw source records remain available to trusted host audit tooling.
 func (t *EventTranslator) noticeLocked(e adaptor.Notice) []aguievents.Event {
 	switch e.Kind {
 	case adaptor.NoticeStep:
 		phase, _ := e.Data["phase"].(string)
 		switch phase {
 		case "started":
+			if t.activeSteps[e.Text] {
+				return nil
+			}
+			t.activeSteps[e.Text] = true
 			return []aguievents.Event{aguievents.NewStepStartedEvent(e.Text)}
 		case "finished":
-			return []aguievents.Event{aguievents.NewStepFinishedEvent(e.Text)}
+			active, seen := t.activeSteps[e.Text]
+			if seen && !active {
+				return nil
+			}
+			var out []aguievents.Event
+			if !seen {
+				out = append(out, aguievents.NewStepStartedEvent(e.Text))
+			}
+			// Retain a closed entry to distinguish duplicate ends from
+			// an end-only step that needs a synthesized opener.
+			t.activeSteps[e.Text] = false
+			return append(out, aguievents.NewStepFinishedEvent(e.Text))
 		}
-		return []aguievents.Event{customEvent(e.Kind, noticeValue(e))}
+		if t.noticePassthrough[e.Kind] {
+			return []aguievents.Event{customEvent(e.Kind, noticeValue(e))}
+		}
+		return nil
 
 	case adaptor.NoticeApprovalRequested:
 		if t.decisionMode == DecisionAsCustom {
@@ -497,7 +566,11 @@ func (t *EventTranslator) noticeLocked(e adaptor.Notice) []aguievents.Event {
 		}
 		return t.approvalNoticeResolvedLocked(e)
 	}
-	return []aguievents.Event{customEvent(defaultString(e.Kind, "codex.event"), noticeValue(e))}
+	if e.Kind == adaptor.NoticeLifecycle && e.Data["warning"] == "human_decision_retry_unsupported" ||
+		e.Kind == "agentAdaptor.input.warning" || e.Kind == "stream.dropped" || t.noticePassthrough[e.Kind] {
+		return []aguievents.Event{customEvent(defaultString(e.Kind, "notice"), noticeValue(e))}
+	}
+	return nil
 }
 
 // approvalRequestLocked projects a live *ApprovalRequest event (form B
@@ -533,7 +606,7 @@ func (t *EventTranslator) approvalRequestLocked(req *adaptor.ApprovalRequest) []
 	}
 	t.activeToolStart[toolCallID] = true
 	return []aguievents.Event{
-		aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(string(req.Kind), req.Source)),
+		t.toolStartEvent(toolCallID, hitlToolName(string(req.Kind), req.Source)),
 		aguievents.NewToolCallArgsEvent(toolCallID, string(body)),
 	}
 }
@@ -566,7 +639,7 @@ func (t *EventTranslator) approvalNoticeRequestedLocked(e adaptor.Notice) []agui
 	}
 	t.activeToolStart[toolCallID] = true
 	return []aguievents.Event{
-		aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(kind, source)),
+		t.toolStartEvent(toolCallID, hitlToolName(kind, source)),
 		aguievents.NewToolCallArgsEvent(toolCallID, string(body)),
 	}
 }
@@ -577,25 +650,25 @@ func (t *EventTranslator) approvalNoticeResolvedLocked(e adaptor.Notice) []aguie
 		return nil
 	}
 	toolCallID := decisionToolPrefix + requestID
-	tail := hitlResolvedTail(toolCallID, e.Data)
+	tail := t.hitlResolvedTail(toolCallID, e.Data)
 	if !t.activeToolStart[toolCallID] {
 		// Out-of-order resolved — synthesize a start so the AG-UI stream
 		// stays well-formed.
 		kind, _ := e.Data["kind"].(string)
 		source, _ := e.Data["source"].(string)
-		start := aguievents.NewToolCallStartEvent(toolCallID, hitlToolName(kind, source))
+		start := t.toolStartEvent(toolCallID, hitlToolName(kind, source))
 		return append([]aguievents.Event{start}, tail...)
 	}
 	delete(t.activeToolStart, toolCallID)
 	return tail
 }
 
-func hitlResolvedTail(toolCallID string, data map[string]any) []aguievents.Event {
+func (t *EventTranslator) hitlResolvedTail(toolCallID string, data map[string]any) []aguievents.Event {
 	result, _ := data["result"].(string)
 	choice, _ := data["choice"].(string)
 	var latencyMs int64
-	if d, ok := data["latency"].(time.Duration); ok {
-		latencyMs = d.Milliseconds()
+	if ns, ok := jsonnumber.Int64(data["latency"]); ok {
+		latencyMs = time.Duration(ns).Milliseconds()
 	}
 	payload := map[string]any{
 		"result": result,
@@ -612,7 +685,7 @@ func hitlResolvedTail(toolCallID string, data map[string]any) []aguievents.Event
 	}
 	return []aguievents.Event{
 		aguievents.NewToolCallEndEvent(toolCallID),
-		aguievents.NewToolCallResultEvent(toolCallID+":result", toolCallID, string(body)),
+		t.toolResultEvent(toolCallID, map[string]any{"content": string(body), "status": result}),
 	}
 }
 
@@ -640,8 +713,9 @@ func (t *EventTranslator) ensureRunStartedLocked() []aguievents.Event {
 	}
 	t.runStart = true
 	out := []aguievents.Event{
-		aguievents.NewRunStartedEvent(t.threadOrDefault(), t.runOrDefault()),
+		t.startedEvent(),
 	}
+	out = append(out, t.warningEvents()...)
 	if len(t.pending) > 0 {
 		out = append(out, t.pending...)
 		t.pending = nil
@@ -655,6 +729,7 @@ func (t *EventTranslator) closeAllOpenLifecyclesLocked() []aguievents.Event {
 		out = append(out, aguievents.NewTextMessageEndEvent(id))
 	}
 	t.activeText = map[string]bool{}
+	t.textRoles = map[string]adaptor.Role{}
 	for _, id := range sortedActiveIDs(t.activeReason) {
 		out = append(out, aguievents.NewReasoningMessageEndEvent(id))
 	}
@@ -663,13 +738,19 @@ func (t *EventTranslator) closeAllOpenLifecyclesLocked() []aguievents.Event {
 		out = append(out, aguievents.NewToolCallEndEvent(id))
 	}
 	t.activeToolStart = map[string]bool{}
+	for _, name := range sortedActiveIDs(t.activeSteps) {
+		out = append(out, aguievents.NewStepFinishedEvent(name))
+	}
+	t.activeSteps = map[string]bool{}
 	return out
 }
 
 func sortedActiveIDs(active map[string]bool) []string {
 	ids := make([]string, 0, len(active))
-	for id := range active {
-		ids = append(ids, id)
+	for id, open := range active {
+		if open {
+			ids = append(ids, id)
+		}
 	}
 	sort.Strings(ids)
 	return ids
@@ -681,33 +762,6 @@ func textRoleOpt(r adaptor.Role) aguievents.TextMessageStartOption {
 		return aguievents.WithRole("user")
 	}
 	return aguievents.WithRole("assistant")
-}
-
-// toolResultContent inlines common tool-result payload shapes using a
-// stable preference order.
-func toolResultContent(result map[string]any) string {
-	if result == nil {
-		return "{}"
-	}
-	if text, ok := result["text"].(string); ok && text != "" {
-		return text
-	}
-	if content, ok := result["content"].(string); ok && content != "" {
-		return content
-	}
-	if out, ok := result["output"].(string); ok && out != "" {
-		if exit, ok := result["exitCode"].(int); ok {
-			return out + "\n[exit=" + strconv.Itoa(exit) + "]"
-		}
-		return out
-	}
-	if status, ok := result["status"].(string); ok && status != "" {
-		return status
-	}
-	if raw, err := json.Marshal(result); err == nil && len(raw) > 0 && string(raw) != "{}" {
-		return string(raw)
-	}
-	return "{}"
 }
 
 func droppedValue(e adaptor.Dropped) map[string]any {
@@ -774,17 +828,6 @@ func turnResultValue(result *adaptor.Result) *adaptor.Result {
 }
 
 func intFromAny(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int32:
-		return int(n)
-	case int64:
-		return int(n)
-	case uint64:
-		return int(n)
-	case float64:
-		return int(n)
-	}
-	return 0
+	n, _ := jsonnumber.Int(v)
+	return n
 }

@@ -22,6 +22,11 @@ All notable changes to this project are documented in this file.
   history with checkpoint state under validated leases.
 - Stream and Standby expose Cancel, with no Close. Agent.Close remains the
   idempotent owner-level process and Tool runtime cleanup operation.
+- assistant-ui is the only web front-end example. The CopilotKit
+  (`examples/web-chat/copilotkit`) and plain `@ag-ui/client`
+  (`examples/web-chat/aguiclient`) examples are removed; their in-run input,
+  approval and history capabilities are in `examples/web-chat/assistant-ui`, and
+  the team showcase's one-command web mode starts that page.
 
 ### Core and results
 
@@ -193,8 +198,8 @@ Pi and OpenCode remain outside the supported v2 Driver set.
 - Keep team Standby contexts scoped to admission and drain reliable events on
   shutdown. AG-UI Activity restores member display names, worker text and
   validated structured attachments, excluding raw and private runtime data.
-- Add AG-UI RunRegistry routing and a CopilotKit running-message input using
-  the existing event stream for delivery receipts. Record safe Done fields by
+- Add AG-UI RunRegistry routing for running-message input, using the existing
+  event stream for delivery receipts. Record safe Done fields by
   default; sessionrecorder.WithExposure explicitly enables diagnostic layers.
 - Add adaptertest MSG-01–MSG-10 and transport fixtures for all four built-in
   Drivers. Stabilize event-loop and store-expiry tests across race instrumentation
@@ -203,6 +208,113 @@ Pi and OpenCode remain outside the supported v2 Driver set.
   Synchronize v2 guides and all README languages.
 - Use Go 1.26.10 for security fixes and upgrade the example frontend dependencies
   without lowering production audit thresholds.
+
+### Added
+
+- Optional `bridges/agui/aguisession` recorded execution with one Stream drain,
+  durable typed source recording, ordered AG-UI events and materialized Message[]
+  history, plus cursor-bounded snapshots for completed history and active runs.
+- Opt-in unattended sessions with bounded concurrency, host-owned lifetime,
+  shutdown, catch-up/follow observation, cancellation and observer revocation.
+  Recorder subscriptions and coordinated-backend contracts support atomic
+  sequence allocation and notifications after durable commit.
+- A direct assistant-ui example with persistent Thread checkpoints and JSONL
+  history, deterministic fake mode (13 commands, one failure), opt-in real CLI
+  profiles, reload/observation/cancel UI, and official-client integration tests.
+- AG-UI 1.0 validation and conformance fixtures, structured transport errors,
+  input diagnostics, context projection, history fallback, configurable tool
+  result limits, and deterministic redaction/extension hooks.
+- `aguisession.Session.Supplement` and `MessageHandler` route in-run user input
+  to the active run's `Stream.Send` (authorized as `OpMessage`). The run's sole
+  drain records accepted input as a user message before `Done` and the terminal,
+  identically live and in history; rejected input creates no history and a
+  recording failure after admission is explicit. A new run POSTed during an
+  active run is still rejected with 409 `agui.run_active`.
+- The assistant-ui example adds in-run guidance with `message.update` receipts,
+  human approval decisions through host-owned `/decision/pending` and
+  `/decision/resolve`, and team subagent activity cards. The team showcase web
+  mode serves the same recorded-session endpoints.
+
+### Changed
+
+- Run boundaries echo public request identities and advertise protocol 1.0;
+  observed SDK/provider identities use namespaced metadata. Versioned requests
+  require public IDs, while legacy requests retain identity-only leniency.
+- Execution requires a trailing user message and rejects interrupt resume.
+  Prior history needs a usable checkpoint or explicit text rehydration. Hosts
+  receiving complete client history must inject a ThreadStore or enable
+  `sse.Options.AGUIInput.HistoryFallback`; otherwise later turns return
+  `agui.history_unrecoverable`. Bundled stateless examples enable fallback.
+- History verification compares required message IDs/roles in order, excluding
+  activities and optional reasoning. Text/reasoning lifecycles open only on
+  non-empty content, accommodating assistant-ui reloads with thinking on or off.
+- Notice projection uses a protocol allowlist for security: invocation/runtime/
+  transcript/provider data can expose local paths, environment names and provider
+  internals. Exact additional kinds require `WithNoticePassthrough`; protocol
+  warnings, steps, approvals, drops and subagent activity remain supported.
+- The assistant-ui real-driver example explicitly binds the operator CLI profile
+  (HOME and Codex CODEX_HOME) for existing login/custom-provider configuration.
+  Driver defaults are unchanged; changing bindings requires a compatible Thread.
+- The assistant-ui example pins `@ag-ui/client` 1.0.3. Session projection
+  format `agui-session/3` adds recorded supplements and scopes provider IDs by
+  run and, from the second provider turn of one execution, by turn; `/2`
+  recordings remain readable and older formats require migration. Recorded
+  `Done` is informational: the terminal Notice stays the sole outcome.
+  Recorder-key encoding remains version 1.
+
+### Fixed
+
+- Codex app-server and batch output collection join process exit and both raw readers
+  before returning a stopped process's stdout/stderr. Reaping no longer closes
+  unread output pipes; malformed protocol tails remain available in Raw, and
+  process exit independently wakes app-server turns and starts a five-second
+  drain bound even without cancellation or EOF from inherited writers on any OS.
+  Healthy persistent turns retain their live writer and return the bytes observed
+  during the turn.
+- App-server and batch pipe cleanup closes each owning file once, including
+  stdin on start failure and persistent shutdown. Closure regressions check
+  `os.ErrClosed` through `Read` on Windows and Unix; Windows `Stat` does not
+  check the file's closed state.
+- Codex one-shot/persistent app-server and batch execution classify cancellation
+  as cancelled rather than agent failure, including explicit process shutdown.
+  They retain available raw output and never persist a cancelled checkpoint.
+  Session-initiated cancellation
+  records `run.cancelled` even when a Driver reports an error from the killed
+  process; independent failures keep their codes and diagnostics remain available.
+- Recorded execution fails closed on storage errors and forged control Notices.
+  Duplicate/active runs and diverged or unrecoverable histories are rejected;
+  failed/incomplete turns cannot be attested by an older healthy checkpoint.
+- Snapshot/observation reads pair committed storage with stable admission state,
+  preserve suffixes across runs, and avoid false incomplete-run outcomes. Follow
+  retains its projector and reads only new records after catch-up.
+- Cancellation reaches pending admission; cleanup and SSE writes are bounded,
+  write/flush failures cancel request-scoped runs, shutdown can be retried, and
+  revocation detaches observers. Recorder Close releases subscriptions and rejects
+  further operations. Fixed Thread execution/read/cancel use the actual host key.
+- Live/history output preserves Result.Text fallback, tool failure/exit status,
+  provider-neutral parent/subagent attribution, activity updates and opaque
+  metadata. Tool output truncation respects UTF-8 and retains integral exit codes.
+- Unknown identity metadata is omitted; event queries encode empty lists as [].
+  The assistant-ui page suppresses unknown data blocks, uses mode-appropriate copy,
+  and displays cancelled status live and after reload.
+- Preserve recorded approval retry attempts and latency in AG-UI live/history
+  projections. Share exact integer conversion with A2A approval/drop consumers,
+  preserve decoded A2A payload numbers, and accept JSON numbers in task metadata.
+- Reject colliding submitted AG-UI message IDs before recording or execution
+  with HTTP 409 `agui.duplicate_message`, preserving idempotent history seeds.
+- Preserve opaque JSON numbers through typed recorder payloads, live/replayed
+  events and Message[]; reject fractional exit-code coercion after persistence.
+- Enforce the frozen non-null `state` constraint on versioned and legacy input.
+- Make assistant-ui checkpoint directory durability platform-aware on Windows;
+  add scoped authenticated restart and visible activity parity fixtures, and
+  enforce the example's build, Node suite and input fuzz target in CI.
+- Recorded sessions subscribe to `Stream.Events` before any recorder I/O. A
+  Driver that asked for approval while the run boundary was being recorded was
+  otherwise resolved by v2's "Events never called" timeout fallback.
+- One execution that resumes several provider turns no longer folds a later
+  turn into an earlier assistant message with the same provider ID.
+- Codex persistent turns that end without a healthy checkpoint stop the process
+  and join its readers before capturing Raw streams.
 
 ## [1.1.2] - 2026-08-07
 

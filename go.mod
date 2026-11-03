@@ -6,7 +6,7 @@ toolchain go1.26.10
 
 require (
 	github.com/a2aproject/a2a-go/v2 v2.3.1
-	github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20260420210844-ad3c22477b34
+	github.com/ag-ui-protocol/ag-ui/sdks/community/go v0.0.0-20261030214150-b2f4a1c1ea63
 	github.com/cucumber/godog v0.15.1
 	github.com/invopop/jsonschema v0.14.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0

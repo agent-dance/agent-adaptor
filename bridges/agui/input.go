@@ -1,30 +1,7 @@
-// Inbound AG-UI contract.
-//
-// The types and helpers in this file let sse.Handler accept the
-// canonical AG-UI HTTP request shape (RunAgentInput) without the host
-// having to write a decoder.
-//
-// The Driver-facing projection is deliberately narrow:
-//
-//   - prompt extraction: latest role=user message, text content only
-//   - thread binding: threadId is encoded as a collision-free bridge key
-//
-// The Driver-facing projection does not interpret:
-//
-//   - image / audio / file / document content parts
-//   - tools[] (frontend tool declarations)
-//   - assistant tool_calls + role=tool results
-//   - state, context, forwardedProps
-//
-// The JSON decoder preserves these fields without rejecting protocol
-// extensions, while prompt and thread helpers consume only the documented
-// text projection.
-
 package agui
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,11 +23,22 @@ const maxHTTPRequestBytes int64 = 4 << 20
 // agent. See https://docs.ag-ui.com/sdk/js/core/types#runagentinput for
 // the authoritative TypeScript definition.
 //
-// Only the fields agent-adaptor currently consumes are typed. Every
-// other field is captured as json.RawMessage so protocol extensions pass
-// through untouched — the bridge promises to round-trip unknown payload
-// slices rather than reject or lose them.
+// Known members are validated against AG-UI 1.0. Unknown members are
+// retained in UnknownMembers by JSON Pointer and stripped from execution.
 type RunAgentInput struct {
+	// ProtocolVersion declares the client protocol version when present.
+	ProtocolVersion string `json:"protocolVersion,omitempty"`
+	// ParentRunID identifies the run that spawned this request.
+	ParentRunID string `json:"parentRunId,omitempty"`
+	// Resume contains interrupt answers; non-empty input is rejected for execution.
+	Resume []ResumeEntry `json:"resume,omitempty"`
+	// UnknownMembers retains stripped members by their original JSON Pointer.
+	UnknownMembers map[string]json.RawMessage `json:"-"`
+	// Diagnostics contains request-wide validation warnings.
+	Diagnostics []Diagnostic `json:"-"`
+	// partDiagnostics retains original part paths before unsupported parts are removed.
+	partDiagnostics []Diagnostic
+
 	// ThreadID identifies the conversation thread. The bridge encodes the
 	// AG-UI identity into one collision-free adaptor Thread key.
 	ThreadID string `json:"threadId"`
@@ -59,30 +47,45 @@ type RunAgentInput struct {
 	// remains independent from the adaptor Stream RunID.
 	RunID string `json:"runId"`
 
-	// Messages is the ordered chat history. The latest user-role entry
-	// becomes the adapter prompt; earlier messages are ignored because
-	// adapters carry their own transcript via the session store.
+	// Messages is the complete ordered history. PrepareInput enforces trailing
+	// user selection and an explicit checkpoint/history-fallback policy.
 	Messages []Message `json:"messages"`
 
 	// State preserves AG-UI state without interpreting it.
 	State json.RawMessage `json:"state,omitempty"`
-	// Tools preserves frontend tool declarations without interpreting them.
-	Tools []json.RawMessage `json:"tools,omitempty"`
-	// Context preserves AG-UI context entries without interpreting them.
-	Context []json.RawMessage `json:"context,omitempty"`
+	// Tools contains validated frontend declarations; execution strips them with a warning.
+	Tools []Tool `json:"tools,omitempty"`
+	// Context contains ambient entries appended deterministically by PrepareInput.
+	Context []Context `json:"context,omitempty"`
 	// ForwardedProps preserves application-defined forwarded properties.
 	ForwardedProps json.RawMessage `json:"forwardedProps,omitempty"`
 }
 
 // Message is one entry in RunAgentInput.Messages. Content is kept raw
 // because the AG-UI spec allows either a plain string or a
-// polymorphic parts array, and we decode the two shapes lazily.
+// polymorphic parts array (or an object for activity messages). Known variants
+// are schema-validated at the HTTP boundary.
 type Message struct {
+	// ToolCalls contains historical function invocations made by an assistant.
+	ToolCalls []ToolCall `json:"toolCalls,omitempty"`
+	// ToolCallID identifies the invocation answered by a tool message.
+	ToolCallID string `json:"toolCallId,omitempty"`
+	// Error describes a tool failure alongside any partial content.
+	Error string `json:"error,omitempty"`
+	// EncryptedValue preserves an opaque provider artefact.
+	EncryptedValue string `json:"encryptedValue,omitempty"`
+	// ActivityType identifies the kind of an activity message.
+	ActivityType string `json:"activityType,omitempty"`
+	// SubagentRunID attributes the message to a delegated invocation.
+	SubagentRunID string `json:"subagentRunId,omitempty"`
+	// Metadata carries application-defined message information. DecodeHTTPRequest
+	// preserves JSON numbers as json.Number, including values outside float64 range.
+	Metadata map[string]any `json:"metadata,omitempty"`
 	// ID is the client-supplied message identifier.
 	ID string `json:"id"`
 	// Role identifies the message author.
 	Role string `json:"role"`
-	// Content preserves the AG-UI string or polymorphic parts payload.
+	// Content preserves an AG-UI string, parts array, or activity object.
 	Content json.RawMessage `json:"content"`
 	// Name optionally identifies the message author or tool.
 	Name string `json:"name,omitempty"`
@@ -90,16 +93,16 @@ type Message struct {
 
 // DecodeHTTPRequest parses an incoming AG-UI HTTP POST body into a
 // RunAgentInput. It fails when the body cannot be read or is not valid
-// JSON. Bodies are limited to 4 MiB; an oversized body returns an error that
+// JSON or a known member violates the AG-UI 1.0 schema. Bodies are limited
+// to 4 MiB; an oversized body returns an error that
 // wraps *http.MaxBytesError so an HTTP adapter can return status 413. It does
-// not validate semantic constraints (presence of messages, role values, etc.)
-// — those are the caller's responsibility.
+// validate schema constraints; PrepareInput additionally checks execution policy.
 //
 // The request body is closed before returning so the caller does not
 // have to.
 func DecodeHTTPRequest(r *http.Request) (*RunAgentInput, error) {
 	if r == nil || r.Body == nil {
-		return nil, errors.New("agui: nil http.Request")
+		return nil, inputError("agui.invalid_input", "", "nil http.Request")
 	}
 	limited := http.MaxBytesReader(nil, r.Body, maxHTTPRequestBytes)
 	defer limited.Close()
@@ -108,24 +111,19 @@ func DecodeHTTPRequest(r *http.Request) (*RunAgentInput, error) {
 		return nil, fmt.Errorf("agui: read body: %w", err)
 	}
 	if len(body) == 0 {
-		return nil, errors.New("agui: empty request body")
+		return nil, inputError("agui.invalid_json", "", "empty request body")
 	}
 	var input RunAgentInput
-	if err := json.Unmarshal(body, &input); err != nil {
+	if err := decodeInput(body, &input); err != nil {
 		return nil, fmt.Errorf("agui: decode RunAgentInput: %w", err)
 	}
 	return &input, nil
 }
 
-// LastUserText returns the flattened text of the most recent message
-// whose role is "user". It returns an empty string if no such message
-// exists or its content is structurally empty.
+// LastUserText returns the latest non-empty user text, scanning older messages.
 //
-// This is the single Driver-facing entrypoint for extracting the
-// prompt from an AG-UI input: AG-UI clients (including CopilotKit) send
-// the full chat history on every turn, but agent-adaptor's session
-// store already carries the transcript inside the adapter, so only the
-// newest user turn becomes the prompt.
+// Deprecated: use PrepareInput for execution; this historical helper does not
+// enforce trailing-user or prior-history policy and must not select a prompt.
 func (in *RunAgentInput) LastUserText() string {
 	if in == nil {
 		return ""

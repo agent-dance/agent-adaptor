@@ -83,7 +83,8 @@ func (r EventRecord) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// UnmarshalJSON restores the typed event from the envelope.
+// UnmarshalJSON restores the typed event from the stable envelope. Numbers in
+// opaque event payloads decode as json.Number, preserving their exact JSON value.
 func (r *EventRecord) UnmarshalJSON(data []byte) error {
 	var wire eventRecordWire
 	if err := json.Unmarshal(data, &wire); err != nil {
@@ -143,7 +144,8 @@ func (wire eventMetaWire) eventMeta() adaptor.EventMeta {
 }
 
 // EventRecorder is the host-facing typed Event recording API.
-// Implementations MUST be safe for concurrent use.
+// Implementations MUST be safe for concurrent use. Close releases subscriptions
+// as well as storage; operations begun after Close must fail.
 type EventRecorder interface {
 	// Record appends an event under sessionKey and returns the record
 	// with the HostSeq it was assigned. HostSeq values strictly increase
@@ -214,7 +216,9 @@ func NewEventRecorder(backend EventBackend, opts ...EventOption) EventRecorder {
 	if backend == nil {
 		panic("sessionrecorder: NewEventRecorder requires a non-nil EventBackend")
 	}
+	followCtx, stopFollow := context.WithCancel(context.Background())
 	r := &eventRecorder{
+		followCtx: followCtx, stopFollow: stopFollow,
 		backend:  backend,
 		clock:    defaultClock,
 		validate: DefaultKeyValidator,
@@ -229,10 +233,13 @@ func NewEventRecorder(backend EventBackend, opts ...EventOption) EventRecorder {
 }
 
 type eventRecorder struct {
-	backend  EventBackend
-	clock    func() time.Time
-	validate KeyValidator
-	exposure ExposurePolicy
+	notifications notifications
+	followCtx     context.Context
+	stopFollow    context.CancelFunc
+	backend       EventBackend
+	clock         func() time.Time
+	validate      KeyValidator
+	exposure      ExposurePolicy
 
 	mu       sync.Mutex
 	sessions map[string]*eventSessionState
@@ -252,8 +259,14 @@ type eventSessionState struct {
 }
 
 func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adaptor.Event) (EventRecord, error) {
+	if err := r.checkOpen(ctx); err != nil {
+		return EventRecord{}, err
+	}
 	if err := r.checkKey(sessionKey); err != nil {
 		return EventRecord{}, err
+	}
+	if backend, ok := r.backend.(CoordinatedEventBackend); ok {
+		return backend.AppendNext(ctx, sessionKey, EventRecord{RecordedAt: r.clock(), Event: ev})
 	}
 	st, err := r.loadedSession(ctx, sessionKey)
 	if err != nil {
@@ -278,12 +291,29 @@ func (r *eventRecorder) Record(ctx context.Context, sessionKey string, ev adapto
 	st.lastSeq = next
 	st.history = append(st.history, rec)
 	st.updatedAt = rec.RecordedAt
+	r.notifications.notify(sessionKey)
 	return rec, nil
 }
 
 func (r *eventRecorder) Since(ctx context.Context, sessionKey string, afterHostSeq HostSeq) ([]EventRecord, error) {
+	if err := r.checkOpen(ctx); err != nil {
+		return nil, err
+	}
 	if err := r.checkKey(sessionKey); err != nil {
 		return nil, err
+	}
+	if backend, ok := r.backend.(CoordinatedEventBackend); ok {
+		records, err := backend.Load(ctx, sessionKey)
+		if err != nil {
+			return nil, err
+		}
+		out := []EventRecord{}
+		for _, rec := range records {
+			if rec.HostSeq > afterHostSeq {
+				out = append(out, rec)
+			}
+		}
+		return out, nil
 	}
 	st, err := r.loadedSession(ctx, sessionKey)
 	if err != nil {
@@ -307,6 +337,9 @@ func (r *eventRecorder) Since(ctx context.Context, sessionKey string, afterHostS
 }
 
 func (r *eventRecorder) Sessions(ctx context.Context) ([]SessionInfo, error) {
+	if err := r.checkOpen(ctx); err != nil {
+		return nil, err
+	}
 	list, err := r.backend.Sessions(ctx)
 	if err != nil {
 		return nil, err
@@ -341,9 +374,25 @@ func (r *eventRecorder) Close() error {
 		r.mu.Lock()
 		r.closed = true
 		r.mu.Unlock()
+		r.stopFollow()
 		r.closeErr = r.backend.Close()
 	})
 	return r.closeErr
+}
+
+// checkOpen also covers coordinated paths, which do not use loadedSession.
+// Operations admitted before Close may finish; subsequent calls fail closed.
+func (r *eventRecorder) checkOpen(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return errors.New("sessionrecorder: recorder closed")
+	}
+	return nil
 }
 
 func (r *eventRecorder) checkKey(sessionKey string) error {
@@ -521,7 +570,9 @@ func decodeEvent(kind string, payload json.RawMessage) (adaptor.Event, error) {
 		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 			return fmt.Errorf("sessionrecorder: %s record has no event payload", kind)
 		}
-		return json.Unmarshal(trimmed, v)
+		decoder := json.NewDecoder(bytes.NewReader(trimmed))
+		decoder.UseNumber()
+		return decoder.Decode(v)
 	}
 	switch kind {
 	case eventKindDone, eventKindTurnEnd:

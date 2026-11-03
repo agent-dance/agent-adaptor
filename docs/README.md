@@ -10,6 +10,7 @@ Start with the integration documents below. Design and implementation records ex
 |---|---|
 | [English README](../README.md) | Overview, quick start, messages, Standby, packages, examples, and v1 → v2 migration. |
 | [API reference](./api-reference.md) | Root API, Send/Stream/Standby/ThreadRunner, option scopes, events, results, approvals, errors, and extension hooks. |
+| [AG-UI bridge](./agui.md) | AG-UI 1.0 input support, public identity, diagnostics, history policy, recorded sessions, in-run supplements, tool metadata and the [direct assistant-ui example](../examples/web-chat/assistant-ui). |
 | [Streaming guide](./streaming.md) | Events/Done, backpressure, message delivery and Driver matrix, Cursor relay, Standby, AG-UI, and SSE. |
 | [Run policy](./run-policy.md) | Sandbox/features, Policy.Messages, approval modes, immediate fallback, timeout, rejection, and retry. |
 | [Structured output](./structured-output.md) | RunAs, Send with a schema, automatic native/prompt negotiation, validation, and Decode. |

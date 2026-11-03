@@ -527,11 +527,16 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		Observe: parser.onChunk,
 	}, sink)
 	if err != nil {
-		return driver.Response{}, err
+		if ctx.Err() == nil {
+			return driver.Response{}, err
+		}
+		// Interrupted stdin/stdout can surface an I/O error during a kill.
+		// Retain the available process result and the caller cancellation.
+		err = ctx.Err()
 	}
 	parser.finalize()
 	raw := driver.RawStreams{Stdout: result.RawStreams.Stdout, Stderr: result.RawStreams.Stderr, Terminal: parser.terminal}
-	if req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" &&
+	if ctx.Err() == nil && req.Session != nil && req.Session.State != nil && req.Session.State.ResumeID != "" &&
 		result.ExitCode != 0 && isCodexUnknownSessionError(raw.Stdout, raw.Stderr) {
 		reason := parser.errorMessage
 		if strings.TrimSpace(reason) == "" {
@@ -546,7 +551,13 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 	cleanProcess := result.ExitCode == 0 && result.Signal == "" && !result.TimedOut
 	expectedResumeID := codexExpectedResumeID(req.Session)
 	var failure *driver.RunFailure
-	if strings.TrimSpace(parser.errorMessage) != "" {
+	if cancellation := ctx.Err(); cancellation != nil {
+		message := parser.errorMessage
+		if strings.TrimSpace(message) == "" {
+			message = cancellation.Error()
+		}
+		failure = &driver.RunFailure{Code: driver.FailureCancelled, Message: message}
+	} else if strings.TrimSpace(parser.errorMessage) != "" {
 		failure = &driver.RunFailure{
 			Code:    driver.FailureAgentError,
 			Message: parser.errorMessage,
@@ -610,7 +621,7 @@ func (a adapter) Run(ctx context.Context, req driver.Request, sink driver.EventS
 		prewarm.outputSchema = nil
 		_ = writer.preWarm(prewarm, sink)
 	}
-	return driverResult, nil
+	return driverResult, err
 }
 
 // usesCodexAppServer selects the provider transport from invocation semantics.

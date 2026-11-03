@@ -1,0 +1,85 @@
+[
+  {
+    "id": "codex-message-1",
+    "role": "user",
+    "content": "Sanitized user turn 1."
+  },
+  {
+    "id": "codex-message-2",
+    "role": "assistant",
+    "content": "Sanitized Codex reply 2.",
+    "toolCalls": [
+      {
+        "id": "codex-tool-1",
+        "type": "function",
+        "function": {
+          "name": "shell",
+          "arguments": "{\"command\":\"printf demo\"}"
+        }
+      },
+      {
+        "id": "codex-tool-2",
+        "type": "function",
+        "function": {
+          "name": "shell",
+          "arguments": "{\"command\":\"printf demo\"}"
+        }
+      }
+    ]
+  },
+  {
+    "id": "codex-message-3",
+    "role": "tool",
+    "toolCallId": "codex-tool-1",
+    "content": "sanitized command succeeded\n[exit=0]",
+    "metadata": {
+      "agentAdaptor": {
+        "exitCode": 0,
+        "status": "succeeded"
+      }
+    }
+  },
+  {
+    "id": "codex-message-4",
+    "role": "tool",
+    "toolCallId": "codex-tool-2",
+    "content": "sanitized command failed\n[exit=1]",
+    "error": "exit status 1",
+    "metadata": {
+      "agentAdaptor": {
+        "exitCode": 1,
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "id": "codex-message-5",
+    "role": "assistant",
+    "content": "Sanitized Codex reply 5."
+  },
+  {
+    "id": "codex-message-6",
+    "role": "user",
+    "content": "Sanitized user turn 6."
+  },
+  {
+    "id": "codex-message-7",
+    "role": "assistant",
+    "content": "Sanitized Codex reply 7."
+  },
+  {
+    "id": "codex-message-8",
+    "role": "user",
+    "content": "Sanitized user turn 8."
+  },
+  {
+    "id": "codex-message-9",
+    "role": "reasoning",
+    "content": ""
+  },
+  {
+    "id": "codex-message-10",
+    "role": "assistant",
+    "content": "Sanitized Codex reply 10."
+  }
+]

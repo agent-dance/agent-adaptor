@@ -1,0 +1,3994 @@
+[
+  {
+    "name": "tools-1",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "go",
+                  "type": "text"
+                }
+              ],
+              "id": "u1",
+              "metadata": {
+                "userTag": true
+              },
+              "name": "human",
+              "role": "user"
+            }
+          ],
+          "runId": "r1",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r1",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r110:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "reasoning",
+        "timestamp": 1700000000000,
+        "type": "REASONING_MESSAGE_START"
+      },
+      {
+        "delta": "thinking",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r110:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "REASONING_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer 1",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "activityType": "subagent",
+        "content": {
+          "agentKey": "helper",
+          "agentName": "helper",
+          "kind": "delegated",
+          "startedAt": "2023-11-14T22:13:20Z",
+          "status": "started",
+          "subagentId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+          "toolCalls": [],
+          "updatedAt": "2023-11-14T22:13:20Z"
+        },
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "replace": true,
+        "timestamp": 1700000000000,
+        "type": "ACTIVITY_SNAPSHOT"
+      },
+      {
+        "activityType": "subagent",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "patch": [
+          {
+            "op": "add",
+            "path": "/toolCalls",
+            "value": [
+              {
+                "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+                "name": "shell",
+                "status": "running"
+              }
+            ]
+          },
+          {
+            "op": "add",
+            "path": "/status",
+            "value": "running"
+          },
+          {
+            "op": "add",
+            "path": "/updatedAt",
+            "value": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "timestamp": 1700000000000,
+        "type": "ACTIVITY_DELTA"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":1}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":2}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":3}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":4}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":5}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":6}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":7}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":8}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":9}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":10}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":11}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":12}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":13}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=1]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 1,
+            "status": "failed"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "activityType": "subagent",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "patch": [
+          {
+            "op": "add",
+            "path": "/status",
+            "value": "failed"
+          },
+          {
+            "op": "add",
+            "path": "/durationMs",
+            "value": 0
+          },
+          {
+            "op": "add",
+            "path": "/updatedAt",
+            "value": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "timestamp": 1700000000000,
+        "type": "ACTIVITY_DELTA"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r110:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "REASONING_MESSAGE_END"
+      },
+      {
+        "metadata": {
+          "agentAdaptor": {
+            "sdkRunId": "sdk",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "runId": "r1",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_FINISHED"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "thinking",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r110:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "reasoning"
+      },
+      {
+        "content": "answer 1",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "function": {
+              "arguments": "{\"n\":1}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":2}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":3}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":4}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":5}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":6}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":7}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":8}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":9}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":10}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":11}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":12}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12"
+      },
+      {
+        "activityType": "subagent",
+        "content": {
+          "agentKey": "helper",
+          "agentName": "helper",
+          "durationMs": 0,
+          "kind": "delegated",
+          "startedAt": "2023-11-14T22:13:20Z",
+          "status": "failed",
+          "subagentId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+          "toolCalls": [
+            {
+              "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+              "name": "shell",
+              "status": "running"
+            }
+          ],
+          "updatedAt": "2023-11-14T22:13:20Z"
+        },
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "activity"
+      },
+      {
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+        "role": "assistant",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "toolCalls": [
+          {
+            "function": {
+              "arguments": "{\"n\":13}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "output\n[exit=1]",
+        "error": "output\n[exit=1]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 1,
+            "status": "failed"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13"
+      }
+    ]
+  },
+  {
+    "name": "tools-2",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "thinking",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r110:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "reasoning"
+      },
+      {
+        "content": "answer 1",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "function": {
+              "arguments": "{\"n\":1}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":2}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":3}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":4}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":5}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":6}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":7}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":8}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":9}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":10}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":11}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":12}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12"
+      },
+      {
+        "activityType": "subagent",
+        "content": {
+          "agentKey": "helper",
+          "agentName": "helper",
+          "durationMs": 0,
+          "kind": "delegated",
+          "startedAt": "2023-11-14T22:13:20Z",
+          "status": "failed",
+          "subagentId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+          "toolCalls": [
+            {
+              "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+              "name": "shell",
+              "status": "running"
+            }
+          ],
+          "updatedAt": "2023-11-14T22:13:20Z"
+        },
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "activity"
+      },
+      {
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+        "role": "assistant",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "toolCalls": [
+          {
+            "function": {
+              "arguments": "{\"n\":13}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "output\n[exit=1]",
+        "error": "output\n[exit=1]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 1,
+            "status": "failed"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": "go",
+              "id": "u2",
+              "role": "user"
+            }
+          ],
+          "runId": "r2",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r2",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "name": "agentAdaptor.input.warning",
+        "timestamp": 1700000000000,
+        "type": "CUSTOM",
+        "value": {
+          "code": "agui.history_rehydrated",
+          "message": "prior text and tool call summaries rehydrated",
+          "path": "/messages"
+        }
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r210:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "reasoning",
+        "timestamp": 1700000000000,
+        "type": "REASONING_MESSAGE_START"
+      },
+      {
+        "delta": "thinking",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r210:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "REASONING_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer 2",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "activityType": "subagent",
+        "content": {
+          "agentKey": "helper",
+          "agentName": "helper",
+          "kind": "delegated",
+          "startedAt": "2023-11-14T22:13:20Z",
+          "status": "started",
+          "subagentId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+          "toolCalls": [],
+          "updatedAt": "2023-11-14T22:13:20Z"
+        },
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "replace": true,
+        "timestamp": 1700000000000,
+        "type": "ACTIVITY_SNAPSHOT"
+      },
+      {
+        "activityType": "subagent",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "patch": [
+          {
+            "op": "add",
+            "path": "/toolCalls",
+            "value": [
+              {
+                "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13",
+                "name": "shell",
+                "status": "running"
+              }
+            ]
+          },
+          {
+            "op": "add",
+            "path": "/status",
+            "value": "running"
+          },
+          {
+            "op": "add",
+            "path": "/updatedAt",
+            "value": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "timestamp": 1700000000000,
+        "type": "ACTIVITY_DELTA"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool1",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":1}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool1",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool1",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool1:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool1",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool2",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":2}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool2",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool2",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool2:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool2",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool3",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":3}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool3",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool3",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool3:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool3",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool4",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":4}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool4",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool4",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool4:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool4",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool5",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":5}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool5",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool5",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool5:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool5",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool6",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":6}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool6",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool6",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool6:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool6",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool7",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":7}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool7",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool7",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool7:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool7",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool8",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":8}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool8",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool8",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool8:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool8",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool9",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":9}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool9",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool9",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool9:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool9",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool10",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":10}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool10",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool10",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool10:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool10",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool11",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":11}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool11",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool11",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool11:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool11",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "parentMessageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool12",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":12}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool12",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool12",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool12:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool12",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13",
+        "toolCallName": "shell",
+        "type": "TOOL_CALL_START"
+      },
+      {
+        "delta": "{\"n\":13}",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13",
+        "type": "TOOL_CALL_ARGS"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13",
+        "type": "TOOL_CALL_END"
+      },
+      {
+        "content": "output\n[exit=1]",
+        "messageId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 1,
+            "status": "failed"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "timestamp": 1700000000000,
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13",
+        "type": "TOOL_CALL_RESULT"
+      },
+      {
+        "activityType": "subagent",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "patch": [
+          {
+            "op": "add",
+            "path": "/status",
+            "value": "failed"
+          },
+          {
+            "op": "add",
+            "path": "/durationMs",
+            "value": 0
+          },
+          {
+            "op": "add",
+            "path": "/updatedAt",
+            "value": "2023-11-14T22:13:20Z"
+          }
+        ],
+        "timestamp": 1700000000000,
+        "type": "ACTIVITY_DELTA"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r210:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "REASONING_MESSAGE_END"
+      },
+      {
+        "metadata": {
+          "agentAdaptor": {
+            "sdkRunId": "sdk",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "runId": "r2",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_FINISHED"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "thinking",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r110:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "reasoning"
+      },
+      {
+        "content": "answer 1",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r11:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "function": {
+              "arguments": "{\"n\":1}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":2}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":3}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":4}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":5}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":6}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":7}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":8}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":9}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":10}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":11}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":12}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool1"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool2"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool3"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool4"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool5"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool6"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool7"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool8"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r15:tool9"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool10"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool11"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool12"
+      },
+      {
+        "activityType": "subagent",
+        "content": {
+          "agentKey": "helper",
+          "agentName": "helper",
+          "durationMs": 0,
+          "kind": "delegated",
+          "startedAt": "2023-11-14T22:13:20Z",
+          "status": "failed",
+          "subagentId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+          "toolCalls": [
+            {
+              "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+              "name": "shell",
+              "status": "running"
+            }
+          ],
+          "updatedAt": "2023-11-14T22:13:20Z"
+        },
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "activity"
+      },
+      {
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+        "role": "assistant",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "toolCalls": [
+          {
+            "function": {
+              "arguments": "{\"n\":13}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "output\n[exit=1]",
+        "error": "output\n[exit=1]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 1,
+            "status": "failed"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r15:child",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r16:tool13"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      },
+      {
+        "content": "thinking",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r210:thinking-0",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "reasoning"
+      },
+      {
+        "content": "answer 2",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r21:a",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "toolCalls": [
+          {
+            "function": {
+              "arguments": "{\"n\":1}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool1",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":2}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool2",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":3}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool3",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":4}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool4",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":5}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool5",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":6}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool6",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":7}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool7",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":8}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool8",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":9}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool9",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":10}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool10",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":11}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool11",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\"n\":12}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool12",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool1:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool1"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool2:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool2"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool3:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool3"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool4:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool4"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool5:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool5"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool6:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool6"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool7:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool7"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool8:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool8"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool9:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r25:tool9"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool10:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool10"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool11:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool11"
+      },
+      {
+        "content": "output\n[exit=0]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool12:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 0,
+            "status": "succeeded"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool12"
+      },
+      {
+        "activityType": "subagent",
+        "content": {
+          "agentKey": "helper",
+          "agentName": "helper",
+          "durationMs": 0,
+          "kind": "delegated",
+          "startedAt": "2023-11-14T22:13:20Z",
+          "status": "failed",
+          "subagentId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+          "toolCalls": [
+            {
+              "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13",
+              "name": "shell",
+              "status": "running"
+            }
+          ],
+          "updatedAt": "2023-11-14T22:13:20Z"
+        },
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "activity"
+      },
+      {
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13",
+        "role": "assistant",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "toolCalls": [
+          {
+            "function": {
+              "arguments": "{\"n\":13}",
+              "name": "shell"
+            },
+            "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13",
+            "metadata": {
+              "hookTimestamp": 1700000000000
+            },
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "output\n[exit=1]",
+        "error": "output\n[exit=1]",
+        "id": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13:result",
+        "metadata": {
+          "agentAdaptor": {
+            "exitCode": 1,
+            "status": "failed"
+          },
+          "hookTimestamp": 1700000000000
+        },
+        "role": "tool",
+        "subagentRunId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r25:child",
+        "toolCallId": "agent-adaptor:bridge-key:v1:3:9:agui-tool2:r26:tool13"
+      }
+    ]
+  },
+  {
+    "name": "fallback-1",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "go",
+                  "type": "text"
+                }
+              ],
+              "id": "u1",
+              "metadata": {
+                "userTag": true
+              },
+              "name": "human",
+              "role": "user"
+            }
+          ],
+          "runId": "r1",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r1",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "metadata": {
+          "agentAdaptor": {
+            "sdkRunId": "sdk",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "runId": "r1",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_FINISHED"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      }
+    ]
+  },
+  {
+    "name": "fallback-2",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": "go",
+              "id": "u2",
+              "role": "user"
+            }
+          ],
+          "runId": "r2",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r2",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "name": "agentAdaptor.input.warning",
+        "timestamp": 1700000000000,
+        "type": "CUSTOM",
+        "value": {
+          "code": "agui.history_rehydrated",
+          "message": "prior text and tool call summaries rehydrated",
+          "path": "/messages"
+        }
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "metadata": {
+          "agentAdaptor": {
+            "sdkRunId": "sdk",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "runId": "r2",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_FINISHED"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      }
+    ]
+  },
+  {
+    "name": "business-1",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "go",
+                  "type": "text"
+                }
+              ],
+              "id": "u1",
+              "metadata": {
+                "userTag": true
+              },
+              "name": "human",
+              "role": "user"
+            }
+          ],
+          "runId": "r1",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r1",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "code": "agent_error",
+        "message": "failed",
+        "metadata": {
+          "agentAdaptor": {
+            "runId": "r1",
+            "sdkRunId": "sdk",
+            "threadId": "t",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "timestamp": 1700000000000,
+        "type": "RUN_ERROR"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      }
+    ]
+  },
+  {
+    "name": "business-2",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": "go",
+              "id": "u2",
+              "role": "user"
+            }
+          ],
+          "runId": "r2",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r2",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "name": "agentAdaptor.input.warning",
+        "timestamp": 1700000000000,
+        "type": "CUSTOM",
+        "value": {
+          "code": "agui.history_rehydrated",
+          "message": "prior text and tool call summaries rehydrated",
+          "path": "/messages"
+        }
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "code": "agent_error",
+        "message": "failed",
+        "metadata": {
+          "agentAdaptor": {
+            "runId": "r2",
+            "sdkRunId": "sdk",
+            "threadId": "t",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "timestamp": 1700000000000,
+        "type": "RUN_ERROR"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      }
+    ]
+  },
+  {
+    "name": "cancel-1",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "go",
+                  "type": "text"
+                }
+              ],
+              "id": "u1",
+              "metadata": {
+                "userTag": true
+              },
+              "name": "human",
+              "role": "user"
+            }
+          ],
+          "runId": "r1",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r1",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "code": "run.cancelled",
+        "message": "context canceled",
+        "metadata": {
+          "agentAdaptor": {
+            "runId": "r1",
+            "sdkRunId": "sdk",
+            "threadId": "t",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "timestamp": 1700000000000,
+        "type": "RUN_ERROR"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      }
+    ]
+  },
+  {
+    "name": "cancel-2",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": "go",
+              "id": "u2",
+              "role": "user"
+            }
+          ],
+          "runId": "r2",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r2",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "name": "agentAdaptor.input.warning",
+        "timestamp": 1700000000000,
+        "type": "CUSTOM",
+        "value": {
+          "code": "agui.history_rehydrated",
+          "message": "prior text and tool call summaries rehydrated",
+          "path": "/messages"
+        }
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "code": "run.cancelled",
+        "message": "context canceled",
+        "metadata": {
+          "agentAdaptor": {
+            "runId": "r2",
+            "sdkRunId": "sdk",
+            "threadId": "t",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "timestamp": 1700000000000,
+        "type": "RUN_ERROR"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      }
+    ]
+  },
+  {
+    "name": "infrastructure-1",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "go",
+                  "type": "text"
+                }
+              ],
+              "id": "u1",
+              "metadata": {
+                "userTag": true
+              },
+              "name": "human",
+              "role": "user"
+            }
+          ],
+          "runId": "r1",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r1",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "code": "run.error",
+        "message": "infrastructure failed",
+        "metadata": {
+          "agentAdaptor": {
+            "runId": "r1",
+            "sdkRunId": "sdk",
+            "threadId": "t",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "timestamp": 1700000000000,
+        "type": "RUN_ERROR"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      }
+    ]
+  },
+  {
+    "name": "infrastructure-2",
+    "input": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      }
+    ],
+    "events": [
+      {
+        "input": {
+          "messages": [
+            {
+              "content": "go",
+              "id": "u2",
+              "role": "user"
+            }
+          ],
+          "runId": "r2",
+          "threadId": "t"
+        },
+        "protocolVersion": "1.0",
+        "runId": "r2",
+        "threadId": "t",
+        "timestamp": 1700000000000,
+        "type": "RUN_STARTED"
+      },
+      {
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "name": "agentAdaptor.input.warning",
+        "timestamp": 1700000000000,
+        "type": "CUSTOM",
+        "value": {
+          "code": "agui.history_rehydrated",
+          "message": "prior text and tool call summaries rehydrated",
+          "path": "/messages"
+        }
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant",
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_START"
+      },
+      {
+        "delta": "answer",
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_CONTENT"
+      },
+      {
+        "messageId": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "timestamp": 1700000000000,
+        "type": "TEXT_MESSAGE_END"
+      },
+      {
+        "code": "run.error",
+        "message": "infrastructure failed",
+        "metadata": {
+          "agentAdaptor": {
+            "runId": "r2",
+            "sdkRunId": "sdk",
+            "threadId": "t",
+            "threadKey": "agent-adaptor:bridge-key:v1:2:4:agui1:t"
+          }
+        },
+        "timestamp": 1700000000000,
+        "type": "RUN_ERROR"
+      }
+    ],
+    "history": [
+      {
+        "content": [
+          {
+            "text": "go",
+            "type": "text"
+          }
+        ],
+        "id": "u1",
+        "metadata": {
+          "userTag": true
+        },
+        "name": "human",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r19:r1:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      },
+      {
+        "content": "go",
+        "id": "u2",
+        "role": "user"
+      },
+      {
+        "content": "answer",
+        "id": "agent-adaptor:bridge-key:v1:3:12:agui-message2:r29:r2:result",
+        "metadata": {
+          "hookTimestamp": 1700000000000
+        },
+        "role": "assistant"
+      }
+    ]
+  }
+]

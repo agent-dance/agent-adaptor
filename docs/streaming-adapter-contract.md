@@ -331,6 +331,34 @@ A JSON-RPC reader must tee raw bytes too. Terminal is nil if no official termina
 was observed. Usage is nil when unobserved; non-nil zero means observed zero.
 RuntimeServices report observations, never echo input declarations as success.
 
+A stopped subprocess's Raw streams must be captured after both process exit and
+the stdout/stderr reader joins. `exec.Cmd.Wait` closes `StdoutPipe`/`StderrPipe`;
+waiting for a collector after calling `Wait` does not recover bytes that this
+closure discarded. Own pipe descriptors independently of `exec.Cmd` when
+observing process exit concurrently with draining; waiting for EOF before `Wait`
+can hang indefinitely if a descendant retains a writer.
+
+Codex app-server (one-shot and persistent) and batch `clihelper` use
+independently owned pipes. Process exit is observed separately from reader
+completion and starts a five-second drain deadline, even without host
+cancellation. At the deadline they close retained read ends and join readers,
+including when a descendant retains inherited stdout/stderr handles on Windows.
+Readers reaching EOF within the bound preserve complete output; the cutoff
+preserves bytes observed before closure. Codex app-server also retains raw
+stdout after a JSON decoding error without interpreting the corrupt tail. Host
+cancellation retains its cancellation classification and cannot create a valid
+checkpoint; an independent nonzero exit remains an exit failure.
+
+Each parent pipe end has one owning `os.File`, closed once through the process
+helper. Assign the underlying `*os.File` to `exec.Cmd` standard streams as a
+borrow; do not wrap its descriptor in another `os.File`. Cleanup also owns stdin,
+including setup/start failures and persistent shutdown. Closure tests require
+`os.ErrClosed` from the owned file's `Read`: Windows `File.Stat` bypasses the
+closed-file check and can return `ERROR_INVALID_HANDLE` even after a correct
+`File.Close`. A healthy persistent process stays alive across turns, so process
+exit and pipe EOF are not turn boundaries; failed, cancelled, or disconnected
+Codex turns shut down and join readers before attaching Raw streams.
+
 Structured business failures use Response.Failure, which core turns into a
 RunError carrying the available Result. Driver errors remain wrappable Go errors;
 do not rely on an accompanying partial Response being exposed as a public Result.

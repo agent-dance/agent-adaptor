@@ -62,6 +62,8 @@ type Options struct {
 
 	// RunID identifies the run for StreamPayload attribution.
 	RunID string
+
+	processHooks *processHooks
 }
 
 // Run spawns a codex app-server subprocess, completes the initialize /
@@ -97,21 +99,26 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	}
 	cmd.Env = toExecEnv(opts.Env)
 
-	stdin, err := cmd.StdinPipe()
+	output, err := newProcessOutput(cmd, opts.processHooks)
 	if err != nil {
+		return driver.Response{}, fmt.Errorf("codex app-server output pipes: %w", err)
+	}
+	stdinRead, stdin, err := processx.NewPipe(opts.processHooks.closed)
+	if err != nil {
+		output.close()
 		return driver.Response{}, fmt.Errorf("codex app-server stdin: %w", err)
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return driver.Response{}, fmt.Errorf("codex app-server stdout: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return driver.Response{}, fmt.Errorf("codex app-server stderr: %w", err)
-	}
+	cmd.Stdin = stdinRead.File
 	if err := cmd.Start(); err != nil {
+		_ = stdinRead.Close()
+		_ = stdin.Close()
+		output.close()
 		return driver.Response{}, fmt.Errorf("codex app-server start: %w", err)
 	}
+	_ = stdinRead.Close() // Start borrowed the read end; the child has its own copy.
+
+	opts.processHooks.started(output)
+	output.closeWriters()
 
 	// Emit a RunEvent so tooling can correlate spawns the same way the
 	// exec --json path does via clihelper.
@@ -131,15 +138,16 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	stdoutBuf := &syncBuffer{}
 	stderrBuf := &syncBuffer{}
 	stderrDone := make(chan struct{})
+	stderrReader := opts.processHooks.stderr(output.stderr)
 	go func() {
 		defer close(stderrDone)
-		_, _ = io.Copy(stderrBuf, stderr)
+		_, _ = io.Copy(stderrBuf, stderrReader)
 	}()
 
 	// Tee stdout before the JSON-RPC decoder sees it. This preserves the exact
 	// inbound bytes (including whitespace, frame formatting, unknown fields,
 	// and trailing frames) instead of reconstructing JSON from decoded values.
-	stream := newStdioStream(stdin, io.TeeReader(stdout, stdoutBuf))
+	stream := newStdioStream(stdin, io.TeeReader(opts.processHooks.stdout(outputPipeReader{output.stdout}), stdoutBuf))
 	client := NewClient(context.Background(), stream)
 
 	state := newRunState(opts.RunID, sink)
@@ -157,20 +165,31 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 	stopRequests := client.handleRunRequests(ctx, opts.RunID, sink, state)
 	defer stopRequests()
 
-	// shutdown closes only the child's stdin first, allowing the JSON-RPC
-	// reader to drain stdout to EOF. cmd.Wait runs only after that reader has
-	// ended, as required by os/exec's StdoutPipe contract. A bounded fallback
-	// cancels the configured process tree if a broken app-server ignores EOF.
+	exitDone := make(chan struct{})
+	waitDone := make(chan struct{})
+	var waitErr error
+	go func() {
+		waitErr = output.wait(cmd, stream, stderrDone, func(error) {
+			_ = stdin.Close()
+			close(exitDone)
+		}, opts.processHooks)
+		close(waitDone)
+	}()
+	// Close stdin first. Keep stdout/stderr open until both collectors finish,
+	// even if the process has already exited. A broken peer gets five seconds
+	// to honor EOF before process-tree cancellation and bounded pipe draining.
 	shutdown := func() error {
 		_ = stdin.Close()
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
 		select {
-		case <-client.DisconnectNotify():
-		case <-time.After(5 * time.Second):
+		case <-waitDone:
+		case <-exitDone:
+			<-waitDone // the exit-triggered drain has its own five-second bound
+		case <-timer.C:
 			stopProcess()
-			<-client.DisconnectNotify()
+			<-waitDone
 		}
-		waitErr := cmd.Wait()
-		<-stderrDone
 		_ = client.Close()
 		return waitErr
 	}
@@ -206,10 +225,17 @@ func Run(ctx context.Context, opts Options, sink driver.EventSink) (driver.Respo
 			finalErr = primary
 		} else if protocolErr := state.protocolError(); protocolErr != nil {
 			finalErr = protocolErr
+		} else if waitFatal != nil {
+			finalErr = fmt.Errorf("codex app-server exited: %w", waitFatal)
+		} else if !state.hasTerminal() && waitErr != nil {
+			finalErr = fmt.Errorf("codex app-server exited before turn completion: %w", waitErr)
 		} else if !state.hasTerminal() {
 			finalErr = fmt.Errorf("codex app-server protocol ended without turn/completed")
-		} else if waitFatal != nil {
-			finalErr = fmt.Errorf("codex app-server wait: %w", waitFatal)
+		}
+		// An RPC can fail when the reader closes at the drain cutoff. Retain
+		// the independent process-exit cause as well as that transport error.
+		if cancellation == nil && waitErr != nil && !state.hasTerminal() && !errors.Is(finalErr, waitErr) {
+			finalErr = fmt.Errorf("codex app-server exited before turn completion: %w", errors.Join(waitErr, finalErr))
 		}
 		result := state.snapshot(opts, threadID, stdoutBuf.String(), stderrBuf.String(), exitCode, signal, timedOut)
 		result = finalizeAppServerResult(opts.OutputSchema, result, finalErr)

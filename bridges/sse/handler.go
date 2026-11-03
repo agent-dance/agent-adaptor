@@ -46,7 +46,7 @@ import (
 
 	adaptor "github.com/agent-dance/agent-adaptor/v2"
 	"github.com/agent-dance/agent-adaptor/v2/bridges/agui"
-	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/bridgekey"
+	"github.com/agent-dance/agent-adaptor/v2/bridges/internal/ssewire"
 )
 
 // Options configures a Handler. Zero values select AG-UI protocol, no
@@ -70,6 +70,19 @@ type Options struct {
 
 	// Options are appended to every Stream call at call scope.
 	Options []adaptor.CallOption
+
+	// AGUIInput controls context and opt-in history rehydration.
+	AGUIInput agui.InputOptions
+	// AGUIEvents configures redaction, tool limits, and other projection policy.
+	AGUIEvents []agui.EventTranslatorOption
+	// ResolveThreadKey authorizes/maps a public thread identity. Default uses bridgekey.
+	ResolveThreadKey func(*http.Request, *agui.RunAgentInput) (string, error)
+	// OnAGUIRequest receives the decoded request, including untouched forwardedProps.
+	OnAGUIRequest func(*http.Request, *agui.RunAgentInput) error
+	// VerifyHistory checks client history and checkpoint usability before streaming.
+	// Return agui.InputError with Status 409 for divergence. The hook may resolve
+	// a branch by returning a replacement key and false usability.
+	VerifyHistory func(context.Context, *agui.RunAgentInput, adaptor.Runner, string) (key string, checkpointUsable bool, err error)
 }
 
 // Handler returns an http.Handler that streams a Runner's unified events
@@ -102,7 +115,7 @@ func Handler(runner adaptor.Runner, opts Options) http.Handler {
 			return
 		}
 
-		prompt, threadKey, err := decodeRequest(r, opts)
+		request, err := prepareRequest(r, runner, opts)
 		if err != nil {
 			status := http.StatusBadRequest
 			message := err.Error()
@@ -111,21 +124,24 @@ func Handler(runner adaptor.Runner, opts Options) http.Handler {
 				status = http.StatusRequestEntityTooLarge
 				message = "request body exceeds 4 MiB limit"
 			}
-			http.Error(w, message, status)
-			return
-		}
-
-		target := runner
-		if threadKey != "" {
-			if agent, ok := runner.(*adaptor.Agent); ok {
-				target = agent.Thread(threadKey)
+			var invalid *agui.InputError
+			if errors.As(err, &invalid) {
+				if invalid.Status != 0 {
+					status = invalid.Status
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": invalid})
+			} else {
+				http.Error(w, message, status)
 			}
+			return
 		}
 
 		// The run rides the request context: client disconnect → ctx cancel
 		// → run cancel. Stream never fails to start; startup problems close
 		// the event channel and surface through Result().
-		stream := target.Send(r.Context(), prompt, opts.Options...)
+		stream := request.target.Send(r.Context(), request.prompt, opts.Options...)
 		defer stream.Cancel()
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -134,8 +150,8 @@ func Handler(runner adaptor.Runner, opts Options) http.Handler {
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
 
-		deadlineWriter := newDeadlineResponseWriter(w, opts.WriteTimeout)
-		defer deadlineWriter.clearDeadline()
+		deadlineWriter := ssewire.NewDeadlineWriter(w, opts.WriteTimeout)
+		defer deadlineWriter.ClearDeadline()
 		flusher, _ := any(deadlineWriter).(http.Flusher)
 		writeMu := &sync.Mutex{}
 		if flusher != nil {
@@ -152,7 +168,16 @@ func Handler(runner adaptor.Runner, opts Options) http.Handler {
 
 		ctx := r.Context()
 		lastEventID, hasLastEventID := parseLastEventID(r.Header.Get("Last-Event-ID"))
-		err = streamEvents(ctx, writer, writeMu, deadlineWriter, stream, opts, lastEventID, hasLastEventID)
+		runOpts := opts
+		runOpts.AGUIEvents = append([]agui.EventTranslatorOption(nil), opts.AGUIEvents...)
+		if request.input != nil {
+			input := request.input
+			runOpts.AGUIEvents = append(runOpts.AGUIEvents,
+				agui.WithRunIdentity(input.ThreadID, input.RunID, input.ParentRunID),
+				agui.WithInputDiagnostics(request.diagnostics),
+			)
+		}
+		err = streamEvents(ctx, writer, writeMu, deadlineWriter, stream, runOpts, lastEventID, hasLastEventID)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			writeMu.Lock()
 			if opts.Protocol == Raw {
@@ -167,104 +192,66 @@ func Handler(runner adaptor.Runner, opts Options) http.Handler {
 	})
 }
 
-// deadlineResponseWriter applies a fresh deadline to every low-level write.
-// This covers multi-write AG-UI frames, Raw frames, flushes, and keep-alives
-// without starting an unbounded goroutine per frame. Response writers that do
-// not support write deadlines (notably httptest.ResponseRecorder) keep their
-// normal behavior.
-type deadlineResponseWriter struct {
-	http.ResponseWriter
-	controller *http.ResponseController
-	timeout    time.Duration
+// preparedRequest retains protocol input alongside the resolved execution target.
+// threadKey is independent of wire identity: generated legacy IDs stay stateless.
+type preparedRequest struct {
+	input       *agui.RunAgentInput
+	prompt      string
+	diagnostics []agui.Diagnostic
+	target      adaptor.Runner
+	threadKey   string
 }
 
-func newDeadlineResponseWriter(w http.ResponseWriter, timeout time.Duration) *deadlineResponseWriter {
-	return &deadlineResponseWriter{
-		ResponseWriter: w,
-		controller:     http.NewResponseController(w),
-		timeout:        timeout,
-	}
-}
-
-func (w *deadlineResponseWriter) Write(p []byte) (int, error) {
-	if err := w.armDeadline(); err != nil {
-		return 0, err
-	}
-	return w.ResponseWriter.Write(p)
-}
-
-func (w *deadlineResponseWriter) Flush() {
-	if w.armDeadline() != nil {
-		return
-	}
-	_ = w.controller.Flush()
-}
-
-func (w *deadlineResponseWriter) armDeadline() error {
-	err := w.controller.SetWriteDeadline(time.Now().Add(w.timeout))
-	if errors.Is(err, http.ErrNotSupported) {
-		return nil
-	}
-	return err
-}
-
-func (w *deadlineResponseWriter) clearDeadline() {
-	err := w.controller.SetWriteDeadline(time.Time{})
-	if err != nil && !errors.Is(err, http.ErrNotSupported) {
-		return
-	}
-}
-
-// decodeRequest parses the request body according to Options.Protocol and
-// returns (prompt, threadKey). threadKey is empty when the request carries
-// no session identity. AG-UI's two-dimensional identity is length-prefixed
-// before becoming one Thread key; Raw's sessionKey is already one opaque host
-// key and is therefore preserved byte-for-byte.
-func decodeRequest(r *http.Request, opts Options) (string, string, error) {
+func prepareRequest(r *http.Request, runner adaptor.Runner, opts Options) (*preparedRequest, error) {
 	switch opts.Protocol {
 	case AGUI:
-		input, err := agui.DecodeHTTPRequest(r)
-		if err != nil {
-			return "", "", err
-		}
-		prompt := input.LastUserText()
-		if strings.TrimSpace(prompt) == "" {
-			return "", "", errors.New("agui: no user message in RunAgentInput")
-		}
-		threadKey := ""
-		if ns, key := input.SessionKey(); ns != "" {
-			threadKey = bridgekey.Encode(ns, key)
-		}
-		return prompt, threadKey, nil
-
+		return prepareAGUIRequest(r, runner, opts)
 	case Raw:
-		req, err := decodeRawRequest(r)
-		if err != nil {
-			return "", "", err
-		}
-		if strings.TrimSpace(req.Prompt) == "" {
-			return "", "", errors.New("prompt is required")
-		}
-		threadKey := ""
-		if req.SessionKey != "" {
-			threadKey = req.SessionKey
-		}
-		return req.Prompt, threadKey, nil
-
+		return prepareRawRequest(r, runner)
 	default:
-		return "", "", fmt.Errorf("sse: unknown protocol %d", opts.Protocol)
+		return nil, fmt.Errorf("sse: unknown protocol %d", opts.Protocol)
 	}
+}
+
+func prepareRawRequest(r *http.Request, runner adaptor.Runner) (*preparedRequest, error) {
+	input, err := decodeRawRequest(r)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(input.Prompt) == "" {
+		return nil, errors.New("prompt is required")
+	}
+	return &preparedRequest{
+		prompt:    input.Prompt,
+		threadKey: input.SessionKey,
+		target:    runnerForKey(runner, input.SessionKey),
+	}, nil
+}
+
+func prepareAGUIRequest(r *http.Request, runner adaptor.Runner, opts Options) (*preparedRequest, error) {
+	prepared, err := agui.PrepareHTTPRequest(r, runner, agui.RequestOptions{
+		Input: opts.AGUIInput, ResolveThreadKey: opts.ResolveThreadKey,
+		OnAGUIRequest: opts.OnAGUIRequest, VerifyHistory: opts.VerifyHistory,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &preparedRequest{input: prepared.Input, threadKey: prepared.ThreadKey,
+		target: prepared.Target, prompt: prepared.Prompt, diagnostics: prepared.Diagnostics}, nil
 }
 
 // streamEvents drains the stream into SSE frames according to the chosen
 // protocol. It returns when the stream is exhausted or the context is
 // cancelled.
-func streamEvents(ctx context.Context, writer *aguisse.SSEWriter, writeMu *sync.Mutex, w io.Writer, stream adaptor.Stream, opts Options, lastEventID uint64, hasLastEventID bool) error {
+func streamEvents(
+	ctx context.Context, writer *aguisse.SSEWriter, writeMu *sync.Mutex,
+	w io.Writer, stream adaptor.Stream, opts Options, lastEventID uint64, hasLastEventID bool,
+) error {
 	switch opts.Protocol {
 	case AGUI:
 		// agui.Events owns the AG-UI protocol invariants, including the
 		// closing RUN_FINISHED / RUN_ERROR synthesis from stream.Result().
-		for ev := range agui.EventsContext(ctx, stream) {
+		for ev := range agui.EventsContext(ctx, stream, opts.AGUIEvents...) {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -567,6 +554,15 @@ func nonEmpty(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func runnerForKey(runner adaptor.Runner, key string) adaptor.Runner {
+	if key != "" {
+		if agent, ok := runner.(*adaptor.Agent); ok {
+			return agent.Thread(key)
+		}
+	}
+	return runner
 }
 
 func eventErrorText(err error) string {

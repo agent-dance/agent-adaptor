@@ -1,8 +1,8 @@
 package agui
 
 import (
-	"errors"
 	"fmt"
+	"sort"
 
 	aguievents "github.com/ag-ui-protocol/ag-ui/sdks/community/go/pkg/core/events"
 )
@@ -23,12 +23,11 @@ import (
 //
 // Returns nil when the sequence is compliant. Tests should fail fast on
 // any non-nil error. Callers that want to separate concerns can call the
-// two phases individually via ValidateStructure / validateLifecycleRules.
+// two phases individually via ValidateStructure / verifyCopilotKitRules.
 //
 // This function is intended for test-time compliance regression. It is
-// cheap enough to run in production assertions, but Translator itself
-// guarantees compliance by construction so runtime verification is
-// optional.
+// cheap enough to run in production assertions. Hosts using ProjectionHook
+// remain responsible for preserving content lifecycles in their replacements.
 func VerifySequence(events []aguievents.Event) error {
 	if err := ValidateStructure(events); err != nil {
 		return err
@@ -39,7 +38,15 @@ func VerifySequence(events []aguievents.Event) error {
 // ValidateStructure is a thin wrapper around events.ValidateSequence so
 // callers do not have to depend on the ag-ui import directly.
 func ValidateStructure(events []aguievents.Event) error {
-	return aguievents.ValidateSequence(events)
+	normalized := make([]aguievents.Event, len(events))
+	for i, e := range events {
+		if start, ok := e.(*RunStartedEvent); ok {
+			normalized[i] = start.RunStartedEvent
+		} else {
+			normalized[i] = e
+		}
+	}
+	return aguievents.ValidateSequence(normalized)
 }
 
 // verifyCopilotKitRules implements the three checks CopilotKit performs
@@ -124,9 +131,9 @@ func verifyCopilotKitRules(events []aguievents.Event) error {
 			delete(activeSteps, name)
 
 		case aguievents.EventTypeRunStarted:
-			// Valid at position 0; allowed after RUN_FINISHED too, but
-			// the Translator never re-starts a run and the tests don't
-			// exercise that case.
+			if i > 0 && !runFinished {
+				return fmt.Errorf("agui: event %d: RUN_STARTED while a run is active", i)
+			}
 			runFinished = false
 
 		case aguievents.EventTypeRunFinished, aguievents.EventTypeRunError:
@@ -198,16 +205,14 @@ func extractStepName(ev aguievents.Event) (string, bool) {
 	return "", false
 }
 
-func mapKeys[K comparable, V any](m map[K]V) []K {
+func mapKeys[V any](m map[string]V) []string {
 	if len(m) == 0 {
 		return nil
 	}
-	keys := make([]K, 0, len(m))
+	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
+	sort.Strings(keys)
 	return keys
 }
-
-// Ensure errors stays referenced for future expansion (cleaner than goimports churn).
-var _ = errors.New

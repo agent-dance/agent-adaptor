@@ -21,7 +21,7 @@ Switching to Claude Code only means swapping the Driver in the constructor; the 
 ## Advanced features
 
 - **Structured output**: define a Go struct, call `RunAs[T]`, and the agent runs under a constraint that returns a populated object.
-- **Multi-protocol decoration**: built-in A2A/AGUI decoration turns an Agent into a standard agent with SSE + AGUI streaming in one line, so a custom front end or client is all you need for a complete agent service (a runnable CopilotKit front end is included).
+- **Multi-protocol decoration**: built-in A2A/AGUI decoration turns an Agent into a standard agent with SSE + AGUI streaming in one line, so a custom front end or client is all you need for a complete agent service (a runnable assistant-ui front end is included).
 - **Teams**: a host-selected leader coordinates members on any Driver — for example Codex leading a Plan member (Codex), a Coding member (Claude) and a Reviewer member (Cursor) — or Remote A2A members, with task updates and worker approvals aggregated into the leader's Event stream. See the [team guide](./docs/team.md) and the examples/showcases/team-agent-workflow showcase.
 - **Agent isolation**: clone the machine's agent configuration into a dedicated directory and link its login state, keeping configuration changes isolated. Running several Codex/Claude Code instances in parallel for concurrent development or different roles becomes trivial.
 
@@ -220,7 +220,7 @@ The host can later call `req.Approve(r.Context())`, `req.Deny(r.Context(), reaso
 
 Responses are exactly-once: duplicate responses, Kind mismatches, and finished runs all return stable errors (`ErrApprovalResolved`, `ErrApprovalKindMismatch`, `ErrApprovalExpired`), and a zero-value request never blocks forever. If neither `Events()` nor an `OnApproval` handler has been installed when a request arrives, the timeout fallback applies immediately with a lifecycle notice. Otherwise, when nobody answers before the deadline, `OnTimeout` from `Policy.Approvals` takes over; a rejection follows `OnReject`. Where parked requests live is up to the host and is not limited to process memory.
 
-A complete, runnable web HITL path is in [`web-chat/copilotkit`](./examples/web-chat/copilotkit): two endpoints, `/decision/pending` and `/decision/resolve`, with pending decisions surviving a page refresh.
+A complete, runnable web HITL path is in [`web-chat/assistant-ui`](./examples/web-chat/assistant-ui): decisions render as Approve/Deny on `dec.*` tool calls, and the host-owned `/decision/pending` and `/decision/resolve` endpoints answer the live request exactly once.
 
 ## Multi-turn conversations
 
@@ -431,7 +431,9 @@ Each output layer of `Result` stays free of the others:
 
 ## Integrating into applications
 
-**Web front ends**: one line wraps an Agent into an `http.Handler` speaking the AG-UI protocol, so AG-UI compatible clients (such as CopilotKit) can connect directly:
+[AG-UI 1.0 bridge contract](./docs/agui.md)
+
+**Web front ends**: one line wraps an Agent into an `http.Handler` speaking the AG-UI protocol, so AG-UI compatible clients (such as assistant-ui with `@ag-ui/client`) can connect directly:
 
 ```go
 mux.Handle("/agent", sse.Handler(agent, sse.Options{
@@ -439,7 +441,7 @@ mux.Handle("/agent", sse.Handler(agent, sse.Options{
 }))
 ```
 
-For chat UIs, `agui.RunRegistry` starts a Thread when idle and sends new input to its active Stream, preserving native Stream.Send context semantics: cancellation can withdraw unclaimed input. The CopilotKit example explicitly detaches `POST /message` dispatch from the supplement request context; once dispatch starts, HTTP disconnection does not withdraw input or stop queue waiting, and delivery receipts arrive on the original SSE stream. The optional `sessionrecorder` records safe terminal fields by default; `WithExposure` explicitly enables additional diagnostics. See the [streaming guide](./docs/streaming.md#8-ag-ui-bridge) for routing and recording.
+For chat UIs, `agui.RunRegistry` starts a Thread when idle and sends new input to its active Stream, preserving native Stream.Send context semantics: cancellation can withdraw unclaimed input. For recorded runs, `aguisession.Session.MessageHandler` serves `POST /message`: it detaches dispatch from the supplement request context, records accepted input as a user message in the run's history before its terminal, and leaves delivery receipts on the original SSE stream; the assistant-ui example uses it for in-run guidance. The optional `sessionrecorder` records safe terminal fields by default; `WithExposure` explicitly enables additional diagnostics. See the [streaming guide](./docs/streaming.md#8-ag-ui-bridge) for routing and recording.
 
 **A2A**: `bridges/a2a` publishes any Runner as an A2A server, leaving routing, authentication, and TLS to the host:
 
@@ -510,7 +512,7 @@ ownership of its Agents. Use `Thread(key).Standby(ctx)` for ongoing input;
 covers Remote members, tools, approvals, limits, durable recovery and lazy Fork.
 
 The [live showcase](./examples/showcases/team-agent-workflow) runs a local
-plan → implement → review workflow with role sandboxes and a CopilotKit page:
+plan → implement → review workflow with role sandboxes and the assistant-ui page:
 
 ```bash
 ./examples/showcases/team-agent-workflow/start-all.sh claude
@@ -569,7 +571,7 @@ To integrate your own agent CLI: implement `driver.Driver`, get `adaptertest` pa
 - [`tools`](./examples/tools): expose a typed Go function to a real local provider without managing MCP yourself.
 - [`skills`](./examples/skills): select a skill and verify its proof file; [`profiles`](./examples/profiles): sync profile resources, optionally probe locally or send a task.
 - [`inspect`](./examples/inspect): two live calls followed by environment/model probes, selection of a declared reviewer skill, and profile observation.
-- [`web-chat`](./examples/web-chat): an SSE/AG-UI server with two front ends, [`aguiclient`](./examples/web-chat/aguiclient) and [`copilotkit`](./examples/web-chat/copilotkit).
+- [`web-chat`](./examples/web-chat): an SSE/AG-UI server with a built-in page; [`assistant-ui`](./examples/web-chat/assistant-ui) is the web front end, with durable history, failed-tool rendering, in-run guidance, approvals and opt-in active observation (fake by default).
 - [`a2a-server`](./examples/a2a-server): publish and call an Agent through A2A.
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow): planning, implementation, and review joined into one pipeline.
 

@@ -21,7 +21,7 @@ Claude Code로 바꾸려면 생성자의 Driver만 교체하면 됩니다. 나�
 ## 고급 기능
 
 - **구조화 출력**: Go 구조체를 정의하고 `RunAs[T]`를 호출하면, 에이전트가 출력 제약에 따라 실행되어 값이 채워진 객체를 반환합니다.
-- **여러 프로토콜 지원**: 내장 A2A/AGUI 어댑터를 한 줄로 적용해 Agent를 SSE + AGUI 스트리밍을 지원하는 표준 에이전트로 노출합니다. 사용자 정의 프런트엔드나 클라이언트를 연결해 에이전트 서비스를 구성할 수 있으며, 실행 가능한 CopilotKit 프런트엔드도 포함되어 있습니다.
+- **여러 프로토콜 지원**: 내장 A2A/AGUI 어댑터를 한 줄로 적용해 Agent를 SSE + AGUI 스트리밍을 지원하는 표준 에이전트로 노출합니다. 사용자 정의 프런트엔드나 클라이언트를 연결해 에이전트 서비스를 구성할 수 있으며, 실행 가능한 assistant-ui 프런트엔드도 포함되어 있습니다.
 - **팀**: 호스트가 선택한 leader가 각기 다른 Driver의 멤버나 Remote A2A 멤버를 조율합니다. 예를 들어 Codex leader에 계획 담당(Codex), 구현 담당(Claude), 리뷰 담당(Cursor)을 연결할 수 있습니다. 작업 업데이트와 worker 승인 요청은 leader의 Event 스트림에 모입니다. [팀 가이드](./docs/team.md)와 examples/showcases/team-agent-workflow 쇼케이스를 참고하세요.
 - **Agent 격리**: 로컬 에이전트 설정을 전용 디렉터리에 복제하고 로그인 상태를 링크로 공유하여 설정 변경을 격리합니다. 병렬 개발이나 역할 분담을 위해 여러 Codex/Claude Code 인스턴스를 동시에 실행할 수 있습니다.
 
@@ -220,7 +220,7 @@ func consumeApprovals(ctx context.Context, stream adaptor.Stream,
 
 응답은 정확히 한 번만 처리됩니다. 중복 응답, Kind 불일치, 종료된 실행은 각각 안정적인 오류(`ErrApprovalResolved`, `ErrApprovalKindMismatch`, `ErrApprovalExpired`)를 반환하며, 영값 요청도 영구적으로 차단되지 않습니다. 요청이 도착했을 때 `Events()`를 호출한 적이 없고 `OnApproval` handler도 없다면, 생명주기 알림과 함께 시간 초과 대체 처리를 즉시 적용합니다. 그 외에는 기한 안에 응답이 없을 때 `Policy.Approvals`의 `OnTimeout`을 적용하고, 거절에는 `OnReject`를 적용합니다. 대기 중인 요청의 저장 위치는 호스트가 정하며 프로세스 메모리로 한정되지 않습니다.
 
-실행 가능한 웹 HITL 예제는 [`web-chat/copilotkit`](./examples/web-chat/copilotkit)에 있습니다. `/decision/pending`, `/decision/resolve`의 두 엔드포인트를 사용하며, 페이지를 새로 고쳐도 대기 중인 의사 결정이 유지됩니다.
+실행 가능한 웹 HITL 예제는 [`web-chat/assistant-ui`](./examples/web-chat/assistant-ui)에 있습니다. 의사 결정은 `dec.*` 도구 호출의 Approve/Deny 버튼으로 표시되며, 호스트가 소유한 `/decision/pending`, `/decision/resolve`가 진행 중인 요청에 정확히 한 번 응답합니다.
 
 ## 여러 턴의 대화
 
@@ -431,7 +431,9 @@ if err != nil {
 
 ## 애플리케이션 연동
 
-**웹 프런트엔드**: 한 줄로 Agent를 AG-UI 프로토콜의 `http.Handler`로 감싸면, CopilotKit 같은 AG-UI 호환 클라이언트가 바로 연결할 수 있습니다.
+[AG-UI 1.0 브리지 계약](./docs/agui.md)
+
+**웹 프런트엔드**: 한 줄로 Agent를 AG-UI 프로토콜의 `http.Handler`로 감싸면, assistant-ui(`@ag-ui/client` 사용) 같은 AG-UI 호환 클라이언트가 바로 연결할 수 있습니다.
 
 ```go
 mux.Handle("/agent", sse.Handler(agent, sse.Options{
@@ -439,7 +441,7 @@ mux.Handle("/agent", sse.Handler(agent, sse.Options{
 }))
 ```
 
-채팅 UI에서는 `agui.RunRegistry`가 유휴 상태인 Thread에서 실행을 시작하고, 실행 중에는 해당 Stream으로 새 입력을 보냅니다. 기본 Stream.Send의 context 의미를 유지하므로 취소하면 아직 가져가지 않은 입력을 철회할 수 있습니다. CopilotKit 예제는 `POST /message`의 전송을 추가 요청의 context와 명시적으로 분리합니다. 전송이 시작된 뒤에는 HTTP 연결이 끊겨도 입력을 철회하거나 큐 대기를 끝내지 않으며, 전달 확인은 원래 SSE 스트림으로 도착합니다. 선택적으로 사용하는 `sessionrecorder`는 기본적으로 안전한 최종 필드를 기록하고, 추가 진단 정보는 `WithExposure`로 명시적으로 활성화합니다. 라우팅과 기록에 대해서는 [스트리밍 가이드](./docs/streaming.md#8-ag-ui-bridge)를 참고하세요.
+채팅 UI에서는 `agui.RunRegistry`가 유휴 상태인 Thread에서 실행을 시작하고, 실행 중에는 해당 Stream으로 새 입력을 보냅니다. 기본 Stream.Send의 context 의미를 유지하므로 취소하면 아직 가져가지 않은 입력을 철회할 수 있습니다. 기록되는 실행에서는 `aguisession.Session.MessageHandler`가 `POST /message`를 제공합니다. 전송을 추가 요청의 context와 분리하고, 수락된 입력을 종료 전에 user 메시지로 실행 기록에 남기며, 전달 확인은 원래 SSE 스트림으로 도착합니다. assistant-ui 예제는 실행 중 안내에 이를 사용합니다. 선택적으로 사용하는 `sessionrecorder`는 기본적으로 안전한 최종 필드를 기록하고, 추가 진단 정보는 `WithExposure`로 명시적으로 활성화합니다. 라우팅과 기록에 대해서는 [스트리밍 가이드](./docs/streaming.md#8-ag-ui-bridge)를 참고하세요.
 
 **A2A**: `bridges/a2a`는 임의의 Runner를 A2A 서버로 노출하고, 라우팅, 인증, TLS는 호스트에 맡깁니다.
 
@@ -501,7 +503,7 @@ func Coordinate(ctx context.Context, leader, planner, implementer *adaptor.Agent
 
 `context`, `adaptor "github.com/agent-dance/agent-adaptor/v2"`, `"github.com/agent-dance/agent-adaptor/v2/hosttools/team"`을 import하세요. Agent의 소유권은 호스트에 남습니다. 지속적인 입력에는 `Thread(key).Standby(ctx)`를 사용하고, 사용 중인 scope에 `Thread.Send`를 호출하면 `ErrThreadBusy`를 반환합니다. [팀 가이드](./docs/team.md)에는 Remote 멤버, 도구, 승인, 제한, 영속 복구, 지연 Fork를 설명합니다.
 
-[라이브 쇼케이스](./examples/showcases/team-agent-workflow)는 역할별 샌드박스와 CopilotKit 페이지를 사용해 로컬의 계획 → 구현 → 리뷰 흐름을 실행합니다.
+[라이브 쇼케이스](./examples/showcases/team-agent-workflow)는 역할별 샌드박스와 assistant-ui 페이지를 사용해 로컬의 계획 → 구현 → 리뷰 흐름을 실행합니다.
 
 ```bash
 ./examples/showcases/team-agent-workflow/start-all.sh claude
@@ -560,7 +562,7 @@ synced, err := agent.SyncProfile(ctx)                // explicitly materializes 
 - [`tools`](./examples/tools): MCP를 직접 관리하지 않고 타입이 지정된 Go 함수를 실제 로컬 provider에 노출합니다.
 - [`skills`](./examples/skills): skill을 선택하고 증거 파일을 확인합니다. [`profiles`](./examples/profiles)는 profile 리소스를 동기화하며, 선택적으로 로컬 프로브나 작업 전송을 수행합니다.
 - [`inspect`](./examples/inspect): 실제 호출 두 번을 실행한 뒤 환경 및 모델 프로브, 선언된 reviewer skill 선택, profile 관찰을 수행합니다.
-- [`web-chat`](./examples/web-chat): [`aguiclient`](./examples/web-chat/aguiclient), [`copilotkit`](./examples/web-chat/copilotkit) 두 프런트엔드가 포함된 SSE/AG-UI 서버입니다.
+- [`web-chat`](./examples/web-chat): 내장 페이지가 있는 SSE/AG-UI 서버입니다. 웹 프런트엔드는 [`assistant-ui`](./examples/web-chat/assistant-ui)이며 영속 기록, 도구 실패 표시, 실행 중 안내, 승인, 선택적 실행 관찰을 제공합니다(기본 fake).
 - [`a2a-server`](./examples/a2a-server): Agent를 A2A로 노출하고 호출합니다.
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow): 계획, 구현, 리뷰를 하나의 파이프라인으로 연결합니다.
 

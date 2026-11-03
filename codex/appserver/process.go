@@ -31,11 +31,13 @@ type Process struct {
 	stdout         *syncBuffer
 	stderr         *syncBuffer
 
-	turnMu  sync.Mutex
-	closeMu sync.Mutex
-	closed  bool
-	waitCh  chan struct{}
-	waitErr error
+	turnMu        sync.Mutex
+	closeMu       sync.Mutex
+	closed        bool
+	stopRequested bool          // distinguishes our shutdown from an independent peer exit
+	exitCh        chan struct{} // process exit, independent of inherited output writers
+	waitCh        chan struct{} // exit plus both reader joins
+	waitErr       error
 }
 
 // Open spawns and initializes an app-server and starts or resumes one thread,
@@ -62,25 +64,30 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 	}
 	cmd.Env = toExecEnv(opts.Env)
 
-	stdin, err := cmd.StdinPipe()
+	output, err := newProcessOutput(cmd, opts.processHooks)
 	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("codex app-server output pipes: %w", err)
+	}
+	stdinRead, stdin, err := processx.NewPipe(opts.processHooks.closed)
+	if err != nil {
+		output.close()
 		cancel()
 		return nil, fmt.Errorf("codex app-server stdin: %w", err)
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("codex app-server stdout: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("codex app-server stderr: %w", err)
-	}
+	cmd.Stdin = stdinRead.File
 	if err := cmd.Start(); err != nil {
+		_ = stdinRead.Close()
+		_ = stdin.Close()
+		output.close()
 		cancel()
 		return nil, fmt.Errorf("codex app-server start: %w", err)
 	}
+	_ = stdinRead.Close() // Start borrowed the read end; the child has its own copy.
+
+	opts.processHooks.started(output)
+	output.closeWriters()
+
 	if sink != nil {
 		_ = sink.Emit(driver.RunEvent{
 			Type:      driver.RunEventSpawn,
@@ -97,15 +104,16 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 	stdoutBuf := &syncBuffer{}
 	stderrBuf := &syncBuffer{}
 	stderrDone := make(chan struct{})
+	stderrReader := opts.processHooks.stderr(output.stderr)
 	go func() {
 		defer close(stderrDone)
-		_, _ = io.Copy(stderrBuf, stderr)
+		_, _ = io.Copy(stderrBuf, stderrReader)
 	}()
-	stream := newStdioStream(stdin, io.TeeReader(stdout, stdoutBuf))
+	stream := newStdioStream(stdin, io.TeeReader(opts.processHooks.stdout(outputPipeReader{output.stdout}), stdoutBuf))
 	client := NewClient(procCtx, stream)
 	p := &Process{
 		client: client, stream: stream, cmd: cmd, cancel: cancel,
-		stdout: stdoutBuf, stderr: stderrBuf, waitCh: make(chan struct{}),
+		stdout: stdoutBuf, stderr: stderrBuf, exitCh: make(chan struct{}), waitCh: make(chan struct{}),
 		freshThread: opts.ResumeThreadID == "" && opts.ForkThreadID == "",
 	}
 	if p.freshThread {
@@ -116,8 +124,11 @@ func Open(ctx context.Context, opts Options, sink driver.EventSink) (*Process, e
 	// returned thread identity before exposing the process.
 	client.SetNotificationHandler(p.onNotification)
 	go func() {
-		p.waitErr = cmd.Wait()
-		<-stderrDone
+		_ = output.wait(cmd, stream, stderrDone, func(err error) {
+			_ = stdin.Close()
+			p.waitErr = err
+			close(p.exitCh)
+		}, opts.processHooks)
 		p.closeMu.Lock()
 		p.closed = true
 		p.closeMu.Unlock()
@@ -182,7 +193,7 @@ func (p *Process) ThreadID() string {
 	return p.threadID
 }
 
-// Done closes after the subprocess has exited and stderr has been drained.
+// Done closes after process exit and both stdout and stderr readers finish.
 func (p *Process) Done() <-chan struct{} {
 	if p == nil {
 		done := make(chan struct{})
@@ -204,7 +215,7 @@ func (p *Process) IsClosed() bool {
 		return true
 	}
 	select {
-	case <-p.waitCh:
+	case <-p.exitCh:
 		return true
 	case <-p.client.DisconnectNotify():
 		return true
@@ -216,6 +227,9 @@ func (p *Process) IsClosed() bool {
 // RunTurn sends a prompt and any in-run continuations on the loaded thread. promptSent becomes
 // true immediately before turn/start because an RPC error cannot prove the
 // peer did not receive the request; callers must not replay in that case.
+// Healthy turns retain the live process and return bytes observed during the
+// turn. Failed/cancelled/disconnected turns join process exit and both readers
+// before capturing RawStreams, with draining bounded to five seconds after exit.
 func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSink) (result driver.Response, promptSent bool, err error) {
 	if p == nil {
 		return result, false, errors.New("codex app-server process is nil")
@@ -255,16 +269,47 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	if err == nil {
 		err = state.executionError()
 	}
-	if cancelErr := ctx.Err(); cancelErr != nil && !state.failedBeforeCancel() {
-		err = errors.Join(cancelErr, err)
-	} else if state.failedBeforeCancel() && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-		err = nil
+	// Capture external cancellation, including an owner's explicit shutdown,
+	// before initiating our own cleanup. A provider failure observed first is
+	// never reclassified as host cancellation.
+	cancellation := p.cancellation(ctx)
+	if state.failedBeforeCancel() {
+		cancellation = nil
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			err = nil
+		}
+	}
+	if cancellation != nil {
+		err = errors.Join(cancellation, err)
 	}
 	if err == nil {
 		if protocolErr := state.protocolError(); protocolErr != nil {
 			err = protocolErr
 		} else if !state.hasTerminal() {
 			err = errors.New("codex app-server protocol ended without turn/completed")
+		}
+	}
+	if err != nil {
+		if cancellation != nil {
+			_ = p.terminateAndWait(context.Background(), false)
+		} else {
+			// Protocol/RPC failure need not imply process failure. Let the peer
+			// finish writing diagnostics before escalating to a group kill.
+			_ = p.closeGracefully(context.Background(), 500*time.Millisecond, false)
+		}
+	}
+	if p.IsClosed() {
+		_ = p.closeGracefully(context.Background(), 500*time.Millisecond, false)
+		if readErr := p.stream.ReadError(); readErr != nil {
+			state.recordProtocolError(fmt.Errorf("decode JSON-RPC stdout: %w", readErr))
+			if err == nil {
+				err = state.protocolError()
+			}
+		}
+		// Disconnect and exit can both be ready after the drain cutoff. Keep
+		// the actual exit cause regardless of which signal won the select.
+		if p.waitErr != nil && cancellation == nil && !errors.Is(err, p.waitErr) {
+			err = fmt.Errorf("codex app-server exited: %w", errors.Join(p.waitErr, err))
 		}
 	}
 
@@ -276,10 +321,16 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	}
 	// Seal attribution and snapshot under the same dispatcher lock. Later
 	// frames are idle history for the next execution, never mutations of a
-	// response whose final accounting has already been copied.
+	// response whose final accounting has already been copied. Raw streams are
+	// attached only after any required shutdown and reader join above.
 	p.notificationMu.Lock()
 	p.state = nil
 	result = state.snapshot(opts, p.threadID, p.stdout.Since(stdoutStart), p.stderr.Since(stderrStart), exitCode, signal, timedOut)
+	if cancellation != nil {
+		// An owner's explicit shutdown cancels the turn even when ctx is live.
+		result.Failure = &driver.RunFailure{Code: driver.FailureCancelled, Message: cancellation.Error()}
+		result.Checkpoint = nil
+	}
 	baseline := cloneUsage(state.usageBaseline)
 	for _, id := range state.usageOrder {
 		usage := state.usageTurns[id]
@@ -300,21 +351,42 @@ func (p *Process) RunTurn(ctx context.Context, opts Options, sink driver.EventSi
 	p.freshThread = false
 	p.notificationMu.Unlock()
 	result = finalizeAppServerResult(opts.OutputSchema, result, err)
+	if result.Failure != nil || result.Checkpoint == nil {
+		// The caller retires an unhealthy writer. Stop it here so RawStreams
+		// include diagnostics written before exit, joined with both readers.
+		_ = p.closeGracefully(context.Background(), 500*time.Millisecond, false)
+		if result.RawStreams != nil {
+			result.RawStreams.Stdout = p.stdout.Since(stdoutStart)
+			result.RawStreams.Stderr = p.stderr.Since(stderrStart)
+		}
+	}
 	state.finishPublicResult(result, err)
 	return result, promptSent, err
 }
 
 // TerminateAndWait kills the independently grouped process and reaps it.
+// An active turn reports FailureCancelled and cannot produce a checkpoint.
 func (p *Process) TerminateAndWait(ctx context.Context) error {
+	return p.terminateAndWait(ctx, true)
+}
+
+func (p *Process) terminateAndWait(ctx context.Context, requested bool) error {
 	if p == nil {
 		return nil
 	}
 	p.closeMu.Lock()
+	if requested {
+		select {
+		case <-p.waitCh:
+		default:
+			p.stopRequested = true
+		}
+	}
 	if !p.closed {
 		p.closed = true
 		_ = p.client.Close()
-		p.cancel()
 	}
+	p.cancel()
 	p.closeMu.Unlock()
 	select {
 	case <-p.waitCh:
@@ -325,11 +397,23 @@ func (p *Process) TerminateAndWait(ctx context.Context) error {
 }
 
 // CloseGracefully closes stdin, then force-terminates after grace or ctx.
+// An active turn reports FailureCancelled and cannot produce a checkpoint.
 func (p *Process) CloseGracefully(ctx context.Context, grace time.Duration) error {
+	return p.closeGracefully(ctx, grace, true)
+}
+
+func (p *Process) closeGracefully(ctx context.Context, grace time.Duration, requested bool) error {
 	if p == nil {
 		return nil
 	}
 	p.closeMu.Lock()
+	if requested {
+		select {
+		case <-p.waitCh:
+		default:
+			p.stopRequested = true
+		}
+	}
 	if !p.closed {
 		p.closed = true
 		_ = p.client.Close()
@@ -343,6 +427,14 @@ func (p *Process) CloseGracefully(ctx context.Context, grace time.Duration) erro
 	select {
 	case <-p.waitCh:
 		return nil
+	case <-p.exitCh:
+		// The process is already gone; its independent drain has a deadline.
+		select {
+		case <-p.waitCh:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	case <-ctx.Done():
 		p.cancel()
 		return ctx.Err()
@@ -355,6 +447,19 @@ func (p *Process) CloseGracefully(ctx context.Context, grace time.Duration) erro
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// cancellation excludes shutdown initiated solely to clean up a failed turn.
+func (p *Process) cancellation(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p.closeMu.Lock()
+	defer p.closeMu.Unlock()
+	if p.stopRequested {
+		return context.Canceled
+	}
+	return nil
 }
 
 // onNotification stays installed while idle so a late usage snapshot advances

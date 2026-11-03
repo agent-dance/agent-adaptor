@@ -53,7 +53,7 @@ func TestDecodeHTTPRequestInvalidJSON(t *testing.T) {
 
 func TestDecodeHTTPRequestBodyLimit(t *testing.T) {
 	t.Parallel()
-	prefix := `{"messages":[{"role":"user","content":"hi"}]}`
+	prefix := `{"messages":[{"id":"m","role":"user","content":"hi"}]}`
 
 	t.Run("exactly at limit", func(t *testing.T) {
 		body := prefix + strings.Repeat(" ", aguiRequestLimitForTest-len(prefix))
@@ -91,31 +91,31 @@ func TestLastUserText(t *testing.T) {
 	}{
 		{
 			name: "plain string content",
-			body: `{"messages":[{"role":"user","content":"hi"}]}`,
+			body: `{"messages":[{"id":"m","role":"user","content":"hi"}]}`,
 			want: "hi",
 		},
 		{
 			name: "parts array concatenated with newlines",
-			body: `{"messages":[{"role":"user","content":[{"type":"text","text":"line1"},{"type":"text","text":"line2"}]}]}`,
+			body: `{"messages":[{"id":"m","role":"user","content":[{"type":"text","text":"line1"},{"type":"text","text":"line2"}]}]}`,
 			want: "line1\nline2",
 		},
 		{
 			name: "parts array skips non-text parts",
-			body: `{"messages":[{"role":"user","content":[{"type":"text","text":"a"},{"type":"image","url":"data:..."},{"type":"text","text":"b"}]}]}`,
+			body: `{"messages":[{"id":"m","role":"user","content":[{"type":"text","text":"a"},{"type":"image","source":{"type":"url","value":"data:..."}},{"type":"text","text":"b"}]}]}`,
 			want: "a\nb",
 		},
 		{
 			name: "prefers latest user message, ignores assistant reply after user",
 			body: `{"messages":[
-				{"role":"user","content":"first"},
-				{"role":"assistant","content":"reply"},
-				{"role":"user","content":"latest"}
+				{"id":"m","role":"user","content":"first"},
+				{"id":"m","role":"assistant","content":"reply"},
+				{"id":"m","role":"user","content":"latest"}
 			]}`,
 			want: "latest",
 		},
 		{
 			name: "skips non-user roles",
-			body: `{"messages":[{"role":"assistant","content":"only assistant"}]}`,
+			body: `{"messages":[{"id":"m","role":"assistant","content":"only assistant"}]}`,
 			want: "",
 		},
 		{
@@ -126,8 +126,8 @@ func TestLastUserText(t *testing.T) {
 		{
 			name: "falls back past empty user content to older populated user msg",
 			body: `{"messages":[
-				{"role":"user","content":"older"},
-				{"role":"user","content":""}
+				{"id":"m","role":"user","content":"older"},
+				{"id":"m","role":"user","content":""}
 			]}`,
 			want: "older",
 		},
@@ -221,10 +221,10 @@ func TestRunAgentInputPreservesExtensionFields(t *testing.T) {
 	body := `{
 		"threadId": "t",
 		"runId": "r",
-		"messages": [{"role":"user","content":"hi"}],
+		"messages": [{"id":"m","role":"user","content":"hi"}],
 		"state": {"x": 1},
-		"tools": [{"name":"lookup"}],
-		"context": [{"role":"system","content":"be terse"}],
+		"tools": [{"name":"lookup","description":"lookup"}],
+		"context": [{"description":"instructions","value":"be terse"}],
 		"forwardedProps": {"ab":"cd"}
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/agent", strings.NewReader(body))

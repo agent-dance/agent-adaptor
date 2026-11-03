@@ -85,46 +85,43 @@ jobs:
         go test ./codex/appserver -run='^$' -fuzz='^FuzzCodexAppserverNotificationDecoder$' -fuzztime=30s
         go test ./codex/appserver -run='^$' -fuzz='^FuzzDecodeThreadItem$' -fuzztime=30s
 
+    - name: Fuzz AG-UI input decoder
+      run: go test ./bridges/agui -run='^$' -fuzz='^FuzzDecodeInput$' -fuzztime=30s
+
   frontend:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+
+    - name: Set up Go for hermetic fake-server integration
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
 
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
         node-version: 22
         cache: npm
-        cache-dependency-path: |
-          examples/web-chat/aguiclient/web/package-lock.json
-          examples/web-chat/copilotkit/web/package-lock.json
+        cache-dependency-path: examples/web-chat/assistant-ui/web/package-lock.json
 
-    - name: Install AG-UI client dependencies
+    - name: Install assistant-ui dependencies
       run: npm ci
-      working-directory: examples/web-chat/aguiclient/web
+      working-directory: examples/web-chat/assistant-ui/web
 
-    - name: Build AG-UI client
+    - name: Build assistant-ui frontend
       run: npm run build
-      working-directory: examples/web-chat/aguiclient/web
+      working-directory: examples/web-chat/assistant-ui/web
 
-    - name: Audit AG-UI production dependencies
-      run: npm audit --omit=dev --audit-level=high
-      working-directory: examples/web-chat/aguiclient/web
-
-    - name: Install CopilotKit dependencies
-      run: npm ci
-      working-directory: examples/web-chat/copilotkit/web
-
-    - name: Lint CopilotKit frontend
-      run: npm run lint
-      working-directory: examples/web-chat/copilotkit/web
-
-    - name: Build CopilotKit frontend
-      run: npm run build
-      working-directory: examples/web-chat/copilotkit/web
+    - name: Test assistant-ui with official client and fake Go server
+      run: npm run test:integration
+      working-directory: examples/web-chat/assistant-ui/web
       env:
-        COPILOTKIT_TELEMETRY_DISABLED: "true"
+        GOTOOLCHAIN: local
+        AGENT_ADAPTOR_LIVE_CONFORMANCE: "0"
+        AGUI_TEST_NO_SOCKETS: "0"
 
-    - name: Audit CopilotKit production dependencies
+    - name: Audit assistant-ui production dependencies
       run: npm audit --omit=dev --audit-level=high
-      working-directory: examples/web-chat/copilotkit/web
+      working-directory: examples/web-chat/assistant-ui/web

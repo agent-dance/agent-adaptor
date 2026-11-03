@@ -15,10 +15,12 @@ Runners; this showcase does not start separate A2A servers.
 One `team.Thread("workflow").Send` execution contains the CLI workflow. Worker
 state and text progress appear as typed `SubagentUpdate` in the leader's Event
 stream. The AG-UI bridge projects worker lifecycles to
-`activityType="subagent"` messages; the CopilotKit page groups them in the right
-sidebar. Leader turns produce `TurnEnd`; the team's final `Done` and
-`Stream.Result()` agree. The web handler publishes the Team as a Runner in
-request-scoped task mode; it does not create a Standby or an input relay.
+`activityType="subagent"` messages; the assistant-ui page renders each as a
+collapsible worker card with its status, text and result. Leader turns produce
+`TurnEnd`; the team's final `Done` and `Stream.Result()` agree. Web mode serves
+the Team through `bridges/agui/aguisession` in request-scoped task mode, with
+in-memory history for reload, and in-run guidance to the leader through
+`POST /message` (`Stream.Send`); it does not create a Standby.
 
 The read-only plan role has a per-call `WithSchema[planFileArtifact]` contract.
 It returns structured `PLAN.md` data (`filename`, `media_type`, `summary`,
@@ -27,9 +29,9 @@ its text to the leader, which includes it in the implementation objective.
 Full member results remain in the Team TaskStore.
 
 The Team event projection includes each role's configured provider display name,
-live worker text, final text and decoded structured result. The CopilotKit sidebar
-uses these Activity fields for provider badges and a downloadable `PLAN.md`
-attachment. Full raw output, runtime metadata and transcripts stay in TaskStore;
+live worker text, final text and decoded structured result. The worker card
+shows the member name, status, text and the decoded result (including the
+`PLAN.md` content). Full raw output, runtime metadata and transcripts stay in TaskStore;
 the CLI audit reads the review result from there.
 
 Team owns one authenticated loopback MCP listener with execution-scoped tokens;
@@ -38,7 +40,7 @@ Agents. Task history uses memory here, so the example provides no crash recovery
 See the [team guide](../../../docs/team.md) for continuity, Standby, approvals,
 limits, durable recovery, Fork and Remote members.
 
-## One-command CopilotKit verification
+## One-command assistant-ui verification
 
 Choose the local CLI explicitly and run:
 
@@ -53,12 +55,13 @@ The script:
 1. installs the lockfile-pinned frontend dependencies when needed;
 2. builds and starts this Go backend on `127.0.0.1:8080`;
 3. waits for `/health` without starting an Agent run;
-4. builds and starts the maintained [CopilotKit frontend](../../web-chat/copilotkit) on
-   `127.0.0.1:3000` in team-workflow mode; and
+4. starts the maintained [assistant-ui page](../../web-chat/assistant-ui) on
+   `127.0.0.1:3000`, whose same-origin Vite proxy forwards to the backend
+   (`AGUI_BACKEND_URL`), so no CORS origin is needed; and
 5. shuts the backend down when the frontend exits.
 
-Open <http://127.0.0.1:3000>. The request is already filled in, so click Send
-to begin. Loading the page and probing `/health` are free. Every submitted
+Open <http://127.0.0.1:3000> and describe the change to plan, implement and
+review. Loading the page and probing `/health` are free. Every submitted
 message can start real leader and worker CLI calls and incur provider charges.
 The intended workflow has three delegated role tasks; leader executions/turns
 vary as it coordinates and integrates their results.
@@ -75,16 +78,15 @@ Useful environment overrides:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `TEAM_ADDR` | `127.0.0.1:8080` | Backend listen address |
-| `TEAM_BACKEND_BASE_URL` | `http://127.0.0.1:8080` | Browser-reachable backend base URL |
-| `TEAM_UI_PORT` | `3000` | CopilotKit server port |
-| `TEAM_UI_ORIGIN` | `http://127.0.0.1:$TEAM_UI_PORT` | Exact allowed browser origin |
+| `TEAM_BACKEND_BASE_URL` | `http://127.0.0.1:8080` | Backend base URL the page's dev proxy forwards to |
+| `TEAM_UI_PORT` | `3000` | assistant-ui page port |
 | `TEAM_TIMEOUT` | `2h` | Lifetime of the backend process |
 | `TEAM_ROLE_TIMEOUT` | `4m` | Maximum duration of one delegation |
 | `KEEP_WORKSPACE` | `0` | Set to `1` to retain the temporary workspace on shutdown |
 
-When changing the listen address for remote access, also set the corresponding
-browser-reachable URL and exact UI origin. Do not expose this paid endpoint with
-a wildcard CORS policy.
+When changing the listen address, also set the matching backend base URL. Do not
+expose this paid endpoint publicly; for a separately served browser use
+`-web-cors` with one exact origin, never a wildcard.
 
 ## CLI-only verification
 

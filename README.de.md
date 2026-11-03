@@ -21,7 +21,7 @@ Für den Wechsel zu Claude Code genügt es, den Driver im Konstruktor auszutausc
 ## Weiterführende Funktionen
 
 - **Strukturierte Ausgabe**: Definieren Sie eine Go-Struktur und rufen Sie `RunAs[T]` auf. Der Agent führt die Aufgabe mit einer Ausgabevorgabe aus und liefert ein ausgefülltes Objekt zurück.
-- **Mehrere Protokolle**: Die eingebauten A2A-/AGUI-Brücken stellen einen Agent mit einer Zeile als standardkonformen Agent mit SSE- und AGUI-Streaming bereit. Für einen vollständigen Dienst brauchen Sie dann nur noch ein eigenes Frontend oder einen Client; ein ausführbares CopilotKit-Frontend ist enthalten.
+- **Mehrere Protokolle**: Die eingebauten A2A-/AGUI-Brücken stellen einen Agent mit einer Zeile als standardkonformen Agent mit SSE- und AGUI-Streaming bereit. Für einen vollständigen Dienst brauchen Sie dann nur noch ein eigenes Frontend oder einen Client; ein ausführbares assistant-ui-Frontend ist enthalten.
 - **Teams**: Ein vom Host gewählter Leader koordiniert Mitglieder mit beliebigen Drivers, etwa Codex als Leader mit einem Planungsmitglied auf Codex, einem Implementierungsmitglied auf Claude und einem Reviewer auf Cursor, sowie entfernte A2A-Mitglieder. Aufgabenmeldungen und Genehmigungsanfragen der Worker erscheinen gemeinsam im Event-Stream des Leaders. Siehe [Team-Leitfaden](./docs/team.md) und das Showcase examples/showcases/team-agent-workflow.
 - **Agent-Isolation**: Klonen Sie die Agent-Konfiguration des Rechners in ein eigenes Verzeichnis und verknüpfen Sie den Anmeldestatus. Konfigurationsänderungen bleiben getrennt, sodass mehrere Codex-/Claude-Code-Instanzen parallel an unterschiedlichen Aufgaben oder in verschiedenen Rollen arbeiten können.
 
@@ -220,7 +220,7 @@ Der Host kann später an einem ergänzenden Endpunkt `req.Approve(r.Context())`,
 
 Eine Anfrage kann genau einmal beantwortet werden. Doppelte Antworten, ein unpassender Kind-Wert und beendete Ausführungen liefern stabile Fehler (`ErrApprovalResolved`, `ErrApprovalKindMismatch`, `ErrApprovalExpired`); auch eine Anfrage mit Nullwert blockiert niemals unbegrenzt. Wurde beim Eintreffen weder `Events()` aufgerufen noch ein `OnApproval`-Handler eingerichtet, greift die Timeout-Ersatzentscheidung sofort und erzeugt einen Lebenszyklus-Hinweis. Andernfalls übernimmt `OnTimeout` aus `Policy.Approvals`, wenn bis zur Frist niemand antwortet; nach einer Ablehnung gilt `OnReject`. Wo der Host wartende Anfragen aufbewahrt, entscheidet er selbst; das Audit ist nicht auf Prozessspeicher beschränkt.
 
-Ein vollständiges, ausführbares Web-Beispiel für HITL bietet [`web-chat/copilotkit`](./examples/web-chat/copilotkit). Die Endpunkte `/decision/pending` und `/decision/resolve` halten wartende Entscheidungen auch nach einem Neuladen der Seite verfügbar.
+Ein vollständiges, ausführbares Web-Beispiel für HITL bietet [`web-chat/assistant-ui`](./examples/web-chat/assistant-ui): Entscheidungen erscheinen als `dec.*`-Werkzeugaufrufe mit Approve/Deny, und die hosteigenen Endpunkte `/decision/pending` und `/decision/resolve` beantworten die laufende Anfrage genau einmal.
 
 ## Mehrere Konversationsrunden
 
@@ -431,7 +431,9 @@ Die Ausgabeschichten von `Result` bleiben voneinander getrennt:
 
 ## Anbindung an Anwendungen
 
-**Web-Frontends**: Eine Zeile verpackt einen Agent in einen `http.Handler` für das AG-UI-Protokoll. AG-UI-kompatible Clients wie CopilotKit können sich direkt verbinden:
+[AG-UI-1.0-Protokollvertrag](./docs/agui.md)
+
+**Web-Frontends**: Eine Zeile verpackt einen Agent in einen `http.Handler` für das AG-UI-Protokoll. AG-UI-kompatible Clients wie assistant-ui mit `@ag-ui/client` können sich direkt verbinden:
 
 ```go
 mux.Handle("/agent", sse.Handler(agent, sse.Options{
@@ -439,7 +441,7 @@ mux.Handle("/agent", sse.Handler(agent, sse.Options{
 }))
 ```
 
-Für Chat-Oberflächen startet `agui.RunRegistry` im Leerlauf eine Thread-Ausführung und leitet weitere Eingaben an deren aktiven Stream weiter. Dabei gilt der unveränderte Kontextvertrag von Stream.Send: Ein Abbruch kann noch nicht abgeholte Eingaben zurückziehen. Das CopilotKit-Beispiel entkoppelt die Zustellung über `POST /message` ausdrücklich vom Kontext der ergänzenden Anfrage. Nach Beginn der Zustellung zieht ein HTTP-Verbindungsabbruch die Eingabe nicht zurück und beendet auch kein Warten auf freien Platz in der Warteschlange; Zustellungsbestätigungen erscheinen im ursprünglichen SSE-Stream. Der optionale `sessionrecorder` zeichnet standardmäßig unbedenkliche Abschlussfelder auf; zusätzliche Diagnosedaten werden ausdrücklich mit `WithExposure` aktiviert. Routing und Aufzeichnung beschreibt der [Streaming-Leitfaden](./docs/streaming.md#8-ag-ui-bridge).
+Für Chat-Oberflächen startet `agui.RunRegistry` im Leerlauf eine Thread-Ausführung und leitet weitere Eingaben an deren aktiven Stream weiter. Dabei gilt der unveränderte Kontextvertrag von Stream.Send: Ein Abbruch kann noch nicht abgeholte Eingaben zurückziehen. Für aufgezeichnete Läufe stellt `aguisession.Session.MessageHandler` `POST /message` bereit: Die Zustellung wird vom Kontext der ergänzenden Anfrage entkoppelt, angenommene Eingaben werden vor dem Abschluss als user-Nachricht im Verlauf des Laufs aufgezeichnet, und Zustellungsbestätigungen erscheinen im ursprünglichen SSE-Stream. Das assistant-ui-Beispiel nutzt das für Hinweise während des Laufs. Der optionale `sessionrecorder` zeichnet standardmäßig unbedenkliche Abschlussfelder auf; zusätzliche Diagnosedaten werden ausdrücklich mit `WithExposure` aktiviert. Routing und Aufzeichnung beschreibt der [Streaming-Leitfaden](./docs/streaming.md#8-ag-ui-bridge).
 
 **A2A**: `bridges/a2a` veröffentlicht einen beliebigen Runner als A2A-Server. Routing, Authentifizierung und TLS liegen beim Host:
 
@@ -501,7 +503,7 @@ func Coordinate(ctx context.Context, leader, planner, implementer *adaptor.Agent
 
 Importieren Sie `context`, `adaptor "github.com/agent-dance/agent-adaptor/v2"` und `"github.com/agent-dance/agent-adaptor/v2/hosttools/team"`. Die Agents bleiben in der Verantwortung des Hosts. Für fortlaufende Eingaben verwenden Sie `Thread(key).Standby(ctx)`; `Thread.Send` meldet bei belegtem Scope `ErrThreadBusy`. Der [Team-Leitfaden](./docs/team.md) behandelt entfernte Mitglieder, Tools, Genehmigungen, Grenzen, persistente Wiederherstellung und verzögerte Verzweigung.
 
-Das [Live-Showcase](./examples/showcases/team-agent-workflow) führt einen lokalen Ablauf von Planung über Implementierung bis zum Review aus, mit Sandbox pro Rolle und einer CopilotKit-Seite:
+Das [Live-Showcase](./examples/showcases/team-agent-workflow) führt einen lokalen Ablauf von Planung über Implementierung bis zum Review aus, mit Sandbox pro Rolle und der assistant-ui-Seite:
 
 ```bash
 ./examples/showcases/team-agent-workflow/start-all.sh claude
@@ -560,7 +562,7 @@ Für die Anbindung einer eigenen Agent-CLI implementieren Sie `driver.Driver` un
 - [`tools`](./examples/tools): Eine typisierte Go-Funktion einem echten lokalen Provider bereitstellen, ohne MCP selbst zu verwalten.
 - [`skills`](./examples/skills): Einen Skill auswählen und seine Nachweisdatei prüfen; [`profiles`](./examples/profiles): Profilressourcen synchronisieren, optional lokal prüfen oder eine Aufgabe senden.
 - [`inspect`](./examples/inspect): Zwei echte Aufrufe, anschließend Umgebungs- und Modellprüfungen, Auswahl eines deklarierten Reviewer-Skills und Beobachtung des Profilzustands.
-- [`web-chat`](./examples/web-chat): SSE-/AG-UI-Server mit den beiden Frontends [`aguiclient`](./examples/web-chat/aguiclient) und [`copilotkit`](./examples/web-chat/copilotkit).
+- [`web-chat`](./examples/web-chat): SSE-/AG-UI-Server mit eingebauter Seite; das Web-Frontend ist [`assistant-ui`](./examples/web-chat/assistant-ui) mit dauerhaftem Verlauf, Werkzeugfehlern, Hinweisen während des Laufs, Freigaben und optionaler Laufbeobachtung (standardmäßig fake).
 - [`a2a-server`](./examples/a2a-server): Einen Agent über A2A veröffentlichen und aufrufen.
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow): Planung, Implementierung und Review in einem Ablauf.
 

@@ -48,7 +48,7 @@ func TestTranslatorAndDecoderPreserveEventMetaAndToolSnapshots(t *testing.T) {
 		t.Fatalf("decode matched=%v err=%v", matched, err)
 	}
 	tool, ok := decoded.(adaptor.ToolCall)
-	if !ok || tool.Phase != adaptor.PhaseEnd || !reflect.DeepEqual(tool.Args, map[string]any{"cmd": "go test"}) || !reflect.DeepEqual(tool.Result, map[string]any{"exit": float64(0)}) {
+	if !ok || tool.Phase != adaptor.PhaseEnd || !reflect.DeepEqual(tool.Args, map[string]any{"cmd": "go test"}) || !reflect.DeepEqual(tool.Result, map[string]any{"exit": json.Number("0")}) {
 		t.Fatalf("decoded tool = %#v", decoded)
 	}
 	gotMeta := decoded.Meta()
@@ -96,7 +96,7 @@ func TestApprovalAndDroppedRoundTripAreCompleteAndPolicyGated(t *testing.T) {
 		t.Fatalf("decode drop matched=%v err=%v", matched, err)
 	}
 	drop := decoded.(adaptor.Dropped)
-	if drop.Count != 4 || drop.FirstSequence != 2 || drop.LastSequence != 5 || drop.ByKind["text.content"] != 3 || drop.Reason != "backpressure" || drop.Details["capacity"] != float64(1) {
+	if drop.Count != 4 || drop.FirstSequence != 2 || drop.LastSequence != 5 || drop.ByKind["text.content"] != 3 || drop.Reason != "backpressure" || drop.Details["capacity"] != json.Number("1") {
 		t.Fatalf("drop = %#v", drop)
 	}
 }

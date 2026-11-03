@@ -480,7 +480,7 @@ func TestHandlerRequestBodyLimit(t *testing.T) {
 		prefix   string
 	}{
 		{name: "Raw", protocol: sse.Raw, prefix: `{"prompt":"hi"}`},
-		{name: "AG-UI", protocol: sse.AGUI, prefix: `{"messages":[{"role":"user","content":"hi"}]}`},
+		{name: "AG-UI", protocol: sse.AGUI, prefix: `{"messages":[{"id":"m","role":"user","content":"hi"}]}`},
 	}
 	for _, tc := range tests {
 		tc := tc

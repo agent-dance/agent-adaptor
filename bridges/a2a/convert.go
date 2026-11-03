@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	a2aproto "github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/agent-dance/agent-adaptor/v2/internal/jsonnumber"
 )
 
 const (
@@ -255,30 +256,21 @@ func normalizeJSONValue(v any) (any, bool) {
 func normalizeDecodedJSONNumbers(value any) (any, bool) {
 	switch typed := value.(type) {
 	case json.Number:
-		raw := typed.String()
-		if strings.ContainsAny(raw, ".eE") {
-			number, err := strconv.ParseFloat(raw, 64)
-			if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
-				return nil, false
-			}
-			if math.Trunc(number) == number && math.Abs(number) > float64(maxA2AJSONInteger) {
-				return nil, false
-			}
-			return number, true
-		}
-		if number, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		if number, ok := jsonnumber.Int64(typed); ok {
 			if number < -int64(maxA2AJSONInteger) || number > int64(maxA2AJSONInteger) {
 				return nil, false
 			}
 			return number, true
 		}
-		if number, err := strconv.ParseUint(raw, 10, 64); err == nil {
-			if number > maxA2AJSONInteger {
-				return nil, false
-			}
-			return number, true
+		// Fractional data remains floating-point for the A2A interoperable
+		// JSON contract. Integers above the safe range must never be rounded
+		// into it, including decimal/exponent spellings.
+		number, err := strconv.ParseFloat(typed.String(), 64)
+		if err != nil || math.IsInf(number, 0) || math.IsNaN(number) ||
+			(math.Trunc(number) == number && math.Abs(number) > float64(maxA2AJSONInteger)) {
+			return nil, false
 		}
-		return nil, false
+		return number, true
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, child := range typed {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the real team-agent-workflow backend and the maintained CopilotKit UI.
+# Start the real team-agent-workflow backend and the maintained assistant-ui page.
 #
 # Usage:
 #   ./examples/showcases/team-agent-workflow/start-all.sh claude
@@ -11,7 +11,7 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
-COPILOTKIT_WEB="$ROOT/examples/web-chat/copilotkit/web"
+ASSISTANT_UI_WEB="$ROOT/examples/web-chat/assistant-ui/web"
 
 usage() {
 	printf 'Usage: %s <claude|codex|cursor|codebuddy> [team-agent-workflow flags...]\n' "$0" >&2
@@ -41,23 +41,19 @@ command -v curl >/dev/null || { printf 'curl is required\n' >&2; exit 1; }
 : "${TEAM_ADDR:=127.0.0.1:8080}"
 : "${TEAM_BACKEND_BASE_URL:=http://127.0.0.1:8080}"
 : "${TEAM_UI_PORT:=3000}"
-: "${TEAM_UI_ORIGIN:=http://127.0.0.1:${TEAM_UI_PORT}}"
 : "${TEAM_TIMEOUT:=2h}"
 : "${TEAM_ROLE_TIMEOUT:=4m}"
 : "${KEEP_WORKSPACE:=0}"
 
 TEAM_BACKEND_BASE_URL="${TEAM_BACKEND_BASE_URL%/}"
-export AGENT_BACKEND_URL="$TEAM_BACKEND_BASE_URL/agent"
-export NEXT_PUBLIC_AGENT_BACKEND_BASE="$TEAM_BACKEND_BASE_URL"
-export NEXT_PUBLIC_COPILOTKIT_MODE=team-agent-workflow
-export COPILOTKIT_TELEMETRY_DISABLED=true
-export PORT="$TEAM_UI_PORT"
+# The page calls same-origin paths; Vite's dev proxy forwards them to the backend,
+# so the backend needs no CORS origin.
+export AGUI_BACKEND_URL="$TEAM_BACKEND_BASE_URL"
 
-cd "$COPILOTKIT_WEB"
+cd "$ASSISTANT_UI_WEB"
 if [[ ! -d node_modules ]]; then
 	npm ci
 fi
-npm run build
 
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/team-agent-workflow.XXXXXX")"
 BACKEND_PID=""
@@ -78,7 +74,6 @@ BACKEND_ARGS=(
 	"-leader=$LEADER"
 	-web-mode
 	"-web-addr=$TEAM_ADDR"
-	"-web-cors=$TEAM_UI_ORIGIN"
 	"-timeout=$TEAM_TIMEOUT"
 	"-role-timeout=$TEAM_ROLE_TIMEOUT"
 )
@@ -109,8 +104,8 @@ if [[ "$ready" != "1" ]]; then
 fi
 
 printf 'team backend: %s/agent\n' "$TEAM_BACKEND_BASE_URL"
-printf 'CopilotKit UI: %s\n' "$TEAM_UI_ORIGIN"
+printf 'assistant-ui page: http://127.0.0.1:%s\n' "$TEAM_UI_PORT"
 printf 'Submitting one message runs four real, potentially billed CLI turns.\n'
 
-cd "$COPILOTKIT_WEB"
-npm run start -- --port "$TEAM_UI_PORT"
+cd "$ASSISTANT_UI_WEB"
+npm run dev -- --port "$TEAM_UI_PORT" --strictPort

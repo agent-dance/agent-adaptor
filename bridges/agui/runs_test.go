@@ -259,7 +259,8 @@ func TestMessageTurnAndDoneProjection(t *testing.T) {
 }
 
 func TestCustomEventsAlwaysCarryValue(t *testing.T) {
-	translator := agui.NewEventTranslator()
+	// Operational notices are opt-in; an exact passthrough kind keeps its CUSTOM form.
+	translator := agui.NewEventTranslator(agui.WithNoticePassthrough("empty"))
 	translator.Translate(adaptor.RunStarted{RunID: "run"})
 	out := translator.Translate(adaptor.Notice{Kind: "empty"})
 	if len(out) != 1 {
@@ -313,7 +314,7 @@ func TestDoneBeforeRunStartedUsesStreamIdentity(t *testing.T) {
 		translated = append(translated, event)
 	}
 	assertVerified(t, translated)
-	started, ok := translated[0].(*events.RunStartedEvent)
+	started, ok := translated[0].(*agui.RunStartedEvent)
 	if !ok || started.RunID() != stream.RunID() {
 		t.Fatalf("start = %#v, want Stream.RunID %q", translated[0], stream.RunID())
 	}

@@ -191,7 +191,7 @@ Cancellation ends downstream sends and cancels the underlying execution. Use Eve
 
 Only the caller that creates the Stream consumes Events and Result. Concurrent supplement routes return admission acknowledgements; delivery receipts remain on the original event stream. RunRegistry passes the sender context unchanged to Stream.Send: cancellation can withdraw unclaimed input even after Send returns nil. Once claimed, the Driver acknowledgement settles it. Hosts choosing an HTTP lifetime independent of the request must supply that context explicitly. New-run options do not reconfigure an active Stream. Hosts wanting continuous conversations can retain a Thread.Standby handle instead.
 
-The [CopilotKit example](../examples/web-chat/copilotkit) implements `POST /message` with `{threadId, messageId, text}`. Success is HTTP 202 with `{runId, messageId, state: "accepted"}`; actual delivery is reported over the original SSE stream. The endpoint checks the request context before dispatch, then explicitly passes `context.WithoutCancel(requestCtx)` to the active Stream. Once dispatch begins, disconnecting the supplement request neither withdraws the input nor stops a queue-space wait; Stream cancellation or completion releases that wait. The original /agent execution remains tied to its own SSE request context. No active run or a finished run yields 409, other MessageError admissions 422, context cancellation/deadline 408, and infrastructure/history errors 500. If history storage fails after admission, the 500 response still includes `state: "accepted"`; retry decisions must preserve that fact and the original message ID. Malformed input is 400 and an oversized body is 413.
+`bridges/agui/aguisession` provides the same routing for recorded runs: `Session.MessageHandler()` accepts `POST {threadId, messageId, text}`, authorizes `OpMessage` through the host resolver and calls the active run's `Stream.Send` with the human author and Soon timing. Success is HTTP 202 with `{threadId, runId, messageId, state: "accepted"}`; delivery is reported by `message.update` on the original run's stream. The run's sole drain records accepted input as a user message before `Done` and the terminal, so live observers, `history.load` and the next turn's history verification see the same message ID; rejected input creates no history. The endpoint checks the request context before dispatch, then passes `context.WithoutCancel(requestCtx)`: once dispatched, disconnecting the companion request neither withdraws the input nor stops a queue-space wait. No active run yields 409 `agui.run_inactive`, a reused message ID 409 `agui.duplicate_message`, other MessageError admissions 422 `agui.message_rejected`, cancellation before dispatch 408, malformed input 400 and an oversized body 413. If recording fails after admission, the 500 response still carries `state: "accepted"` and the run fails closed; retries must keep the message ID. A new AG-UI run POSTed while a run is active is rejected with 409 `agui.run_active` rather than silently merged. The [assistant-ui example](../examples/web-chat/assistant-ui) uses this route for in-run guidance.
 
 ### Recording and replay
 
@@ -228,7 +228,7 @@ An Agent binds incoming session identities to named Threads automatically: AG-UI
 
 Client disconnection cancels request-bound work. Raw message/turn frames are `message.update` and `turn.end`; its final run frame is derived from Result after draining rather than a literal Go Done event. Raw sequence cursors/Last-Event-ID do not provide persistent replay. SSE carries approval information outward; a callback or authenticated companion route must hold and answer the live responder.
 
-Runnable servers and clients are in [`web-chat`](../examples/web-chat), [`aguiclient`](../examples/web-chat/aguiclient), and [`copilotkit`](../examples/web-chat/copilotkit).
+Runnable servers and clients are in [`web-chat`](../examples/web-chat) and [`assistant-ui`](../examples/web-chat/assistant-ui).
 
 ## 10. Driver streaming fidelity
 
@@ -245,7 +245,7 @@ A false field still leaves the same public Stream available. Coarse providers ma
 
 ## 11. AG-UI version alignment
 
-The Go dependency is pinned by go.mod, and frontend dependencies by the CopilotKit lockfile. Their version coordinates differ. `go test ./internal/aguiversion/...` checks both pins; deliberate upgrades require updating its expectations and revalidating the bridge fixtures.
+The Go dependency is pinned by go.mod, and frontend dependencies by the assistant-ui lockfile. Their version coordinates differ. `go test ./internal/aguiversion/...` checks both pins; deliberate upgrades require updating its expectations and revalidating the bridge fixtures.
 
 ## 12. Message delivery capabilities
 

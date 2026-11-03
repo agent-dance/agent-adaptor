@@ -937,9 +937,14 @@ func TestRunCancellationReturnsPartialRawWithoutCheckpoint(t *testing.T) {
 	if result.Checkpoint != nil || result.RawStreams == nil || result.RawStreams.Stdout == "" {
 		t.Fatalf("cancelled partial result = %#v", result)
 	}
+	if result.Failure == nil || result.Failure.Code != driver.FailureCancelled {
+		t.Fatalf("cancel classification = %#v", result.Failure)
+	}
+
 	verifyAppserverContracts(t, sink, result)
-	if got := sink.streams[len(sink.streams)-1].Kind; got != driver.StreamRunError {
-		t.Fatalf("last public payload = %q, want %q", got, driver.StreamRunError)
+	terminal := sink.streams[len(sink.streams)-1]
+	if terminal.Kind != driver.StreamRunError || terminal.Error == nil || terminal.Error.Code != driver.FailureCancelled {
+		t.Fatalf("cancel terminal = %#v", terminal)
 	}
 }
 
@@ -1013,7 +1018,9 @@ func main() {
 	writer := bufio.NewWriter(os.Stdout)
 	defer func() {
 		_ = writer.Flush()
-		_, _ = fmt.Fprint(os.Stderr, "stderr-after-terminal")
+		if scenario != "cancel" {
+			_, _ = fmt.Fprint(os.Stderr, "stderr-after-terminal")
+		}
 	}()
 	write := func(frame string) {
 		if scenario == "mixed-usage-chain" || scenario == "missing-usage-chain" {
@@ -1081,6 +1088,10 @@ func main() {
 				respond(req.ID, "{\"turn\":{\"id\":\" \",\"status\":\"inProgress\"}}")
 				continue
 			}
+			if scenario == "exit-before-reply" {
+				_, _ = fmt.Fprint(os.Stderr, "stderr-before-exit")
+				os.Exit(17)
+			}
 			if scenario == "fresh-early-usage" {
 				write("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thread-fake\",\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}}")
 				write(fmt.Sprintf("{\"method\":\"thread/tokenUsage/updated\",\"params\":{\"threadId\":\"thread-fake\",\"turnId\":\"turn-fake\",\"tokenUsage\":{\"last\":{\"inputTokens\":2,\"outputTokens\":2},\"total\":{\"inputTokens\":%d,\"outputTokens\":%d}}}}", turnCount*5, turnCount*5))
@@ -1092,6 +1103,9 @@ func main() {
 			eventThread := currentThread
 			if scenario == "scope-mismatch" {
 				eventThread = "wrong-thread"
+			}
+			if scenario == "cancel" {
+				_, _ = fmt.Fprint(os.Stderr, "stderr-before-cancel")
 			}
 			write(fmt.Sprintf("{\"method\":\"turn/started\",\"params\":{\"threadId\":%q,\"turn\":{\"id\":\"turn-fake\",\"status\":\"inProgress\"}}}", eventThread))
 			eventThread = currentThread
@@ -1108,6 +1122,10 @@ func main() {
 			write(fmt.Sprintf("{\"method\":\"item/started\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":\"\"}}}", eventThread))
 			write(fmt.Sprintf("{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":%q,\"itemId\":\"msg-fake\",\"threadId\":%q,\"turnId\":\"turn-fake\"}}", message, eventThread))
 			write(fmt.Sprintf("{\"method\":\"item/completed\",\"params\":{\"threadId\":%q,\"turnId\":\"turn-fake\",\"item\":{\"id\":\"msg-fake\",\"type\":\"agentMessage\",\"text\":%q}}}", eventThread, message))
+			if scenario == "exit-before-terminal" {
+				_, _ = fmt.Fprint(os.Stderr, "stderr-before-exit")
+				os.Exit(17)
+			}
 			if scenario == "terminal-usage-chain" || scenario == "mixed-usage-chain" || scenario == "missing-usage-chain" {
 				if turnCount < 3 {
 					if scenario != "terminal-usage-chain" && turnCount == 1 {
@@ -1134,6 +1152,11 @@ func main() {
 				continue
 			}
 			if scenario == "missing" {
+				return
+			}
+			if scenario == "malformed-tail" {
+				write("!")
+				write(strings.Repeat("raw-tail-", 16384) + "end-of-raw-tail")
 				return
 			}
 			if scenario == "malformed" {

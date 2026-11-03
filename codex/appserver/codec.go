@@ -26,20 +26,25 @@ import (
 // client which spawned a goroutine per message and reordered under mutex
 // contention.
 type stdioStream struct {
-	stdin   io.WriteCloser
-	decoder *json.Decoder
-	enc     *json.Encoder
-	wmu     sync.Mutex
-	rmu     sync.Mutex
-	readErr error
+	stdout   io.Reader
+	readDone chan struct{}
+	readOnce sync.Once
+	stdin    io.WriteCloser
+	decoder  *json.Decoder
+	enc      *json.Encoder
+	wmu      sync.Mutex
+	rmu      sync.Mutex
+	readErr  error
 }
 
 // newStdioStream returns an ObjectStream bound to a subprocess's I/O.
 func newStdioStream(stdin io.WriteCloser, stdout io.Reader) *stdioStream {
 	return &stdioStream{
-		stdin:   stdin,
-		decoder: json.NewDecoder(stdout),
-		enc:     json.NewEncoder(stdin),
+		stdin:    stdin,
+		stdout:   stdout,
+		readDone: make(chan struct{}),
+		decoder:  json.NewDecoder(stdout),
+		enc:      json.NewEncoder(stdin),
 	}
 }
 
@@ -52,6 +57,22 @@ func (s *stdioStream) ReadObject(v interface{}) error {
 			s.readErr = err
 		}
 		s.rmu.Unlock()
+	}
+	if err != nil {
+		s.readOnce.Do(func() {
+			if errors.Is(err, io.EOF) {
+				close(s.readDone)
+				return
+			}
+			// Parsing stops on corruption, but raw capture must drain the tail.
+			// Return the protocol error immediately so shutdown can bound a
+			// peer that ignores stdin EOF; readDone joins this raw-only reader.
+			_ = s.stdin.Close()
+			go func() {
+				defer close(s.readDone)
+				_, _ = io.Copy(io.Discard, s.stdout)
+			}()
+		})
 	}
 	return err
 }

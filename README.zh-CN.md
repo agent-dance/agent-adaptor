@@ -21,7 +21,7 @@ result, err := agent.Send(ctx, "Fix the failing tests").Result()
 ## 高级功能
 
 - **结构化输出**：定义 Go 结构体，调用 `RunAs[T]`，即可约束 Agent 输出并取得填好的对象。
-- **多协议修饰**：内置 A2A/AGUI 适配，一行代码即可将 Agent 包装为支持 SSE + AGUI 流式输出的服务入口，再接入自定义前端或客户端；仓库附带可运行的 CopilotKit 前端。
+- **多协议修饰**：内置 A2A/AGUI 适配，一行代码即可将 Agent 包装为支持 SSE + AGUI 流式输出的服务入口，再接入自定义前端或客户端；仓库附带可运行的 assistant-ui 前端。
 - **团队**：由宿主选择 leader，协调不同 Driver 的本地成员或 Remote A2A 成员。例如由 Codex 带领规划成员（Codex）、实现成员（Claude）和审查成员（Cursor），任务更新与 worker 审批统一汇入 leader 的 Event 流。参见[团队指南](./docs/team.md)及 examples/showcases/team-agent-workflow 示例。
 - **Agent 隔离**：将本机配置克隆到独立目录，并链接登录状态，使配置修改彼此隔离。可同时运行多个 Codex/Claude Code 实例，承担并行任务或不同角色。
 
@@ -220,7 +220,7 @@ func consumeApprovals(ctx context.Context, stream adaptor.Stream,
 
 请求只能应答一次。重复应答、Kind 不匹配、执行结束分别返回稳定错误 `ErrApprovalResolved`、`ErrApprovalKindMismatch`、`ErrApprovalExpired`；零值请求也不会永久阻塞。请求到达时若宿主既未调用 `Events()`，也未安装 `OnApproval`，会立即采用超时兜底并发布生命周期 Notice。否则超时后由 `Policy.Approvals.OnTimeout` 接管，拒绝则遵循 `OnReject`。保留请求的位置由宿主决定，不限于进程内存。
 
-[`web-chat/copilotkit`](./examples/web-chat/copilotkit) 提供完整可运行的 Web HITL 示例，包含 `/decision/pending` 和 `/decision/resolve` 两个接口，页面刷新后仍可取得待处理审批。
+[`web-chat/assistant-ui`](./examples/web-chat/assistant-ui) 提供完整可运行的 Web HITL 示例：审批以 `dec.*` 工具调用呈现 Approve/Deny 按钮，宿主自有的 `/decision/pending` 与 `/decision/resolve` 接口对活动请求恰好应答一次。
 
 ## 多轮会话
 
@@ -431,7 +431,9 @@ if err != nil {
 
 ## 集成到应用
 
-**Web 前端**：一行代码将 Agent 包装为提供 AG-UI 协议的 `http.Handler`，CopilotKit 等兼容客户端可直接连接：
+[AG-UI 1.0 桥接合同](./docs/agui.md)
+
+**Web 前端**：一行代码将 Agent 包装为提供 AG-UI 协议的 `http.Handler`，assistant-ui（配合 `@ag-ui/client`）等兼容客户端可直接连接：
 
 ```go
 mux.Handle("/agent", sse.Handler(agent, sse.Options{
@@ -439,7 +441,7 @@ mux.Handle("/agent", sse.Handler(agent, sse.Options{
 }))
 ```
 
-聊天 UI 可使用 `agui.RunRegistry`：空闲时在 Thread 上开始执行，忙碌时向活动 Stream 追加输入；它保留原生 Stream.Send 的 context 语义，取消可撤回尚未被领取的输入。CopilotKit 示例显式将 `POST /message` 派送与补充请求的 context 脱离；派送开始后，HTTP 断开不会撤回输入或终止队列等待，交付回执仍在原 SSE 流中返回。可选的 `sessionrecorder` 默认只记录终局安全字段，额外诊断数据需通过 `WithExposure` 显式启用。路由与记录用法见[流式指南](./docs/streaming.md#8-ag-ui-bridge)。
+聊天 UI 可使用 `agui.RunRegistry`：空闲时在 Thread 上开始执行，忙碌时向活动 Stream 追加输入；它保留原生 Stream.Send 的 context 语义，取消可撤回尚未被领取的输入。录制运行可使用 `aguisession.Session.MessageHandler` 提供 `POST /message`：派送与补充请求的 context 脱离，已接纳输入在终态之前作为 user 消息写入该运行的历史，交付回执仍在原 SSE 流中返回；assistant-ui 示例用它实现运行中补充指导。可选的 `sessionrecorder` 默认只记录终局安全字段，额外诊断数据需通过 `WithExposure` 显式启用。路由与记录用法见[流式指南](./docs/streaming.md#8-ag-ui-bridge)。
 
 **A2A**：`bridges/a2a` 将任意 Runner 发布为 A2A 服务，路由、认证和 TLS 由宿主负责：
 
@@ -501,7 +503,7 @@ func Coordinate(ctx context.Context, leader, planner, implementer *adaptor.Agent
 
 导入 `context`、`adaptor "github.com/agent-dance/agent-adaptor/v2"` 和 `"github.com/agent-dance/agent-adaptor/v2/hosttools/team"`。Agent 的生命周期仍由宿主管理。持续输入使用 `Thread(key).Standby(ctx)`；忙碌 scope 上的 `Thread.Send` 返回 `ErrThreadBusy`。[团队指南](./docs/team.md)涵盖 Remote 成员、工具、审批、上限、持久恢复和惰性 Fork。
 
-[真实运行示例](./examples/showcases/team-agent-workflow) 展示本地规划 → 实现 → 审查流程，包含角色沙箱和 CopilotKit 页面：
+[真实运行示例](./examples/showcases/team-agent-workflow) 展示本地规划 → 实现 → 审查流程，包含角色沙箱和 assistant-ui 页面：
 
 ```bash
 ./examples/showcases/team-agent-workflow/start-all.sh claude
@@ -560,7 +562,7 @@ synced, err := agent.SyncProfile(ctx)                // explicitly materializes 
 - [`tools`](./examples/tools)：将类型化 Go 函数交付给真实本机 provider，无需自行管理 MCP。
 - [`skills`](./examples/skills)：选择 skill 并检查证明文件；[`profiles`](./examples/profiles)：同步 profile 资源，可选本地探针或发送任务。
 - [`inspect`](./examples/inspect)：两次真实调用后读取环境和模型探针，选择已声明的 reviewer skill，再观察 profile。
-- [`web-chat`](./examples/web-chat)：SSE/AG-UI 服务，附带 [`aguiclient`](./examples/web-chat/aguiclient) 与 [`copilotkit`](./examples/web-chat/copilotkit) 两个前端。
+- [`web-chat`](./examples/web-chat)：SSE/AG-UI 服务及内置页面；Web 前端为 [`assistant-ui`](./examples/web-chat/assistant-ui)，提供持久历史、工具失败显示、运行中补充指导、审批与可选活跃观察（默认 fake）。
 - [`a2a-server`](./examples/a2a-server)：通过 A2A 发布和调用 Agent。
 - [`showcases/team-agent-workflow`](./examples/showcases/team-agent-workflow)：串联规划、实现和审查。
 

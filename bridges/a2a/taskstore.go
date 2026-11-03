@@ -412,8 +412,14 @@ func validateMetadataValue(value any, seen map[string]struct{}) error {
 		return nil
 	}
 
-	switch value.(type) {
-	case bool, int, int8, int16, int32, int64, float32, float64, string:
+	switch n := value.(type) {
+	case json.Number:
+		if n == "" {
+			return fmt.Errorf("empty JSON number in Metadata")
+		}
+		_, err := json.Marshal(n)
+		return err
+	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, string:
 		return nil
 	}
 
