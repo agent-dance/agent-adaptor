@@ -218,7 +218,7 @@ func consumeApprovals(ctx context.Context, stream adaptor.Stream,
 
 호스트는 별도 엔드포인트에서 `req.Approve(r.Context())`, `req.Deny(r.Context(), reason)`, `req.Answer(r.Context(), text)`를 호출할 수 있습니다. `NoticeApprovalResolved`에는 `Data["request_id"]`가 포함되어 UI에서 대기 중인 카드를 제거할 수 있습니다. 감사 기록을 저장해도 응답 객체 자체가 직렬화되지는 않습니다.
 
-응답은 정확히 한 번만 처리됩니다. 중복 응답, Kind 불일치, 종료된 실행은 각각 안정적인 오류(`ErrApprovalResolved`, `ErrApprovalKindMismatch`, `ErrApprovalExpired`)를 반환하며, 영값 요청도 영구적으로 차단되지 않습니다. 요청이 도착했을 때 `Events()`를 호출한 적이 없고 `OnApproval` handler도 없다면, 생명주기 알림과 함께 시간 초과 대체 처리를 즉시 적용합니다. 그 외에는 기한 안에 응답이 없을 때 `Policy.Approvals`의 `OnTimeout`을 적용하고, 거절에는 `OnReject`를 적용합니다. 대기 중인 요청의 저장 위치는 호스트가 정하며 프로세스 메모리로 한정되지 않습니다.
+응답은 정확히 한 번만 처리됩니다. 중복 응답, Kind 불일치, 종료된 실행은 각각 안정적인 오류(`ErrApprovalResolved`, `ErrApprovalKindMismatch`, `ErrApprovalExpired`)를 반환하며, 영값 요청도 영구적으로 차단되지 않습니다. `OnApproval` handler가 없으면 `Events()`보다 먼저 도착한 요청은 호출자가 구독하거나 `Result()`를 호출할 때까지 기다립니다. `Result()`만 사용하는 호출자에게는 생명주기 알림과 함께 시간 초과 대체 처리를 즉시 적용합니다. 그 외에는 기한 안에 응답이 없을 때 `Policy.Approvals`의 `OnTimeout`을 적용하고, 거절에는 `OnReject`를 적용합니다. 대기 중인 요청의 저장 위치는 호스트가 정하며 프로세스 메모리로 한정되지 않습니다.
 
 실행 가능한 웹 HITL 예제는 [`web-chat/assistant-ui`](./examples/web-chat/assistant-ui)에 있습니다. 의사 결정은 `dec.*` 도구 호출의 Approve/Deny 버튼으로 표시되며, 호스트가 소유한 `/decision/pending`, `/decision/resolve`가 진행 중인 요청에 정확히 한 번 응답합니다.
 

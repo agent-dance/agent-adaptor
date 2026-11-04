@@ -40,6 +40,12 @@ type eventBroker struct {
 	abortOnce sync.Once
 	abortCh   chan struct{}
 	done      chan struct{}
+
+	// consumer closes when the run's consumption form is known: Events
+	// subscribed, or Result called first. Until then an approval cannot tell
+	// a subscriber that has yet to call Events from one that never will.
+	consumerOnce sync.Once
+	consumer     chan struct{}
 }
 
 type dropAggregate struct {
@@ -66,6 +72,7 @@ func newEventBroker(runID, threadKey string, buffer int, blocking bool) *eventBr
 		normalCapacity:  buffer,
 		abortCh:         make(chan struct{}),
 		done:            make(chan struct{}),
+		consumer:        make(chan struct{}),
 		wake:            make(chan struct{}, 1),
 		capacityChanged: make(chan struct{}),
 	}
@@ -408,6 +415,12 @@ func (b *eventBroker) abort() {
 	b.abortOnce.Do(func() { close(b.abortCh) })
 }
 
+// markConsumer records that the consumption form is known (Events or
+// Result was called). Idempotent.
+func (b *eventBroker) markConsumer() {
+	b.consumerOnce.Do(func() { close(b.consumer) })
+}
+
 func (b *eventBroker) abortedLocked() bool {
 	select {
 	case <-b.abortCh:
@@ -434,6 +447,7 @@ func (b *eventBroker) subscribe() <-chan Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.subscribed = true
+	b.markConsumer()
 	if !b.closed {
 		b.discardOrdinary = false
 	}
@@ -501,6 +515,7 @@ func (b *eventBroker) notifyCapacityLocked() {
 func (b *eventBroker) awaitResult() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.markConsumer()
 	if !b.spool || b.subscribed || b.closed || b.terminal {
 		return
 	}

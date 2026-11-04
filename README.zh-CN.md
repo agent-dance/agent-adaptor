@@ -218,7 +218,7 @@ func consumeApprovals(ctx context.Context, stream adaptor.Stream,
 
 宿主可在配套接口中调用 `req.Approve(r.Context())`、`req.Deny(r.Context(), reason)` 或 `req.Answer(r.Context(), text)`。`NoticeApprovalResolved` 的 `Data["request_id"]` 可供 UI 移除已处理的卡片。存储审计记录不会序列化实时 responder。
 
-请求只能应答一次。重复应答、Kind 不匹配、执行结束分别返回稳定错误 `ErrApprovalResolved`、`ErrApprovalKindMismatch`、`ErrApprovalExpired`；零值请求也不会永久阻塞。请求到达时若宿主既未调用 `Events()`，也未安装 `OnApproval`，会立即采用超时兜底并发布生命周期 Notice。否则超时后由 `Policy.Approvals.OnTimeout` 接管，拒绝则遵循 `OnReject`。保留请求的位置由宿主决定，不限于进程内存。
+请求只能应答一次。重复应答、Kind 不匹配、执行结束分别返回稳定错误 `ErrApprovalResolved`、`ErrApprovalKindMismatch`、`ErrApprovalExpired`；零值请求也不会永久阻塞。未安装 `OnApproval` 时，在 `Events()` 之前到达的请求会等待调用方订阅或调用 `Result()`；只调用 `Result()` 的调用方会立即采用超时兜底并收到生命周期 Notice。否则超时后由 `Policy.Approvals.OnTimeout` 接管，拒绝则遵循 `OnReject`。保留请求的位置由宿主决定，不限于进程内存。
 
 [`web-chat/assistant-ui`](./examples/web-chat/assistant-ui) 提供完整可运行的 Web HITL 示例：审批以 `dec.*` 工具调用呈现 Approve/Deny 按钮，宿主自有的 `/decision/pending` 与 `/decision/resolve` 接口对活动请求恰好应答一次。
 

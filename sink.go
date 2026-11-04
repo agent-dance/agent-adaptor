@@ -561,6 +561,21 @@ func (s *eventSink) dispatchOnce(ctx context.Context, req driver.DecisionRequest
 	if s.hostEventsCalled != nil {
 		eventsCalled = s.hostEventsCalled
 	}
+	if s.broker.spool && !eventsCalled.Load() && s.hostEventsCalled == nil {
+		// Send starts the run before its caller can call Events, so "not
+		// yet" is not "never": wait until the caller picks Events or Result.
+		select {
+		case <-s.broker.consumer:
+		case <-s.broker.abortCh:
+			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, context.Canceled
+		case <-dctx.Done():
+			s.pushRequestedNotice(req)
+			if errors.Is(dctx.Err(), context.DeadlineExceeded) {
+				return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionTimedOut}, driver.DecisionTimedOut, nil
+			}
+			return driver.DecisionResponse{RequestID: req.RequestID, Result: driver.DecisionAborted}, driver.DecisionAborted, dctx.Err()
+		}
+	}
 	if s.broker.spool && !eventsCalled.Load() {
 		s.pushRequestedNotice(req)
 		s.push(Notice{Kind: NoticeLifecycle, Text: "Approval resolved immediately using the timeout fallback because Events was never called and no OnApproval handler is configured."})

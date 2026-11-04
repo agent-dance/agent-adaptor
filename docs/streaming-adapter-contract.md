@@ -386,7 +386,8 @@ core-owned ephemeral transport allocations.
 Block for decisions only through DecisionCapableSink.RequestDecision. Core owns
 Policy.Approvals, request identity, exactly-once responders, deadlines, retries,
 and fallbacks. Provider HITL broadcasts are Notices, not answerable requests.
-Without OnApproval and before Stream.Events has ever been called, core immediately
+Without OnApproval, a request issued before the consumer calls Stream.Events or
+Stream.Result waits for that choice; when Result comes first, core immediately
 uses the configured timeout fallback and emits an explanatory Notice. Do not add
 a Driver retry loop or a second decision channel to bypass this behavior.
 ApprovalRequest.Forward(Origin) attributes a copy while sharing the same responder.

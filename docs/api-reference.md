@@ -301,7 +301,7 @@ During normal event consumption only text/thinking/tool-argument content deltas,
 
 ## 7. Approval
 
-`ApprovalHandler` is `func(context.Context, *ApprovalRequest) error`. Install it through `OnApproval`, or subscribe to Events for live `*ApprovalRequest` values. Without a handler or an Events subscription when a request arrives, the timeout fallback runs immediately with a notice.
+`ApprovalHandler` is `func(context.Context, *ApprovalRequest) error`. Install it through `OnApproval`, or subscribe to Events for live `*ApprovalRequest` values. Without a handler, a request that arrives before Events waits for Events or Result; when Result comes first, the timeout fallback runs immediately with a notice.
 
 `ApprovalRequest` fields: `ID`, `RunID`, `Kind ApprovalKind`, `Title`, `Source`, `ToolCallID`, `Choices []Choice`, `Details map[string]any`, `CreatedAt`, `Deadline time.Time`, and `Attempt int` (zero-based). `Choice` aliases `driver.DecisionChoice`.
 

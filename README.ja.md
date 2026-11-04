@@ -218,7 +218,7 @@ func consumeApprovals(ctx context.Context, stream adaptor.Stream,
 
 ホストは別のエンドポイントから `req.Approve(r.Context())`、`req.Deny(r.Context(), reason)`、`req.Answer(r.Context(), text)` を呼べます。`NoticeApprovalResolved` は `Data["request_id"]` を持つため、UI は解決済みの保留カードを閉じられます。監査記録を保存しても、有効な responder がシリアライズされるわけではありません。
 
-応答は 1 回だけ受理されます。重複した応答、Kind の不一致、実行終了後の応答には、安定したエラー（`ErrApprovalResolved`、`ErrApprovalKindMismatch`、`ErrApprovalExpired`）を返します。ゼロ値の要求が永久にブロックすることもありません。要求の到着時に `Events()` が一度も呼ばれず、`OnApproval` handler もなければ、タイムアウト時のフォールバックをすぐ適用し、ライフサイクルの Notice を発行します。それ以外は、期限までに応答がない場合に `Policy.Approvals` の `OnTimeout` に従い、拒否された場合は `OnReject` に従います。保留要求の保存先はホストが決め、プロセスメモリに限定されません。
+応答は 1 回だけ受理されます。重複した応答、Kind の不一致、実行終了後の応答には、安定したエラー（`ErrApprovalResolved`、`ErrApprovalKindMismatch`、`ErrApprovalExpired`）を返します。ゼロ値の要求が永久にブロックすることもありません。`OnApproval` handler がない場合、`Events()` より前に届いた要求は、呼び出し側が購読するか `Result()` を呼ぶまで待ちます。`Result()` だけを使う呼び出し側には、タイムアウト時のフォールバックをすぐ適用し、ライフサイクルの Notice を発行します。それ以外は、期限までに応答がない場合に `Policy.Approvals` の `OnTimeout` に従い、拒否された場合は `OnReject` に従います。保留要求の保存先はホストが決め、プロセスメモリに限定されません。
 
 実行可能な Web HITL の一式は [`web-chat/assistant-ui`](./examples/web-chat/assistant-ui) にあります。意思決定は `dec.*` ツール呼び出しとして Approve/Deny ボタンで表示され、ホスト側の `/decision/pending` と `/decision/resolve` が実行中のリクエストにちょうど 1 回応答します。
 
